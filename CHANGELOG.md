@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 - Settings, shortcuts and defaults
+## 0.2.0 - Settings, shortcuts, and defaults
 
 - Settings is a tabbed window: General, Appearance, Behavior and Shortcuts. Every value resets on its own, and only changed values are saved, so defaults follow the desktop.
 - The shell setting takes a command line. Empty runs the login shell (as a login shell on macOS, PowerShell on Windows), starting in the home folder.

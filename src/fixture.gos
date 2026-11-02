@@ -291,13 +291,13 @@ pub fn journey() -> Result<(), errors::Error> {
     s.flush()?
     require(columns(s) == normal, "Reset Zoom kept the zoom")?
     let framed = s.window_size(0)
-    s.press(Key::F11, Mods::default())?
+    shortcut(&mut s, commands::FULLSCREEN)?
     s.flush()?
-    require(s.window_size(0) != framed, "F11 left the window its size")?
-    s.press(Key::F11, Mods::default())?
+    require(s.window_size(0) != framed, "Fullscreen left the window its size")?
+    shortcut(&mut s, commands::FULLSCREEN)?
     s.flush()?
     require(s.window_size(0) == framed, f"leaving fullscreen made the window {s.window_size(0)}")?
-    println(f"view: the menus run File to Help; Zoom In and Out changed {normal} columns to {zoomed} and back, Reset Zoom restored them; F11 went fullscreen and back")
+    println(f"view: the menus run File to Help; Zoom In and Out changed {normal} columns to {zoomed} and back, Reset Zoom restored them; Fullscreen's shortcut went fullscreen and back")
 
     s.press(Key::F10, Mods { shift: true, ..Mods::default() })?
     s.flush()?
