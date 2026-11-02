@@ -8,7 +8,7 @@
 - Color schemes can be edited, and imported from iTerm2, Windows Terminal, xfce4-terminal and base16.
 - macOS shortcuts use Command alone. New shortcuts: Settings, Quit, tabs by number, zoom with Ctrl, Clear Scrollback, scrolling, and Select Last Command Output.
 - New commands: Quit, Clear Scrollback, Reset and Clear, Scroll to Top and Bottom, Show Menu Bar, Reset Window Size, Pin Tab, Close Other Tabs, Close Tabs to the Right, and Help links.
-- The font defaults to the desktop's monospace font, size and weight, and more scrollback is kept.
+- The font defaults to the desktop's monospace font, size and weight. Scrollback keeps 1,000 lines by default, as in other terminals.
 - Background opacity changes open windows too.
 - Linux release builds lay out their code from a correct profile of a session.
 - Tabs are named for their program, close prompts name the running program, a double click selects a word, dropped files paste as paths, and Find offers earlier searches.

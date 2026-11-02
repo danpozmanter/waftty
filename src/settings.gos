@@ -102,7 +102,7 @@ impl Default for Settings {
         Settings {
             shell: "", directory: "", new_tabs: "current", encoding: encodings::DEFAULT, restore: false, columns: 90, rows: 28, confirm_close: true
             font: "", font_size: 10.0, font_weight: 400, ligatures: true, scheme: schemes::SYSTEM, cursor: "block", cursor_blink: true, bold_bright: false, legible: true, padding: 4, opacity: 100, line_spacing: 1.0, scrollbar: "scrolling", menu_bar: true, tab_bar: "several"
-            scrollback: 10_000, scroll_on_output: false, scroll_on_keystroke: true, word_chars: WORD_CHARS, copy_on_select: false, confirm_paste: true, bell: "none", notifications: true, clipboard_write: true, editor: "", option_as_meta: false
+            scrollback: 1_000, scroll_on_output: false, scroll_on_keystroke: true, word_chars: WORD_CHARS, copy_on_select: false, confirm_paste: true, bell: "none", notifications: true, clipboard_write: true, editor: "", option_as_meta: false
         }
     }
 }
@@ -470,7 +470,7 @@ mod tests {
     fn values_out_of_range_keep_the_setting_they_would_replace() {
         let s = super::with_values(Settings::default(), { "font_size": "200", "scrollback": "-5", "encoding": "UTF-16LE", "scheme": "dark", "new_tabs": "elsewhere", "clipboard_write": "maybe", "cursor": "star", "padding": "99", "bell": "sound", "font_weight": "350" })
         assert_eq(s.font_size, 10.0)
-        assert_eq(s.scrollback, 10_000)
+        assert_eq(s.scrollback, 1_000)
         assert_eq(s.encoding, "UTF-8")
         assert_eq(s.scheme, "dark")
         assert_eq(s.new_tabs, "current")
