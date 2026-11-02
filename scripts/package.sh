@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build waftty and package it for the host platform into OUT (default dist):
 #   Linux    waftty-VERSION-linux-ARCH.tar.gz, with install.sh inside
-#   macOS    waftty-VERSION-macos-ARCH.zip: waftty.app and install-mac.sh
+#   macOS    waftty-VERSION-macos-ARCH.zip: waftty.app and install.command
 #   Windows  waftty-VERSION-windows-ARCH.zip, and a -portable.zip whose user
 #            folder keeps the settings beside waftty.exe
 # With --installers it also builds the release's installers:
@@ -310,7 +310,7 @@ EOF
         plutil -lint "$app/Contents/Info.plist" >/dev/null
         codesign --force --sign - "$app"
         codesign --verify --deep --strict "$app"
-        install -m755 "$root/scripts/install-mac.sh" "$stage/shipped/install-mac.sh"
+        install -m755 "$root/scripts/install.command" "$stage/shipped/install.command"
         rm -f "$out/$base.zip"
         (cd "$stage/shipped" && ditto -c -k . "$out/$base.zip")
         publish "$out/$base.zip"

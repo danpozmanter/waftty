@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
-# Install waftty.app to /Applications.
+# Installs waftty.app to /Applications, clears its download quarantine,
+# re-signs it ad hoc for its new place, and links a `waftty` command.
 #
-# Usage: bash install-mac.sh
-#
-# Invoking via `bash` (rather than double-clicking) is what lets the
-# quarantine-removal and ad-hoc re-sign steps actually take effect:
-# Gatekeeper enforces quarantine on app launch, not on interpreted
-# scripts run by a shell. On macOS Sequoia+ right-click -> Open no
-# longer bypasses the "unverified developer" block for ad-hoc signed
-# apps, so this script is the reliable path for unsigned builds.
+# Double-click this file to run it in Terminal, or run: bash install.command
+# Opened from Finder, the downloaded script is itself checked by Gatekeeper,
+# which asks once (System Settings > Privacy & Security > Open Anyway); run
+# by bash, it is not checked.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

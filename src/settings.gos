@@ -368,7 +368,7 @@ pub fn chosen_shortcuts(values: Map<String, String>, registry: Vec<Command>) -> 
     let mut out: Map<String, Vec<String>> = Map::new()
     for c in registry {
         let Some(text) = values.get(f"key:{c.id}") else { continue }
-        let chords = text.split(",").map(|chord| chord.trim()).filter(|chord| !chord.is_empty())
+        let chords = shortcuts::chords(text)
         if chords != c.shortcuts.map(shortcuts::spelled) { out[c.id] = chords }
     }
     out
@@ -464,7 +464,19 @@ pub fn command(s: Settings) -> gui::terminal::Command {
 mod tests {
     use std::env
 
+    use gui::Command
+
     use super::Settings
+
+    #[test]
+    fn a_shortcut_field_keeps_a_comma_key_apart_from_the_commas_between_chords() {
+        let registry = #[Command::new("edit.settings", "Settings").key("Ctrl+,"), Command::new("file.new-tab", "New Tab").key("Ctrl+Shift+T")]
+        let unchanged = super::chosen_shortcuts({ "key:edit.settings": "Ctrl+,", "key:file.new-tab": "Ctrl+Shift+T" }, registry)
+        assert(unchanged.is_empty(), f"{unchanged}")
+        let changed = super::chosen_shortcuts({ "key:edit.settings": "Ctrl+,, Ctrl+Shift+,", "key:file.new-tab": ",, Ctrl+Shift+Y" }, registry)
+        assert_eq(changed["edit.settings"], #["Ctrl+,", "Ctrl+Shift+,"])
+        assert_eq(changed["file.new-tab"], #[",", "Ctrl+Shift+Y"])
+    }
 
     #[test]
     fn values_out_of_range_keep_the_setting_they_would_replace() {

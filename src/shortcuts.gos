@@ -86,6 +86,26 @@ pub fn spelled(shortcut: Shortcut) -> String {
     }).join(" ")
 }
 
+/// The chords of `text`, a Settings field that separates them with commas.
+/// A comma that starts a chord or follows a `+` is the comma key itself,
+/// as in "Ctrl+,".
+pub fn chords(text: String) -> Vec<String> {
+    let mut out = #[]
+    let mut chord = String::new()
+    for c in text {
+        let part = chord.trim()
+        if c == ',' && !part.is_empty() && !part.ends_with("+") {
+            out.push(part)
+            chord = String::new()
+        } else {
+            chord.push(c)
+        }
+    }
+    let last = chord.trim()
+    if !last.is_empty() { out.push(last) }
+    out
+}
+
 /// Whether Settings offers a shortcut for command `id`: the commands of the
 /// Send Signal, Set Encoding and tab lists are many and change, so they
 /// are bound in the shortcuts file only.

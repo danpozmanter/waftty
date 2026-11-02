@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1 - macOS installer and Settings shortcut
+
+- The macOS package installs with `install.command`, which runs in Terminal when double-clicked.
+- Saving Settings keeps the Settings shortcut (Ctrl+, or Cmd+,) instead of reporting "Cmd+" as a chord waftty does not read. If 0.2.0 reported it, reset the Settings shortcut on the Shortcuts page.
+
 ## 0.2.0 - Settings, shortcuts, and defaults
 
 - Settings is a tabbed window: General, Appearance, Behavior and Shortcuts. Every value resets on its own, and only changed values are saved, so defaults follow the desktop.

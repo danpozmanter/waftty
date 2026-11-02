@@ -58,6 +58,6 @@ case "$os" in
     Darwin)
         mkdir -p "$stage/app"
         ditto -x -k "$package" "$stage/app"
-        bash "$stage/app/install-mac.sh"
+        bash "$stage/app/install.command"
         ;;
 esac

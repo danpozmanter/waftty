@@ -143,12 +143,12 @@ jobs:
       - name: List the package
         run: ls -la dist
 
-      # The zip as a user gets it, installed by its install-mac.sh and run.
-      - name: Install with install-mac.sh and run the app (macOS)
+      # The zip as a user gets it, installed by its install.command and run.
+      - name: Install with install.command and run the app (macOS)
         if: runner.os == 'macOS'
         run: |
           ditto -x -k dist/waftty-*-macos-*.zip try
-          bash try/install-mac.sh
+          bash try/install.command
           /Applications/waftty.app/Contents/MacOS/waftty --version
 
       # Each Linux package as a user gets it, installed and run: the .deb here,
