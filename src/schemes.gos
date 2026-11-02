@@ -66,7 +66,7 @@ const CONTRAST_LIGHT: [String; 16] = [
 /// The schemes waftty ships, the desktop-following one first.
 pub fn built_in() -> Vec<Entry> {
     #[
-        Entry { id: SYSTEM, name: "Follow the system", appearance: "", colors: None }
+        Entry { id: SYSTEM, name: "System theme", appearance: "", colors: None }
         Entry { id: "light", name: "Light", appearance: "light", colors: None }
         Entry { id: "dark", name: "Dark", appearance: "dark", colors: None }
         Entry { id: "solarized-light", name: "Solarized Light", appearance: "light", colors: colors("#657b83", "#fdf6e3", "#586e75", "#eee8d5", "#586e75", SOLARIZED) }

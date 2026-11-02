@@ -126,7 +126,7 @@ Menu text follows the desktop's menu font size.
 
 ## Color Schemes
 
-The built-in schemes are **Follow the system** (light or dark with the
+The built-in schemes are **System theme** (light or dark with the
 desktop), **Light**, **Dark**, **Solarized Light**, **Solarized Dark**,
 **High Contrast Light** and **High Contrast Dark**.
 
