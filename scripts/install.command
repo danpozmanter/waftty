@@ -36,18 +36,16 @@ install_cli_symlink() {
     local target_dir="$3"
 
     [ -f "$binary" ] || return 0
+    [ -d "$target_dir" ] || return 0
 
-    if [ ! -d "$target_dir" ]; then
-        sudo mkdir -p "$target_dir" 2>/dev/null || return 0
-    fi
-
-    sudo rm -f "$target_dir/$linkname" 2>/dev/null || true
     sudo ln -sf "$binary" "$target_dir/$linkname" 2>/dev/null || return 0
     echo "  CLI: $target_dir/$linkname"
 }
 
 echo ""
 echo "Installing CLI symlinks (may prompt for sudo)..."
+# /opt/homebrew belongs to Homebrew, so only /usr/local/bin is created here.
+[ -d /usr/local/bin ] || sudo mkdir -p /usr/local/bin 2>/dev/null || true
 for bin_dir in /usr/local/bin /opt/homebrew/bin; do
     install_cli_symlink "/Applications/waftty.app/Contents/MacOS/waftty" waftty "$bin_dir"
 done

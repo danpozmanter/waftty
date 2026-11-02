@@ -66,18 +66,24 @@ Not sure which Mac you have? Open the Apple menu and choose About This Mac:
     command, and clears the download quarantine. `brew upgrade` moves it to
     each new release.
 
-    Or unzip the package and double-click `install.command`. macOS checks
-    the downloaded script first: the first time, open **System Settings >
-    Privacy & Security** and choose **Open Anyway**. Running it in Terminal
-    skips that check:
+    Or unzip the package and double-click `install.command` in the
+    unzipped folder. It runs in Terminal and asks for your password to link
+    the `waftty` command.
+
+    The script is not notarized, so macOS blocks it the first time it is
+    opened. Choose **Done**, open **System Settings > Privacy & Security**,
+    choose **Open Anyway** beside `install.command`, then **Open**.
+
+    Running it from Terminal skips that check:
 
     ```sh
+    cd ~/Downloads/waftty-*-macos-*/
     bash install.command
     ```
 
-    This copies `waftty.app` to `/Applications`, clears the download
-    quarantine, and links a `waftty` command into `/usr/local/bin` (and
-    `/opt/homebrew/bin` where it exists).
+    It copies `waftty.app` to `/Applications`, clears the download
+    quarantine, signs the copy for this Mac, and links a `waftty` command
+    into `/usr/local/bin` (and `/opt/homebrew/bin` where it exists).
 
 === "Windows"
 

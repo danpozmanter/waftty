@@ -27,8 +27,10 @@ Release packages are built for Linux x86_64 (glibc 2.39 or newer, as on
 Ubuntu 24.04) as a .deb, an .rpm, an AppImage and a tarball; for Windows
 x86_64 as a setup program and zips; and for macOS 15 or newer, with one
 package for Intel Macs and one for Apple Silicon. On macOS, unzip the
-package and double-click `install.command`, or run `bash install.command`
-in Terminal.
+package and double-click `install.command` (the first time, allow it under
+System Settings > Privacy & Security > Open Anyway), or run
+`bash install.command` from the unzipped folder in Terminal. See
+[Installation](https://danpozmanter.github.io/waftty/installation/) for details.
 
 A `user` folder beside waftty puts it in portable mode: settings stay in that
 folder instead of your profile. The Windows `-portable.zip` comes with one.
