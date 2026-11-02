@@ -1,0 +1,320 @@
+// Folds each message into the model: commands from menus and shortcuts,
+// the tab strip's requests, what the terminals report, window closing, and
+// the Find, Settings, About and close-confirmation dialogs.
+
+use std::{errors, runtime}
+
+use gui
+use gui::{Effect, Outcome, UiMsg}
+use gui::dialogs::request::DialogRequest
+use gui::services::desktop::Urgency
+use gui::terminal::Event
+
+use commands
+use info
+use model
+use model::Model
+use prompts
+use schemes
+use search
+use search::Step
+use settings
+
+/// The model after `msg`.
+pub fn update(m: Model, msg: UiMsg) -> Model {
+    let mut n = m
+    if search::message(&mut n, msg) { return n }
+    match msg {
+        UiMsg::Command(id) => command(&mut n, "main", id)
+        UiMsg::WindowCommand(window, id) => command(&mut n, window, id)
+        UiMsg::Terminal(id, event) => terminal_event(&mut n, id, event)
+        UiMsg::Tab(strip, key) => {
+            if let Some(w) = model::window_index(n, model::strip_window(strip)) { model::activate(&mut n, w, key) }
+        }
+        UiMsg::Reorder(strip, key, to) => {
+            if let Some(w) = model::window_index(n, model::strip_window(strip)) {
+                model::move_tab(&mut n, w, key, to)
+                model::retitle(&mut n, w)
+            }
+        }
+        UiMsg::TabAction(strip, key, action) => tab_action(&mut n, model::strip_window(strip), key, action)
+        UiMsg::CloseRequested(window) => {
+            if let Some(w) = model::window_index(n, window) { model::request_close_window(&mut n, w) }
+        }
+        UiMsg::WindowFocus(window, focused) => {
+            if let Some(w) = model::window_index(n, window) {
+                n.windows[w].focused = focused
+                if focused && let Some(t) = n.windows[w].index_of(n.windows[w].active) { n.windows[w].tabs[t].attention = false }
+            }
+        }
+        UiMsg::QuitRequested => model::request_quit(&mut n)
+        UiMsg::FontsLoaded(owner, records) => {
+            if owner == "settings" {
+                let mut families: Vec<String> = #[]
+                for r in records {
+                    if r.monospace && !families.contains(r.family) { families.push(r.family) }
+                }
+                families.sort()
+                n.fonts = Some(families)
+                let window = n.settings_window
+                n.settings_window = ""
+                if model::window_index(n, window).is_some() { open_settings(&mut n, window) }
+            }
+        }
+        UiMsg::Dialog(id, outcome) | UiMsg::DialogApplied(id, outcome) => dialog(&mut n, id, outcome)
+        _ => ()
+    }
+    n
+}
+
+fn dialog(m: &mut Model, id: String, outcome: Outcome) {
+    let accepted = outcome == Outcome::Action("accept")
+    if id == "settings" && let Outcome::Values(values) = outcome {
+        apply_settings(m, values)
+    } else if accepted && id.starts_with("close-tab:") {
+        if let Some(loc) = model::tab_location(*m, id.substring(10, id.byte_len())) {
+            let w, t = loc
+            model::close_tab(m, w, t)
+        }
+    } else if accepted && id.starts_with("close-window:") {
+        if let Some(w) = model::window_index(*m, id.substring(13, id.byte_len())) { model::close_window(m, w) }
+    } else if accepted && id == "close-all" {
+        model::close_all(m)
+    }
+}
+
+// Runs command `id` in window `window`.
+fn command(m: &mut Model, window: String, id: String) {
+    let Some(w) = model::window_index(*m, window) else { return }
+    if let Some(number) = commands::signal_of(id) {
+        return send_signal(m, w, number)
+    }
+    if let Some(label) = commands::encoding_of(id) {
+        return set_encoding(m, w, label)
+    }
+    if let Some(key) = commands::shown_tab_of(id) {
+        return model::activate(m, w, key)
+    }
+    match id {
+        commands::NEW_TAB => {
+            if let Err(why) = model::open_tab(m, w, model::shell_here(*m, w)) { model::report(window, "Could not open a tab", why) }
+        }
+        commands::NEW_WINDOW => {
+            if let Err(why) = model::open_window(m, model::shell_here(*m, w)) { model::report(window, "Could not open a window", why) }
+        }
+        commands::CLOSE_TAB => {
+            if let Some(tab) = m.windows[w].current() && !tab.pinned { model::request_close_tab(m, tab.key) }
+        }
+        commands::CLOSE_WINDOW => model::request_close_window(m, w)
+        commands::OPEN_LINK => {
+            if let Some(tab) = m.windows[w].current() && !tab.link.is_empty() { gui::perform(Effect::OpenUrl(tab.link)) }
+        }
+        commands::COPY_LINK => {
+            if let Some(tab) = m.windows[w].current() && !tab.link.is_empty() { gui::perform(Effect::SetClipboard(tab.link)) }
+        }
+        commands::COPY_EMAIL => {
+            if let Some(tab) = m.windows[w].current() && let Some(address) = commands::email_of(tab.link) { gui::perform(Effect::SetClipboard(address)) }
+        }
+        commands::FULLSCREEN => model::toggle_fullscreen(m, w)
+        commands::ZOOM_IN => model::zoom(m, w, commands::ZOOM_STEP)
+        commands::ZOOM_OUT => model::zoom(m, w, -commands::ZOOM_STEP)
+        commands::NORMAL_SIZE => model::zoom(m, w, 0.0)
+        commands::FIND => search::open(m, w)
+        commands::FIND_NEXT => search::run(m, window, Step::Next)
+        commands::FIND_PREVIOUS => search::run(m, window, Step::Previous)
+        commands::FIND_CLOSE => search::close(m, w)
+        commands::PREVIOUS_PROMPT | commands::NEXT_PROMPT => {
+            if let Some(tab) = m.windows[w].current() && let Err(why) = prompts::jump(tab.terminal, id == commands::PREVIOUS_PROMPT) {
+                model::report(window, "Could not move to the prompt", why)
+            }
+        }
+        commands::SELECT_OUTPUT => {
+            if let Some(tab) = m.windows[w].current() {
+                match prompts::select_output(tab.terminal) {
+                    Ok(true) => ()
+                    Ok(false) => gui::perform(Effect::Announce("No command output is marked; see Shell Integration in the guide."))
+                    Err(why) => model::report(window, "Could not select the output", why)
+                }
+            }
+        }
+        commands::RESET => {
+            if let Some(tab) = m.windows[w].current() && let Err(why) = tab.terminal.reset() {
+                model::report(window, "Could not reset the terminal", why)
+            }
+        }
+        commands::SETTINGS => {
+            if m.fonts.is_some() {
+                open_settings(m, window)
+            } else {
+                // The font list comes from the installed fonts, read off the
+                // UI thread; the dialog opens once it arrives.
+                m.settings_window = window
+                gui::perform(Effect::LoadFonts("settings"))
+            }
+        }
+        commands::NEXT_TAB => model::cycle(m, w, 1)
+        commands::PREVIOUS_TAB => model::cycle(m, w, -1)
+        commands::LAST_TAB => model::last_active(m, w)
+        commands::MOVE_LEFT | commands::MOVE_RIGHT => {
+            let key = m.windows[w].active
+            if let Some(at) = m.windows[w].index_of(key) {
+                model::move_tab(m, w, key, at + if id == commands::MOVE_LEFT { -1 } else { 1 })
+                model::retitle(m, w)
+            }
+        }
+        commands::ABOUT => gui::perform(Effect::OpenDialogIn(window, about()))
+        _ => ()
+    }
+}
+
+fn open_settings(m: &mut Model, window: String) {
+    let fonts = m.fonts.unwrap_or(#[])
+    // Scheme files are read again, so one added since starting is offered.
+    let found, problems = schemes::user()
+    m.user_schemes = found
+    for why in problems { gui::perform(Effect::Announce(why)) }
+    gui::perform(Effect::OpenDialogIn(window, settings::dialog(m.settings, fonts, schemes::all(m.user_schemes))))
+}
+
+// A tab strip request for tab `key` of window `window`.
+fn tab_action(m: &mut Model, window: String, key: String, action: String) {
+    let Some(w) = model::window_index(*m, window) else { return }
+    let keys = m.windows[w].tabs.map(|t| t.key)
+    let at = m.windows[w].index_of(key)
+    match action {
+        "close" => model::request_close_tab(m, key)
+        "close-others" => {
+            for k in keys {
+                if k != key { close_unpinned(m, k) }
+            }
+        }
+        "close-right" => {
+            if let Some(t) = at {
+                for k in keys.skip(t + 1) { close_unpinned(m, k) }
+            }
+        }
+        "pin" | "unpin" => model::pin(m, w, key, action == "pin")
+        "move-left" | "move-right" => {
+            if let Some(t) = at { model::move_tab(m, w, key, t + if action == "move-left" { -1 } else { 1 }) }
+        }
+        _ => ()
+    }
+    if let Some(w) = model::window_index(*m, window) { model::retitle(m, w) }
+}
+
+fn close_unpinned(m: &mut Model, key: String) {
+    if let Some(loc) = model::tab_location(*m, key) {
+        let w, t = loc
+        if !m.windows[w].tabs[t].pinned { model::request_close_tab(m, key) }
+    }
+}
+
+fn send_signal(m: &mut Model, w: i64, number: i64) {
+    let Some(tab) = m.windows[w].current() else { return }
+    if let Err(why) = tab.terminal.signal(number) {
+        model::report(m.windows[w].key, f"Could not send signal {number}", why)
+    }
+}
+
+fn set_encoding(m: &mut Model, w: i64, label: String) {
+    let Some(t) = m.windows[w].index_of(m.windows[w].active) else { return }
+    match m.windows[w].tabs[t].terminal.set_encoding(label) {
+        Ok(()) => m.windows[w].tabs[t].encoding = label
+        Err(why) => model::report(m.windows[w].key, f"Could not use {label}", why)
+    }
+}
+
+// What terminal `id` reported.
+fn terminal_event(m: &mut Model, id: i64, event: Event) {
+    let Some(loc) = model::terminal_location(*m, id) else { return }
+    let w, t = loc
+    let window = m.windows[w].key
+    match event {
+        Event::Title(title) => {
+            m.windows[w].tabs[t].title = title
+            model::retitle(m, w)
+        }
+        Event::Bell => call_attention(m, w, t)
+        Event::Notify(title, body) => {
+            if !in_front(*m, w, t) {
+                let heading = if title.is_empty() { m.windows[w].tabs[t].label() } else { title }
+                gui::perform(Effect::Notify { id: f"notify:{m.windows[w].tabs[t].key}", title: heading, body: body, urgency: Urgency::Normal })
+            }
+            call_attention(m, w, t)
+        }
+        Event::Clipboard(text) => {
+            if m.settings.clipboard_write { gui::perform(Effect::SetClipboard(text)) }
+        }
+        Event::PrimarySelection(text) => {
+            if m.settings.clipboard_write { gui::perform(Effect::SetPrimarySelection(text)) }
+        }
+        Event::PathActivated(path, line, col) => open_path(m, w, path, line, col)
+        Event::Exited(_) => model::close_tab(m, w, t)
+        Event::Failed(why) => {
+            model::close_tab(m, w, t)
+            if model::window_index(*m, window).is_some() { model::report(window, "The program could not be waited for", errors::new(why)) }
+        }
+        Event::Refused(why) => gui::perform(Effect::Announce(why))
+        Event::LinkPointed(uri) => m.windows[w].tabs[t].link = uri
+        Event::LinkActivated(uri) => gui::perform(Effect::OpenUrl(uri))
+    }
+}
+
+// Whether tab `t` of window `w` is in front of the user: shown in a window
+// with focus.
+fn in_front(m: Model, w: i64, t: i64) -> bool {
+    m.windows[w].focused && m.windows[w].active == m.windows[w].tabs[t].key
+}
+
+// Marks tab `t` of window `w`, whose program asks for the user, and the
+// window when it lacks focus.
+fn call_attention(m: &mut Model, w: i64, t: i64) {
+    if in_front(*m, w, t) { return }
+    m.windows[w].tabs[t].attention = true
+    if !m.windows[w].focused { gui::perform(Effect::RequestAttention(m.windows[w].key)) }
+}
+
+/// The program and arguments the editor setting `template` runs for a
+/// place, with {path}, {line} and {col} filled in.
+pub fn editor_command(template: String, path: String, line: i64, col: i64) -> Vec<String> {
+    template.split_whitespace().map(|word| word.replace("{path}", path).replace("{line}", f"{line.max(1)}").replace("{col}", f"{col.max(1)}"))
+}
+
+// Opens the file a Ctrl+click on the screen named: in the editor the
+// settings name, in a new tab, else with the desktop's opener.
+fn open_path(m: &mut Model, w: i64, path: String, line: i64, col: i64) {
+    if m.settings.editor.is_empty() {
+        gui::perform(Effect::OpenUrl(f"file://{path}"))
+        return
+    }
+    let words = editor_command(m.settings.editor, path, line, col)
+    let here = model::shell_here(*m, w)
+    let command = gui::terminal::Command { program: words[0], args: words.skip(1), cwd: here.cwd, env: #[] }
+    if let Err(why) = model::open_tab(m, w, command) {
+        model::report(m.windows[w].key, "Could not open the editor", why)
+    }
+}
+
+fn apply_settings(m: &mut Model, values: Map<String, String>) {
+    let chosen = settings::with_values(m.settings, values)
+    if chosen == m.settings { return }
+    m.settings = chosen
+    gui::perform(schemes::theme_effect(model::scheme(*m)))
+    if let Err(why) = settings::save(chosen) {
+        model::report(m.windows[0].key, "Could not save the settings", why)
+    }
+}
+
+/// The About dialog: waftty's version and the toolchain it was built with.
+pub fn about() -> DialogRequest {
+    DialogRequest::About {
+        id: "about"
+        name: info::NAME
+        version: info::VERSION
+        description: f"Gossamer {runtime::version()} \u{b7} gui-gos {gui::VERSION}"
+        credits: ""
+        licenses: ""
+        diagnostics: ""
+        links: #[]
+    }
+}

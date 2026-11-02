@@ -1,0 +1,98 @@
+// Moving through a tab's history by the shell's own marks (OSC 133): to the
+// prompt before or after the view, and to the output of the last command.
+// A shell writes them when its prompt is set up to, as most shell
+// integration scripts do.
+
+use std::errors
+
+use gui::terminal::{Span, Terminal, Zone, ZoneKind}
+
+/// The buffer rows prompts start on, oldest first.
+pub fn rows(zones: Vec<Zone>) -> Vec<i64> {
+    let mut out = #[]
+    for z in zones {
+        if z.kind == ZoneKind::Prompt && !out.contains(z.start.row) { out.push(z.start.row) }
+    }
+    out
+}
+
+/// The prompt row a jump from view top `top` lands on, going back when
+/// `back`; `None` going forward past the last prompt, which shows the live
+/// screen.
+pub fn target(prompts: Vec<i64>, top: i64, back: bool) -> Option<i64> {
+    if back {
+        let mut i = prompts.len() - 1
+        while i >= 0 {
+            if prompts[i] < top { return Some(prompts[i]) }
+            i -= 1
+        }
+        return if prompts.is_empty() { None } else { Some(prompts[0]) }
+    }
+    prompts.iter().find(|row| row > top)
+}
+
+/// Scrolls `terminal` to the prompt before (`back`) or after its view.
+pub fn jump(terminal: Terminal, back: bool) -> Result<(), errors::Error> {
+    let shown = terminal.snapshot()?
+    let top = shown.history - shown.scrolled
+    match target(rows(terminal.zones()?), top, back) {
+        Some(row) => terminal.scroll_to_row(row)
+        None => terminal.scroll(-shown.scrolled).map(|_| ())
+    }
+}
+
+/// The output of the last command that finished: the last output a prompt
+/// follows.
+pub fn last_output(zones: Vec<Zone>) -> Option<Span> {
+    let mut found = None
+    let mut i = 0
+    while i + 1 < zones.len() {
+        let z = zones[i]
+        if z.kind == ZoneKind::Output && zones[i + 1].kind == ZoneKind::Prompt && z.start != z.end {
+            found = Some(Span { start: z.start, end: z.end })
+        }
+        i += 1
+    }
+    found
+}
+
+/// Selects the output of the last command that finished in `terminal`,
+/// answering whether there was one.
+pub fn select_output(terminal: Terminal) -> Result<bool, errors::Error> {
+    let Some(span) = last_output(terminal.zones()?) else { return Ok(false) }
+    terminal.reveal(span)?
+    Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use gui::terminal::{Cell, Zone, ZoneKind}
+
+    fn zone(kind: ZoneKind, from: i64, to: i64) -> Zone {
+        Zone { kind: kind, start: Cell { row: from, col: 0 }, end: Cell { row: to, col: 4 } }
+    }
+
+    #[test]
+    fn jumps_land_on_the_prompt_before_or_after_the_view_top() {
+        let prompts = #[2, 10, 30]
+        assert_eq(super::target(prompts, 30, true), Some(10))
+        assert_eq(super::target(prompts, 10, true), Some(2))
+        assert_eq(super::target(prompts, 1, true), Some(2))
+        assert_eq(super::target(prompts, 10, false), Some(30))
+        assert_eq(super::target(prompts, 30, false), None)
+        assert_eq(super::target(#[], 5, true), None)
+    }
+
+    #[test]
+    fn the_last_output_is_the_one_the_newest_prompt_follows() {
+        let zones = #[
+            zone(ZoneKind::Prompt, 0, 0), zone(ZoneKind::Input, 0, 0), zone(ZoneKind::Output, 1, 3)
+            zone(ZoneKind::Prompt, 4, 4), zone(ZoneKind::Input, 4, 4), zone(ZoneKind::Output, 5, 9)
+            zone(ZoneKind::Prompt, 10, 10)
+        ]
+        let Some(span) = super::last_output(zones) else { panic("no output was found") }
+        assert_eq(span.start.row, 5)
+        assert_eq(super::rows(zones), #[0, 4, 10])
+        assert_eq(super::last_output(zones.iter().take(3).collect()), None)
+    }
+}

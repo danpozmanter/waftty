@@ -1,0 +1,387 @@
+// The scripted journey `--fixture` runs: it drives a session through every
+// menu's commands, by their shortcuts where they have one, and checks what
+// the windows show.
+
+use std::{env, errors, fs, runtime}
+
+use gui
+use gui::Outcome
+use gui::services::clipboard
+use gui::terminal::Command
+use gui::widgets::menus
+use windowing::{Key, Mods}
+
+use application
+use commands
+use settings::Settings
+
+fn require(value: bool, why: String) -> Result<(), errors::Error> {
+    if value { Ok(()) } else { Err(errors::new(why)) }
+}
+
+// Steps the session until window `w`'s accessible tree shows `text`.
+fn await_text(s: &mut gui::Session, w: i64, text: String) -> Result<(), errors::Error> {
+    while !s.semantics(w).dump().contains(text) {
+        require(s.step()?, f"the session ended before showing {text}:\n{s.semantics(w).dump()}")?
+    }
+    Ok(())
+}
+
+// Steps the session until `text` is the latest announcement.
+fn await_spoken(s: &mut gui::Session, text: String) -> Result<(), errors::Error> {
+    while s.spoken().last() != Some(text) {
+        require(s.step()?, f"the session ended before announcing {text}: {s.spoken()}")?
+    }
+    Ok(())
+}
+
+// Steps the session until dialog `id` is open.
+fn await_dialog(s: &mut gui::Session, id: String) -> Result<(), errors::Error> {
+    while !s.dialog_ids().contains(id) {
+        require(s.step()?, f"the session ended before dialog {id} opened: {s.dialog_ids()}")?
+    }
+    Ok(())
+}
+
+// Types `text` into the main window's find bar in place of what it held.
+fn find(s: &mut gui::Session, text: String) -> Result<(), errors::Error> {
+    s.emit(gui::UiMsg::Text("find-main:query", text))
+    s.flush()
+}
+
+// The shortcut modifiers: Command+Shift on macOS, Ctrl+Shift elsewhere.
+fn primary_shift() -> Mods {
+    if gui::input::platform_is_macos() {
+        Mods { gui: true, shift: true, ..Mods::default() }
+    } else {
+        Mods { ctrl: true, shift: true, ..Mods::default() }
+    }
+}
+
+// How many columns the main window's terminal shows: the width of its first
+// row, which the terminal pads to its full width.
+fn columns(s: gui::Session) -> i64 {
+    let shown = s.semantics(0).dump()
+    let marker = "terminal \"Terminal\" = \""
+    let Some(at) = shown.find(marker) else { return 0 }
+    let rest = shown.substring(at + marker.byte_len(), shown.byte_len())
+    rest.lines().first().unwrap_or("").len()
+}
+
+// The titles of the first menu bar in `w`, without their mnemonic marks.
+fn menu_titles(w: gui::Widget) -> Vec<String> {
+    if let gui::Widget::MenuBar(b) = w {
+        return b.menus.map(|m| {
+            let title, _ = menus::mnemonic(m.label)
+            title
+        })
+    }
+    for child in w.children() {
+        let titles = menu_titles(child)
+        if !titles.is_empty() { return titles }
+    }
+    #[]
+}
+
+// The line of a dump that shows menu entry `label`, or "".
+fn entry_line(shown: String, label: String) -> String {
+    shown.lines().find(|l| l.contains(f"menuitem \"{label}\"")).unwrap_or("")
+}
+
+// The center of cell `row`, `col` of the main window's terminal, in window
+// pixels. The grid fills the view inside a padding narrower than a cell.
+fn cell_point(s: gui::Session, row: i64, col: i64) -> Option<(i64, i64)> {
+    let r = s.rect_of("term-tab-1")?
+    let rows = screen_rows(s).len()
+    let cols = columns(s)
+    if rows == 0 || cols == 0 { return None }
+    let width = r.width as f64 / cols as f64
+    let height = r.height as f64 / rows as f64
+    Some((r.x + ((col as f64 + 0.5) * width) as i64, r.y + ((row as f64 + 0.5) * height) as i64))
+}
+
+// The rows the main window's terminal shows, as text.
+fn screen_rows(s: gui::Session) -> Vec<String> {
+    let shown = s.semantics(0).dump()
+    let marker = "terminal \"Terminal\" = \""
+    let Some(at) = shown.find(marker) else { return #[] }
+    let rest = shown.substring(at + marker.byte_len(), shown.byte_len())
+    let Some(end) = rest.find("\"") else { return #[] }
+    rest.substring(0, end).lines().map(|l| l.trim_end())
+}
+
+fn enter(s: &mut gui::Session, line: String) -> Result<(), errors::Error> {
+    s.type_text(line)?
+    s.press(Key::Return, Mods::default())
+}
+
+/// Runs the journey and prints what each step showed.
+pub fn journey() -> Result<(), errors::Error> {
+    // Window placements and settings go to a directory of the journey's own,
+    // never to the user's configuration.
+    let config = fs::temp_dir("waftty-journey")?
+    env::set_var("XDG_CONFIG_HOME", config)
+    defer { let _ = fs::remove_dir_all(config) }
+    let chosen = Settings { shell: "/bin/sh", ..Settings::default() }
+    // The prompt carries the marks a shell integration script writes
+    // (OSC 133), so the journey can move between prompts.
+    let first = Command { program: "/bin/sh", args: #[], cwd: "", env: #[("PS1", "\u{1b}]133;A\u{7}ready$ \u{1b}]133;I\u{7}")] }
+    let mut s = application::app(chosen, first).start()?
+    await_text(&mut s, 0, "ready$")?
+    require(s.focused() == "term-tab-1", f"focus starts at {s.focused()}")?
+    let chord = primary_shift()
+
+    require(!s.semantics(0).dump().contains("tablist"), "one tab shows a tab strip")?
+    s.press(Key::T, chord)?
+    await_text(&mut s, 0, "[selected 2/2]")?
+    s.press(Key::L, chord)?
+    await_text(&mut s, 0, "[selected 1/2]")?
+    s.press(Key::PageDown, chord)?
+    await_text(&mut s, 0, "[selected 2/2]")?
+    s.press(Key::PageUp, chord)?
+    await_text(&mut s, 0, "[selected 1/2]")?
+    s.run_command(0, commands::show_command("tab-2"))
+    s.flush()?
+    await_text(&mut s, 0, "[selected 2/2]")?
+    s.run_command(0, commands::show_command("tab-1"))
+    s.flush()?
+    await_text(&mut s, 0, "[selected 1/2]")?
+    println("tabs: the strip shows two tabs; Ctrl+Shift+T opened one, Ctrl+Shift+L went back, Ctrl+Shift+PageDown/PageUp moved it, the Tabs menu showed each")
+
+    enter(&mut s, "echo needle-one; echo needle-two")?
+    await_text(&mut s, 0, "\nneedle-two")?
+    s.press(Key::F, chord)?
+    s.flush()?
+    require(s.focused() == "find-main:query", f"Find left focus at {s.focused()}")?
+    s.type_text("NEEDLE")?
+    await_spoken(&mut s, "Match 4 of 4")?
+    await_text(&mut s, 0, "4 of 4")?
+    s.press(Key::H, chord)?
+    await_spoken(&mut s, "Match 3 of 4")?
+    s.press(Key::G, chord)?
+    await_spoken(&mut s, "Match 4 of 4")?
+    s.press(Key::G, chord)?
+    await_spoken(&mut s, "Match 1 of 4")?
+    s.click("find-main:regex")?
+    find(&mut s, "needle-t\\w+")?
+    await_spoken(&mut s, "Match 2 of 2")?
+    find(&mut s, "(")?
+    await_text(&mut s, 0, "No matches")?
+    s.click("find-main:close")?
+    s.flush()?
+    require(s.focused() == "term-tab-1", f"closing Find left focus at {s.focused()}")?
+    require(!s.semantics(0).dump().contains("find-main:query"), "the find bar stayed open")?
+    println("find: the bar counted 4 matches ignoring case as it was typed, Previous and Next stepped and wrapped; a regular expression found 2; an unfinished one found none; Close gave focus back")
+
+    s.run_command(0, commands::encoding_command("KOI8-R"))
+    s.flush()?
+    enter(&mut s, "printf '\\360\\322\\311\\327\\305\\324\\n'")?
+    await_text(&mut s, 0, "\nПривет")?
+    s.run_command(0, commands::encoding_command("UTF-8"))
+    s.flush()?
+    println("encoding: KOI8-R output read as Привет")
+
+    enter(&mut s, "sh -c 'echo started; exec sleep 30'; echo slept:$?")?
+    await_text(&mut s, 0, "\nstarted")?
+    s.press(Key::W, chord)?
+    await_dialog(&mut s, "close-tab:tab-1")?
+    s.close_dialog("close-tab:tab-1", Outcome::Cancelled)
+    s.flush()?
+    require(s.semantics(0).dump().contains("[selected 1/2]"), "declining the close closed the tab")?
+    println("close: closing a tab running a job asked first, and declining kept it")
+    s.run_command(0, commands::signal_command(15))
+    await_text(&mut s, 0, "slept:143")?
+    println("signal: 15 SIGTERM ended the foreground job")
+
+    // A program that left the alternate screen up and DEC line drawing on,
+    // which shows an x as a vertical line, as a crashed one would.
+    enter(&mut s, "printf '\\033[?1049h\\033(0x\\n'")?
+    await_text(&mut s, 0, "\u{2502}")?
+    require(!s.semantics(0).dump().contains("slept:143"), "the alternate screen did not show")?
+    s.run_command(0, commands::RESET)
+    s.flush()?
+    require(s.semantics(0).dump().contains("slept:143"), "Reset erased the screen")?
+    enter(&mut s, "echo plain")?
+    await_text(&mut s, 0, "\nplain")?
+    println("reset: the main screen came back with its text and prompt, and line drawing was off")
+
+    enter(&mut s, "printf '\\033]52;c;Y29waWVk\\a'")?
+    while clipboard::text() != "copied" {
+        require(s.step()?, "the session ended before the program's copy reached the clipboard")?
+    }
+    println("clipboard: a program's OSC 52 write reached the clipboard")
+
+    let gate = f"{config}/gate"
+    enter(&mut s, f"mkfifo {gate}; (read x < {gate}; printf '\\a') & echo armed")?
+    await_text(&mut s, 0, "\narmed")?
+    s.run_command(0, commands::show_command("tab-2"))
+    s.flush()?
+    await_text(&mut s, 0, "[selected 2/2]")?
+    enter(&mut s, f"echo go > {gate}")?
+    await_text(&mut s, 0, "needs attention")?
+    s.run_command(0, commands::show_command("tab-1"))
+    s.flush()?
+    await_text(&mut s, 0, "[selected 1/2]")?
+    require(!s.semantics(0).dump().contains("needs attention"), "showing the tab kept its mark")?
+    println("bell: a bell in a background tab marked it, and showing the tab cleared the mark")
+
+    enter(&mut s, f"cd {config} && echo moved")?
+    await_text(&mut s, 0, "\nmoved")?
+    s.press(Key::T, chord)?
+    await_text(&mut s, 0, "[selected 3/3]")?
+    enter(&mut s, "ls")?
+    await_text(&mut s, 0, "\ngate")?
+    enter(&mut s, "exit")?
+    await_text(&mut s, 0, "[selected 1/2]")?
+    println("new tab: a tab opened from a shell that changed directory started in that directory")
+
+    enter(&mut s, "seq 200")?
+    await_text(&mut s, 0, "\n200")?
+    s.press(Key::Up, chord)?
+    while !screen_rows(s).first().unwrap_or("").contains("ready$ seq 200") {
+        require(s.step()?, f"the session ended before Previous Prompt showed the prompt: {screen_rows(s)}")?
+    }
+    s.press(Key::Down, chord)?
+    while !screen_rows(s).any(|row| row == "200") {
+        require(s.step()?, f"the session ended before Next Prompt came back: {screen_rows(s)}")?
+    }
+    s.run_command(0, commands::SELECT_OUTPUT)
+    s.flush()?
+    s.press(Key::C, chord)?
+    require(clipboard::text().starts_with("1\n2\n3"), f"Select Last Output copied {clipboard::text()}")?
+    println("prompts: Previous Prompt showed the marked prompt, Next Prompt the live screen, and Select Last Output took the last command's output")
+    // Later steps read the screen, so it ends as it began, with "plain".
+    enter(&mut s, "echo plain")?
+    await_text(&mut s, 0, "\nplain")?
+
+    s.run_command(0, commands::ABOUT)
+    s.flush()?
+    await_text(&mut s, 0, f"Gossamer {runtime::version()}")?
+    await_text(&mut s, 0, f"gui-gos {gui::VERSION}")?
+    s.close_dialog("about", Outcome::Accepted)
+    s.run_command(0, commands::SETTINGS)
+    await_dialog(&mut s, "settings")?
+    s.close_dialog("settings", Outcome::Cancelled)
+    s.flush()?
+    println(f"dialogs: About names Gossamer {runtime::version()} and gui-gos {gui::VERSION}; Settings opened")
+
+    let titles = #["File", "Edit", "View", "Terminal", "Tabs", "Help"]
+    let declared = menu_titles(s.root())
+    require(declared == titles, f"the menu bar holds {declared}")?
+    // macOS shows the bar in the system menu bar, built from the window's own;
+    // elsewhere the window draws it.
+    if !windowing::menu::has_native_menu_bar() {
+        let shown = s.semantics(0).dump()
+        let order = titles.map(|name| shown.find(f"menuitem \"{name}\"").unwrap_or(-1))
+        require(order.all(|at| at >= 0) && order.windows(2).all(|pair| pair[0] < pair[1]), f"the menus are not in order:\n{shown}")?
+    }
+    let normal = columns(s)
+    s.press(Key::Char('='), chord)?
+    s.flush()?
+    let zoomed = columns(s)
+    require(zoomed < normal, f"Zoom In left {zoomed} of {normal} columns")?
+    s.press(Key::Char('-'), chord)?
+    s.flush()?
+    require(columns(s) == normal, "Zoom Out did not undo Zoom In")?
+    s.press(Key::Char('='), chord)?
+    s.press(Key::Char('='), chord)?
+    s.press(Key::Num0, chord)?
+    s.flush()?
+    require(columns(s) == normal, "Normal Size kept the zoom")?
+    let framed = s.window_size(0)
+    s.press(Key::F11, Mods::default())?
+    s.flush()?
+    require(s.window_size(0) != framed, "F11 left the window its size")?
+    s.press(Key::F11, Mods::default())?
+    s.flush()?
+    require(s.window_size(0) == framed, f"leaving fullscreen made the window {s.window_size(0)}")?
+    println(f"view: the menus run File to Help; Zoom In and Out changed {normal} columns to {zoomed} and back, Normal Size restored them; F11 went fullscreen and back")
+
+    s.press(Key::F10, Mods { shift: true, ..Mods::default() })?
+    s.flush()?
+    require(s.popup_owners().any(|p| p.0 == "terminal-menu:main"), f"Shift+F10 opened {s.popup_owners()}")?
+    let menu = s.semantics(0).dump()
+    for entry in #["Copy", "Paste", "Send Signal", "Zoom"] {
+        require(menu.contains(f"menuitem \"{entry}\""), f"the terminal's menu lacks {entry}:\n{menu}")?
+    }
+    s.press(Key::Escape, Mods::default())?
+    s.flush()?
+    require(s.popup_owners().is_empty(), "Escape left the terminal's menu open")?
+    clipboard::set_text("")
+    s.press(Key::A, chord)?
+    s.press(Key::F10, Mods { shift: true, ..Mods::default() })?
+    s.press(Key::Return, Mods::default())?
+    s.flush()?
+    require(clipboard::text().contains("plain"), f"the menu's Copy copied {clipboard::text()}")?
+    println("context menu: the terminal's menu offers Copy, Paste, Send Signal and Zoom, and its Copy copied the screen")
+
+    let link = "https://example.org/waftty"
+    let address = "me@example.org"
+    // The screen is cleared first, so the link and the address sit on the
+    // top row, where the cell geometry is exact.
+    enter(&mut s, f"printf '\\033[2J\\033[H'; echo '{link} {address}'")?
+    await_text(&mut s, 0, f"= \"{link} {address}")?
+    let Some(on_link) = cell_point(s, 0, 4) else { return Err(errors::new("the terminal has no cells")) }
+    let Some(on_address) = cell_point(s, 0, link.len() + 3) else { return Err(errors::new("the terminal has no cells")) }
+    let x, y = on_link
+    // A link is found where the screen shows it, so the pointer shows a hand
+    // once a paint has drawn the row.
+    s.hover(x, y)?
+    while s.cursor() != Some(windowing::SystemCursor::Pointer) {
+        require(s.step()?, "the session ended before the link showed")?
+        s.hover(x, y)?
+    }
+    let menu_over = |s: &mut gui::Session, x: i64, y: i64| -> Result<String, errors::Error> {
+        s.right_click_at(x, y)?
+        s.flush()?
+        require(s.popup_owners().any(|p| p.0 == "terminal-menu:main"), f"a right click opened {s.popup_owners()}")?
+        let shown = s.semantics(0).dump()
+        s.press(Key::Escape, Mods::default())?
+        s.flush()?
+        Ok(shown)
+    }
+    let over_link = menu_over(&mut s, x, y)?
+    for entry in #["Open Link", "Copy Link"] {
+        require(!entry_line(over_link, entry).is_empty(), f"the menu over a link lacks {entry}:\n{over_link}")?
+    }
+    require(entry_line(over_link, "Copy Email Address").is_empty(), f"the menu over a web link offers to copy an email address:\n{over_link}")?
+    s.run_command(0, commands::COPY_LINK)
+    s.flush()?
+    require(clipboard::text() == link, f"Copy Link copied {clipboard::text()}")?
+    let ax, ay = on_address
+    let over_address = menu_over(&mut s, ax, ay)?
+    for entry in #["Open Link", "Copy Link", "Copy Email Address"] {
+        require(!entry_line(over_address, entry).is_empty(), f"the menu over an address lacks {entry}:\n{over_address}")?
+    }
+    s.run_command(0, commands::COPY_EMAIL)
+    s.flush()?
+    require(clipboard::text() == address, f"Copy Email Address copied {clipboard::text()}")?
+    s.run_command(0, commands::COPY_LINK)
+    s.flush()?
+    require(clipboard::text() == f"mailto:{address}", f"Copy Link over an address copied {clipboard::text()}")?
+    s.press(Key::F10, Mods { shift: true, ..Mods::default() })?
+    s.flush()?
+    require(entry_line(s.semantics(0).dump(), "Open Link").is_empty(), "a menu opened from the keyboard offers to open a link")?
+    s.press(Key::Escape, Mods::default())?
+    s.flush()?
+    println("links: the pointer showed a hand over a printed URL; a right click on it offered Open Link and Copy Link, and on an email address Copy Email Address too; each copied what it names")
+
+    s.press(Key::N, chord)?
+    s.flush()?
+    require(s.window_count() == 2, f"New Window left {s.window_count()} windows")?
+    await_text(&mut s, 1, "$ ")?
+    s.run_command(1, commands::CLOSE_WINDOW)
+    s.flush()?
+    require(s.window_count() == 1, f"Close Window left {s.window_count()} windows")?
+    println("windows: Ctrl+Shift+N opened one, Close Window closed it")
+
+    s.focus("term-tab-1")?
+    s.press(Key::W, chord)?
+    while s.semantics(0).dump().contains("tablist") { require(s.step()?, "the session ended closing a tab")? }
+    enter(&mut s, "exit")?
+    while s.step()? {}
+    s.shutdown()
+    require(gui::app::host::callback_count() == 0, "the session leaked callbacks")?
+    println("close: Ctrl+Shift+W closed a tab, and the last shell's exit ended the session")
+    Ok(())
+}

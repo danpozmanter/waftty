@@ -1,0 +1,93 @@
+// waftty's application icon: a gust of wind in a terminal box, white on a
+// black rounded tile. Every shape is a distance field in a unit square (y
+// down), so its edges stay smooth at whatever size the icon is drawn.
+
+use std::math
+
+use gui
+
+const TILE_RADIUS: f64 = 0.2
+const STROKE: f64 = 0.028
+const CURL: f64 = 0.065
+
+// Distance from (px, py) to a rounded rectangle centred at (cx, cy) with
+// half extents (hw, hh) and corner radius r; negative inside.
+fn rounded_rect(px: f64, py: f64, cx: f64, cy: f64, hw: f64, hh: f64, r: f64) -> f64 {
+    let qx = math::abs(px - cx) - (hw - r)
+    let qy = math::abs(py - cy) - (hh - r)
+    math::hypot(qx.max(0.0), qy.max(0.0)) + qx.max(qy).min(0.0) - r
+}
+
+// Distance from (px, py) to the horizontal segment from (x0, y) to (x1, y).
+fn segment(px: f64, py: f64, x0: f64, x1: f64, y: f64) -> f64 {
+    math::hypot(px - math::clamp(px, x0, x1), py - y)
+}
+
+// Distance to a gust: a segment from (x0, y) to (x1, y) that runs on into
+// three quarters of a circle of radius CURL, curling up when `up` and down
+// otherwise. The quarter the curl leaves open faces back along the segment.
+fn gust(px: f64, py: f64, x0: f64, x1: f64, y: f64, up: bool) -> f64 {
+    let cy = if up { y - CURL } else { y + CURL }
+    let qx = px - x1
+    let qy = py - cy
+    let open = qx < 0.0 && (if up { qy > 0.0 } else { qy < 0.0 })
+    let curl = if open {
+        // The open quarter ends at the segment's end and at the curl's tip.
+        math::hypot(qx + CURL, qy)
+    } else {
+        math::abs(math::hypot(qx, qy) - CURL)
+    }
+    curl.min(segment(px, py, x0, x1, y))
+}
+
+// The share of a pixel `size` across that a shape at distance `d` covers.
+fn coverage(d: f64, size: i64) -> f64 {
+    math::clamp(0.5 - d * (size as f64), 0.0, 1.0)
+}
+
+/// The icon as a `size` pixel square, transparent outside its tile.
+pub fn waftty(size: i64) -> gui::AppIcon {
+    let mut rgba = #[0 as u8; size * size * 4]
+    for y in 0..size {
+        for x in 0..size {
+            let px = (x as f64 + 0.5) / (size as f64)
+            let py = (y as f64 + 0.5) / (size as f64)
+            let tile = coverage(rounded_rect(px, py, 0.5, 0.5, 0.48, 0.48, TILE_RADIUS), size)
+            if tile == 0.0 { continue }
+            let frame = math::abs(rounded_rect(px, py, 0.5, 0.5, 0.38, 0.32, 0.08))
+            let wind = gust(px, py, 0.28, 0.60, 0.41, true)
+                .min(segment(px, py, 0.24, 0.76, 0.51))
+                .min(gust(px, py, 0.32, 0.56, 0.61, false))
+            let white = coverage(frame.min(wind) - STROKE, size)
+            let i = (y * size + x) * 4
+            let level = (white * 255.0 + 0.5) as u8
+            rgba[i] = level
+            rgba[i + 1] = level
+            rgba[i + 2] = level
+            rgba[i + 3] = (tile * 255.0 + 0.5) as u8
+        }
+    }
+    gui::AppIcon { rgba: rgba, width: size, height: size }
+}
+
+#[cfg(test)]
+mod tests {
+    fn pixel(icon: gui::AppIcon, x: i64, y: i64) -> (u8, u8) {
+        let i = (y * icon.width + x) * 4
+        (icon.rgba[i], icon.rgba[i + 3])
+    }
+
+    #[test]
+    fn the_icon_is_white_strokes_on_a_black_tile_with_clear_corners() {
+        let icon = super::waftty(128)
+        assert_eq(icon.rgba.len(), 128 * 128 * 4)
+        assert_eq(pixel(icon, 0, 0), (0, 0))
+        // Inside the box, between the gusts.
+        assert_eq(pixel(icon, 64, 59), (0, 255))
+        // On the middle gust and on the box's left side.
+        assert_eq(pixel(icon, 64, 65), (255, 255))
+        assert_eq(pixel(icon, 15, 64), (255, 255))
+        // Outside the box, on the tile.
+        assert_eq(pixel(icon, 8, 64), (0, 255))
+    }
+}

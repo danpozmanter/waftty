@@ -1,0 +1,3 @@
+# Build output and the caches `gos build` keeps beside the sources.
+target/
+.gos-cache/

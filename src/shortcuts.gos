@@ -1,0 +1,129 @@
+// Shortcuts the user sets in `shortcuts.toml` in the configuration
+// directory, each command id naming a chord or a list of them; an empty list
+// leaves a command without one. What cannot work is reported, not dropped
+// in silence.
+
+use std::{errors, fs, path}
+use std::encoding::{json, toml}
+
+use gui::Command
+use gui::input::Shortcut
+use gui::services
+
+use info
+
+/// Where the shortcuts are read from.
+pub fn file() -> String {
+    path::join(services::config_dir(info::APP_ID), "shortcuts.toml")
+}
+
+/// The chords `text` (a `shortcuts.toml`) sets, by command id.
+pub fn parse(text: String) -> Result<Map<String, Vec<String>>, errors::Error> {
+    let value = json::parse(toml::to_json(text)?)?
+    let mut out: Map<String, Vec<String>> = Map::new()
+    for id in json::keys(value).unwrap_or(#[]) {
+        let Some(set) = json::get(value, id) else { continue }
+        if let Some(one) = json::as_str(set) {
+            out[id] = #[one]
+        } else if let Some(many) = json::as_array(set) {
+            let mut chords = #[]
+            for chord in many {
+                let Some(text) = json::as_str(chord) else {
+                    return Err(errors::new(f"{id}: a shortcut is a chord in quotes, such as \"Primary+Shift+T\""))
+                }
+                chords.push(text)
+            }
+            out[id] = chords
+        } else {
+            return Err(errors::new(f"{id}: a shortcut is a chord or a list of chords"))
+        }
+    }
+    Ok(out)
+}
+
+/// The shortcuts in the configuration directory, or none when there is no
+/// file; a file that does not read is the reason.
+pub fn load() -> Result<Map<String, Vec<String>>, errors::Error> {
+    let Ok(text) = fs::read_to_string(file()) else { return Ok(Map::new()) }
+    parse(text).map_err(|why| errors::wrap(why, f"reading {file()}"))
+}
+
+// Why `chord` cannot work as a shortcut in a terminal, or "".
+fn unusable(chord: String) -> String {
+    let Some(parsed) = Shortcut::parse(chord) else { return f"\"{chord}\" is not a chord waftty reads" }
+    let first = parsed.strokes[0]
+    let mac = gui::input::platform_is_macos()
+    let ctrl = first.ctrl || (first.primary && !mac)
+    let meta = first.meta || (first.primary && mac)
+    let alt, shift = first.alt, first.shift
+    let printable = gui::input::key_name(first.key).len() == 1
+    if printable && !ctrl && !alt && !meta {
+        return f"\"{chord}\" is a key the terminal types"
+    }
+    if printable && ctrl && !alt && !shift && !meta {
+        return f"\"{chord}\" is a Ctrl key programs need; add Shift"
+    }
+    ""
+}
+
+/// The problems with `chosen` against the commands `registry` offers: ids
+/// that name no command, and chords that cannot work.
+pub fn problems(chosen: Map<String, Vec<String>>, registry: Vec<Command>) -> Vec<String> {
+    let mut out = #[]
+    let mut ids = chosen.keys()
+    ids.sort()
+    for id in ids {
+        if !registry.any(|c| c.id == id) {
+            out.push(f"{id} is not a command")
+            continue
+        }
+        for chord in chosen[id] {
+            let why = unusable(chord)
+            if !why.is_empty() { out.push(f"{id}: {why}") }
+        }
+    }
+    out
+}
+
+/// `registry` with the shortcuts `chosen` sets in place of the defaults;
+/// a chord that cannot work is left out.
+pub fn apply(registry: Vec<Command>, chosen: Map<String, Vec<String>>) -> Vec<Command> {
+    registry.map(|c| {
+        let Some(chords) = chosen.get(c.id) else { return c }
+        let mut out = Command { shortcuts: #[], ..c }
+        for chord in chords {
+            if unusable(chord).is_empty() { out = out.key(chord) }
+        }
+        out
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use gui::Command
+
+    #[test]
+    fn a_shortcuts_file_reads_one_chord_or_several_per_command() {
+        let Ok(set) = super::parse("\"file.new-tab\" = \"Primary+Shift+Y\"\n\"tabs.next\" = [\"Ctrl+Tab\", \"Alt+Right\"]\n\"view.zoom-in\" = []\n") else {
+            panic("the file did not read")
+        }
+        assert_eq(set["file.new-tab"], #["Primary+Shift+Y"])
+        assert_eq(set["tabs.next"], #["Ctrl+Tab", "Alt+Right"])
+        assert_eq(set["view.zoom-in"], #[])
+        assert(super::parse("\"tabs.next\" = 3").is_err())
+    }
+
+    #[test]
+    fn unknown_commands_and_chords_a_terminal_cannot_give_up_are_reported_and_left_out() {
+        let registry = #[Command::new("file.new-tab", "New Tab").key("Primary+Shift+T"), Command::new("tabs.next", "Next Tab")]
+        let chosen = { "file.new-tab": #["Ctrl+T", "Ctrl+Shift+Y"], "tabs.next": #["x"], "no.such": #["F5"] }
+        let found = super::problems(chosen, registry)
+        assert_eq(found.len(), 3)
+        assert(found[0].contains("Ctrl key programs need"))
+        assert(found[1].contains("no.such"))
+        assert(found[2].contains("the terminal types"))
+        let applied = super::apply(registry, chosen)
+        assert_eq(applied[0].shortcuts.len(), 1)
+        assert_eq(applied[1].shortcuts.len(), 0)
+    }
+}

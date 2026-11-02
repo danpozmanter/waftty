@@ -1,0 +1,34 @@
+// What a window shows: its menu bar over the active tab's terminal, with a
+// tab strip joined between them while the window has more than one tab,
+// and the find bar under the terminal while it is open.
+
+use gui
+use gui::{TabItem, Widget}
+
+use commands
+use model
+use model::Model
+
+/// The main window.
+pub fn main(m: Model) -> Widget {
+    window(m, "main")
+}
+
+/// Window `key`.
+pub fn window(m: Model, key: String) -> Widget {
+    let Some(w) = model::window_index(m, key) else { return Widget::Empty }
+    let win = m.windows[w]
+    let terminal = match win.current() {
+        Some(tab) => tab.terminal.view(tab.view_id(), "Terminal", font: m.settings.font, font_size: model::font_size(m, w), scheme: model::scheme(m).colors)
+            .context_menu(f"terminal-menu:{key}", commands::context_menu())
+            .grow(1)
+        None => Widget::Empty
+    }
+    let body = if win.tabs.len() > 1 {
+        let items = win.tabs.map(|t| TabItem::new(t.key, t.label()).pinned(t.pinned).attention(t.attention).tooltip(t.label()))
+        Widget::joined_tabs(win.strip_id(), items, win.active, terminal).grow(1)
+    } else {
+        terminal
+    }
+    Widget::column(#[commands::menu_bar(m, key), body, win.find.view()], 0)
+}

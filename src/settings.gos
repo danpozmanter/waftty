@@ -1,0 +1,182 @@
+// The user's settings: what new tabs run and how terminals look, stored in
+// the application's configuration directory and edited in the Settings
+// dialog.
+
+use std::{env, errors, os}
+
+use gui
+use gui::dialogs::request
+use gui::dialogs::request::{PreferenceField, PreferenceKind, PreferencePage}
+use gui::services
+
+use encodings
+use info
+use schemes
+
+// The layout of the stored settings; a change of meaning bumps it. Format 2
+// names the color scheme `scheme`, where format 1 named the light or dark
+// choice `theme`.
+const FORMAT: i64 = 2
+
+/// What every new tab and window uses.
+#[derive(PartialEq)]
+pub struct Settings {
+    /// The program new tabs run; empty runs the user's shell.
+    pub shell: String
+    /// Where new tabs start; empty starts where waftty did.
+    pub directory: String
+    /// The character set new tabs start with.
+    pub encoding: String
+    /// The font family; empty takes the bundled monospace face.
+    pub font: String
+    /// The text size in points.
+    pub font_size: f64
+    /// Rows of history each new tab keeps.
+    pub scrollback: i64
+    /// The color scheme's id: "system", a built-in one, or "user:<name>".
+    pub scheme: String
+    /// Where a new tab starts: "current", the directory of the tab it opens
+    /// from, or "configured", `directory`.
+    pub new_tabs: String
+    /// Whether programs may write the clipboard (OSC 52); they can never
+    /// read it.
+    pub clipboard_write: bool
+    /// The command a Ctrl+click on a file path runs in a new tab, with
+    /// {path}, {line} and {col} filled in; empty opens the path with the
+    /// desktop's opener.
+    pub editor: String
+}
+
+impl Default for Settings {
+    fn default() -> Settings {
+        Settings { shell: "", directory: "", encoding: encodings::DEFAULT, font: "", font_size: 10.0, scrollback: 2_000, scheme: schemes::SYSTEM, new_tabs: "current", clipboard_write: true, editor: "" }
+    }
+}
+
+pub const FONT_SIZE_MIN: i64 = 6
+pub const FONT_SIZE_MAX: i64 = 48
+const SCROLLBACK_MAX: i64 = 100_000
+
+fn file() -> String {
+    services::settings_path(info::APP_ID, "settings")
+}
+
+/// The stored settings; a missing file answers the defaults.
+pub fn load() -> Result<Settings, errors::Error> {
+    let stored = services::load_settings(file(), FORMAT, |old, s| {
+        let mut out = s
+        if old < 2 && let Some(theme) = out.values.get("theme") { out.values["scheme"] = theme }
+        out
+    })?
+    Ok(with_values(Settings::default(), stored.values))
+}
+
+pub fn save(s: Settings) -> Result<(), errors::Error> {
+    let mut stored = services::Settings { version: FORMAT, values: Map::new() }
+    for (key, value) in values(s) { stored.set(key, value) }
+    services::save_settings(file(), stored)
+}
+
+fn values(s: Settings) -> Vec<(String, String)> {
+    #[
+        ("shell", s.shell)
+        ("directory", s.directory)
+        ("encoding", s.encoding)
+        ("font", s.font)
+        ("font_size", f"{s.font_size}")
+        ("scrollback", f"{s.scrollback}")
+        ("scheme", s.scheme)
+        ("new_tabs", s.new_tabs)
+        ("clipboard_write", if s.clipboard_write { "true" } else { "false" })
+        ("editor", s.editor)
+    ]
+}
+
+/// `s` with the fields `values` names replaced, each one kept when its new
+/// value is out of range; a Settings dialog answers such a map.
+pub fn with_values(s: Settings, values: Map<String, String>) -> Settings {
+    let mut out = s
+    if let Some(v) = values.get("shell") { out.shell = v.trim() }
+    if let Some(v) = values.get("directory") { out.directory = v.trim() }
+    if let Some(v) = values.get("encoding") && encodings::known(v) { out.encoding = v }
+    if let Some(v) = values.get("font") { out.font = v.trim() }
+    if let Some(v) = values.get("font_size") && let Some(size) = v.to_f64() && size >= FONT_SIZE_MIN as f64 && size <= FONT_SIZE_MAX as f64 {
+        out.font_size = size
+    }
+    if let Some(v) = values.get("scrollback") && let Some(rows) = v.to_i64() && rows >= 0 && rows <= SCROLLBACK_MAX {
+        out.scrollback = rows
+    }
+    if let Some(v) = values.get("scheme") && !v.trim().is_empty() { out.scheme = v.trim() }
+    if let Some(v) = values.get("new_tabs") && (v == "current" || v == "configured") { out.new_tabs = v }
+    if let Some(v) = values.get("clipboard_write") && (v == "true" || v == "false") { out.clipboard_write = v == "true" }
+    if let Some(v) = values.get("editor") { out.editor = v.trim() }
+    out
+}
+
+fn field(key: String, label: String, kind: PreferenceKind, value: String, default: String, help: String) -> PreferenceField {
+    PreferenceField { key: key, label: label, kind: kind, value: value, default: default, help: help }
+}
+
+/// The Settings dialog showing `s`, its font chosen from `fonts`, the
+/// installed monospace families, and its scheme from `offered`.
+pub fn dialog(s: Settings, fonts: Vec<String>, offered: Vec<schemes::Entry>) -> gui::DialogRequest {
+    let d = Settings::default()
+    let charsets = encodings::all().map(|c| (c.label, c.name))
+    let mut themes = offered.map(|e| (e.id, e.name))
+    if !themes.any(|t| t.0 == s.scheme) { themes.push((s.scheme, s.scheme)) }
+    let starts = #[("current", "In the current tab's directory"), ("configured", "In the working directory")]
+    let mut families = #[("", "IBM Plex Mono (built in)")]
+    for family in fonts { families.push((family, family)) }
+    if !s.font.is_empty() && !families.any(|f| f.0 == s.font) {
+        families.push((s.font, s.font))
+    }
+    request::preferences("settings", "Settings", #[
+        PreferencePage { key: "settings", title: "Settings", fields: #[
+            field("shell", "Shell", PreferenceKind::Text, s.shell, d.shell, f"The program new tabs run. Empty runs {default_shell()}.")
+            field("directory", "Working directory", PreferenceKind::Text, s.directory, d.directory, "Where new windows start. Empty starts where waftty did.")
+            field("new_tabs", "New tabs start", PreferenceKind::Choice(starts), s.new_tabs, d.new_tabs, "A shell that does not report its directory is read from its process on Linux and macOS.")
+            field("encoding", "Encoding", PreferenceKind::Choice(charsets), s.encoding, d.encoding, "The character set new tabs read and write.")
+            field("scrollback", "Scrollback rows", PreferenceKind::Integer(0, SCROLLBACK_MAX), f"{s.scrollback}", f"{d.scrollback}", "Rows of history each new tab keeps.")
+            field("font", "Font", PreferenceKind::Choice(families), s.font, d.font, "")
+            field("font_size", "Font size", PreferenceKind::Integer(FONT_SIZE_MIN, FONT_SIZE_MAX), f"{s.font_size as i64}", f"{d.font_size as i64}", "In points.")
+            field("scheme", "Color scheme", PreferenceKind::Choice(themes), s.scheme, d.scheme, f"More schemes load from files such as {schemes::file_for("name")}.")
+            field("clipboard_write", "Programs may copy to the clipboard", PreferenceKind::Toggle, if s.clipboard_write { "true" } else { "false" }, "true", "Lets programs such as neovim or tmux, local or over SSH, set the clipboard (OSC 52). Programs can never read it.")
+            field("editor", "Editor for file paths", PreferenceKind::Text, s.editor, d.editor, "Ctrl+click on a path runs this in a new tab, such as \"vim +{line} {path}\" or \"code -g {path}:{line}:{col}\". Empty opens the file with the desktop.")
+        ] }
+    ])
+}
+
+/// The shell that runs when no shell is set.
+pub fn default_shell() -> String {
+    if os::family() == "windows" { "cmd.exe" } else { env::var("SHELL").unwrap_or("/bin/sh") }
+}
+
+/// The program a new tab runs.
+pub fn command(s: Settings) -> gui::terminal::Command {
+    let program = if s.shell.is_empty() { default_shell() } else { s.shell }
+    gui::terminal::Command { program: program, args: #[], cwd: s.directory, env: #[] }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Settings
+
+    #[test]
+    fn values_out_of_range_keep_the_setting_they_would_replace() {
+        let s = super::with_values(Settings::default(), { "font_size": "200", "scrollback": "500", "encoding": "UTF-16LE", "scheme": "dark", "new_tabs": "elsewhere", "clipboard_write": "maybe" })
+        assert_eq(s.font_size, 10.0)
+        assert_eq(s.scrollback, 500)
+        assert_eq(s.encoding, "UTF-8")
+        assert_eq(s.scheme, "dark")
+        assert_eq(s.new_tabs, "current")
+        assert(s.clipboard_write)
+    }
+
+    #[test]
+    fn stored_values_read_back_as_the_same_settings() {
+        let s = Settings { shell: "/bin/zsh", directory: "/tmp", encoding: "KOI8-R", font: "Mono", font_size: 12.5, scrollback: 9000, scheme: "user:night", new_tabs: "configured", clipboard_write: false, editor: "vim +{line} {path}" }
+        let mut map: Map<String, String> = Map::new()
+        for (k, v) in super::values(s) { map[k] = v }
+        assert_eq(super::with_values(Settings::default(), map), s)
+    }
+}

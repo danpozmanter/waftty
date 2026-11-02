@@ -1,0 +1,183 @@
+// Find in a tab: a bar under the terminal takes the text and whether case
+// matters, words must be whole or it is a regular expression. Every search
+// runs over the active tab's whole buffer, history included, highlights
+// each match and selects the chosen one.
+
+use gui
+use gui::{Effect, UiMsg}
+use gui::terminal::Span
+use gui::widgets::find::FindRequest
+
+use model
+use model::{Found, Model}
+
+/// Which match a search selects.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Step {
+    /// The newest match at or before the last one, as a new search.
+    Search
+    Next
+    Previous
+}
+
+// The most matches one search highlights; a search with more highlights
+// those nearest the selected one.
+const HIGHLIGHT_LIMIT: i64 = 10_000
+
+/// Opens window `w`'s find bar, offering the tab's selection when it is one
+/// line, and searches for what it holds.
+pub fn open(m: &mut Model, w: i64) {
+    if let Some(tab) = m.windows[w].current() && let Ok(picked) = tab.terminal.copy() && !picked.is_empty() && !picked.contains("\n") {
+        m.windows[w].find.query = picked
+    }
+    m.windows[w].find.show(false)
+    gui::perform(Effect::FocusIn(m.windows[w].key, m.windows[w].find.query_id()))
+    run(m, m.windows[w].key, Step::Search)
+}
+
+/// Closes window `w`'s find bar and gives the terminal back its focus.
+pub fn close(m: &mut Model, w: i64) {
+    m.windows[w].find.open = false
+    m.found = None
+    if let Some(tab) = m.windows[w].current() {
+        let _ = tab.terminal.clear_highlight()
+        gui::perform(Effect::FocusIn(m.windows[w].key, tab.view_id()))
+    }
+}
+
+/// Folds a message for one of the find bars into it, answering whether it
+/// was one.
+pub fn message(m: &mut Model, msg: UiMsg) -> bool {
+    let mut w = 0
+    while w < m.windows.len() {
+        let request = m.windows[w].find.update(msg)
+        let window = m.windows[w].key
+        match request {
+            FindRequest::Nothing => ()
+            FindRequest::Search => {
+                m.found = None
+                run(m, window, Step::Search)
+                return true
+            }
+            FindRequest::Next | FindRequest::Replace => {
+                run(m, window, Step::Next)
+                return true
+            }
+            FindRequest::Previous => {
+                run(m, window, Step::Previous)
+                return true
+            }
+            FindRequest::ReplaceAll => return true
+            FindRequest::Close => {
+                close(m, w)
+                return true
+            }
+        }
+        w += 1
+    }
+    false
+}
+
+/// Searches window `window`'s active tab for what its find bar holds,
+/// highlights the matches and selects the one `step` names.
+pub fn run(m: &mut Model, window: String, step: Step) {
+    let Some(w) = model::window_index(*m, window) else { return }
+    let Some(tab) = m.windows[w].current() else { return }
+    let bar = m.windows[w].find
+    if bar.query.is_empty() {
+        m.windows[w].find.found(0, -1)
+        let _ = tab.terminal.clear_highlight()
+        return
+    }
+    let spans = match tab.terminal.find(bar.query, bar.options) {
+        Ok(spans) => spans
+        // A regular expression being typed is often unfinished: the bar
+        // counts no matches until it reads.
+        Err(_) => #[]
+    }
+    if spans.is_empty() {
+        m.found = None
+        m.windows[w].find.found(0, -1)
+        let _ = tab.terminal.clear_highlight()
+        let _ = tab.terminal.clear_selection()
+        return
+    }
+    let from = match m.found {
+        Some(f) if f.tab == tab.key => Some(f.span)
+        _ => None
+    }
+    let at = pick(spans, from, step)
+    m.found = Some(Found { tab: tab.key, span: spans[at] })
+    m.windows[w].find.found(spans.len(), at)
+    gui::perform(Effect::Announce(f"Match {at + 1} of {spans.len()}"))
+    let _ = tab.terminal.highlight(nearest(spans, at))
+    if let Err(why) = tab.terminal.reveal(spans[at]) {
+        model::report(window, "Could not show the match", why)
+    }
+}
+
+// At most `HIGHLIGHT_LIMIT` of `spans`, centered on match `at`.
+fn nearest(spans: Vec<Span>, at: i64) -> Vec<Span> {
+    if spans.len() <= HIGHLIGHT_LIMIT { return spans }
+    let first = (at - HIGHLIGHT_LIMIT / 2).clamp(0, spans.len() - HIGHLIGHT_LIMIT)
+    spans.iter().skip(first).take(HIGHLIGHT_LIMIT).collect()
+}
+
+fn start(s: Span) -> (i64, i64) {
+    (s.start.row, s.start.col)
+}
+
+/// The index of the match `step` selects among `spans` (in buffer order,
+/// not empty): a new search takes the last match at or before `from`, else
+/// the newest; Next takes the first after `from` and Previous the last
+/// before it, each wrapping around.
+pub fn pick(spans: Vec<Span>, from: Option<Span>, step: Step) -> i64 {
+    let last = spans.len() - 1
+    let Some(f) = from else {
+        return if step == Step::Next { 0 } else { last }
+    }
+    let here = start(f)
+    if step == Step::Next {
+        return spans.iter().position(|s| start(s) > here).unwrap_or(0)
+    }
+    let mut i = last
+    while i >= 0 {
+        let s = start(spans[i])
+        if s < here || (step == Step::Search && s == here) { return i }
+        i -= 1
+    }
+    last
+}
+
+#[cfg(test)]
+mod tests {
+    use gui::terminal::{Cell, Span}
+
+    use super::Step
+
+    fn span(row: i64, col: i64) -> Span {
+        Span { start: Cell { row: row, col: col }, end: Cell { row: row, col: col + 3 } }
+    }
+
+    #[test]
+    fn a_new_search_takes_the_newest_match_and_steps_wrap_around() {
+        let spans = #[span(1, 0), span(4, 2), span(4, 9), span(30, 0)]
+        assert_eq(super::pick(spans, None, Step::Search), 3)
+        assert_eq(super::pick(spans, Some(span(4, 2)), Step::Next), 2)
+        assert_eq(super::pick(spans, Some(span(30, 0)), Step::Next), 0)
+        assert_eq(super::pick(spans, Some(span(4, 2)), Step::Previous), 0)
+        assert_eq(super::pick(spans, Some(span(1, 0)), Step::Previous), 3)
+        assert_eq(super::pick(spans, Some(span(5, 0)), Step::Search), 2)
+        assert_eq(super::pick(spans, Some(span(4, 9)), Step::Search), 2)
+    }
+
+    #[test]
+    fn a_search_with_too_many_matches_highlights_those_around_the_selected_one() {
+        let mut spans = #[]
+        for row in 0..12_000 { spans.push(span(row, 0)) }
+        let shown = super::nearest(spans, 11_990)
+        assert_eq(shown.len(), super::HIGHLIGHT_LIMIT)
+        assert_eq(shown[shown.len() - 1].start.row, 11_999)
+        assert_eq(super::nearest(spans.iter().take(10).collect(), 3).len(), 10)
+    }
+}

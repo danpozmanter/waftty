@@ -1,0 +1,28 @@
+// A windowed program on Windows starts with no console, so what it prints
+// reaches a console it was started from only once it attaches to it.
+
+#[cfg(windows)]
+unsafe extern "system" {
+    fn GetStdHandle(which: u32) -> usize
+    fn AttachConsole(process: u32) -> i32
+}
+
+#[cfg(windows)]
+const STD_OUTPUT_HANDLE: u32 = 0xFFFFFFF5
+
+#[cfg(windows)]
+const ATTACH_PARENT_PROCESS: u32 = 0xFFFFFFFF
+
+/// Sends what waftty prints to the console that started it, if one did. A
+/// pipe or file it was handed already carries the output, and is kept.
+#[cfg(windows)]
+pub fn attach() {
+    let handle = unsafe { GetStdHandle(STD_OUTPUT_HANDLE) }
+    if handle == 0 || handle == usize::MAX {
+        unsafe { AttachConsole(ATTACH_PARENT_PROCESS) }
+    }
+}
+
+/// Elsewhere a program prints to the terminal it was started from.
+#[cfg(not(windows))]
+pub fn attach() {}

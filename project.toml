@@ -1,0 +1,13 @@
+[project]
+id = "dev.gossamer/waftty"
+version = "0.1.0"
+gossamer-version = "^v0.75.13"
+# A GUI application: Windows opens no console window beside it.
+windows-subsystem = "windows"
+authors = ["Dan Pozmanter"]
+license = "Apache 2.0"
+
+[dependencies]
+"github.com/gossamer-lang/gui-gos" = { path = "../goose-libs/gui-gos" }
+"github.com/gossamer-lang/gui-engine-gos" = { path = "../goose-libs/gui-engine-gos" }
+"github.com/gossamer-lang/windowing-gos" = { path = "../goose-libs/windowing-gos" }

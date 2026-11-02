@@ -1,0 +1,254 @@
+// The commands a window offers and the menu bar that names them, which is
+// all a window shows besides its terminal. A terminal takes plain Ctrl
+// chords for its program, so waftty's shortcuts sit on Ctrl+Shift
+// (Command+Shift on macOS), which the terminal leaves to the window.
+
+use gui
+use gui::Command
+use gui::widgets::menus
+use gui::widgets::menus::{Menu, MenuItem}
+
+use encodings
+use model
+use model::Model
+use shortcuts
+use signals
+
+pub const NEW_TAB: String = "file.new-tab"
+pub const NEW_WINDOW: String = "file.new-window"
+pub const CLOSE_TAB: String = "file.close-tab"
+pub const CLOSE_WINDOW: String = "file.close-window"
+pub const COPY: String = "edit.copy"
+pub const PASTE: String = "edit.paste"
+pub const SELECT_ALL: String = "edit.select-all"
+pub const OPEN_LINK: String = "edit.open-link"
+pub const COPY_LINK: String = "edit.copy-link"
+pub const COPY_EMAIL: String = "edit.copy-email"
+pub const FULLSCREEN: String = "view.fullscreen"
+pub const ZOOM_IN: String = "view.zoom-in"
+pub const ZOOM_OUT: String = "view.zoom-out"
+pub const NORMAL_SIZE: String = "view.normal-size"
+pub const FIND: String = "terminal.find"
+pub const FIND_NEXT: String = "terminal.find-next"
+pub const FIND_PREVIOUS: String = "terminal.find-previous"
+pub const FIND_CLOSE: String = "terminal.find-close"
+pub const PREVIOUS_PROMPT: String = "terminal.previous-prompt"
+pub const NEXT_PROMPT: String = "terminal.next-prompt"
+pub const SELECT_OUTPUT: String = "terminal.select-output"
+pub const RESET: String = "terminal.reset"
+pub const SETTINGS: String = "terminal.settings"
+pub const NEXT_TAB: String = "tabs.next"
+pub const PREVIOUS_TAB: String = "tabs.previous"
+pub const LAST_TAB: String = "tabs.last-active"
+pub const MOVE_LEFT: String = "tabs.move-left"
+pub const MOVE_RIGHT: String = "tabs.move-right"
+pub const ABOUT: String = "help.about"
+
+/// The points one Zoom In or Zoom Out adds or takes away.
+pub const ZOOM_STEP: f64 = 1.0
+
+const SIGNAL_PREFIX: String = "terminal.signal:"
+const ENCODING_PREFIX: String = "terminal.encoding:"
+const SHOW_PREFIX: String = "tabs.show:"
+
+/// The command that sends signal `number`.
+pub fn signal_command(number: i64) -> String {
+    f"{SIGNAL_PREFIX}{number}"
+}
+
+/// The command that sets character set `label`.
+pub fn encoding_command(label: String) -> String {
+    f"{ENCODING_PREFIX}{label}"
+}
+
+/// The command that shows tab `key`.
+pub fn show_command(key: String) -> String {
+    f"{SHOW_PREFIX}{key}"
+}
+
+fn suffix(id: String, prefix: String) -> Option<String> {
+    if !id.starts_with(prefix) { return None }
+    Some(id.substring(prefix.byte_len(), id.byte_len()))
+}
+
+/// The signal number command `id` sends, if it is a Send Signal command.
+pub fn signal_of(id: String) -> Option<i64> {
+    suffix(id, SIGNAL_PREFIX)?.to_i64()
+}
+
+/// The character set command `id` sets, if it is a Set Encoding command.
+pub fn encoding_of(id: String) -> Option<String> {
+    suffix(id, ENCODING_PREFIX)
+}
+
+/// The address a mailto link names, without the headers after a `?`.
+pub fn email_of(link: String) -> Option<String> {
+    let rest = suffix(link, "mailto:")?
+    let address = match rest.find("?") {
+        Some(at) => rest.substring(0, at)
+        None => rest
+    }
+    if address.is_empty() { None } else { Some(address) }
+}
+
+/// The tab command `id` shows, if it is one of the Tabs menu's tab entries.
+pub fn shown_tab_of(id: String) -> Option<String> {
+    suffix(id, SHOW_PREFIX)
+}
+
+/// The commands window `key` offers, with their state for its active tab.
+pub fn registry(m: Model, key: String) -> Vec<Command> {
+    let window = match model::window_index(m, key) {
+        Some(w) => m.windows[w]
+        None => model::window(key)
+    }
+    let current = window.current()
+    let has_tab = current.is_some()
+    let pinned = match current { Some(t) => t.pinned, None => false }
+    let at = window.index_of(window.active).unwrap_or(0)
+    let tabs = window.tabs.len()
+    let searchable = has_tab && !window.find.query.is_empty()
+    let encoding = match current { Some(t) => t.encoding, None => "" }
+    let link = match current { Some(t) => t.link, None => "" }
+    let mut out = #[
+        Command::new(NEW_TAB, "New Tab").key("Primary+Shift+T").category("File")
+        Command::new(NEW_WINDOW, "New Window").key("Primary+Shift+N").category("File")
+        Command::new(CLOSE_TAB, "Close Tab").key("Primary+Shift+W").category("File").enabled(has_tab && !pinned)
+        Command::new(CLOSE_WINDOW, "Close Window").key("Primary+Shift+Q").category("File")
+        // The plain chords remain for text fields, such as the Find form's.
+        Command::new(COPY, "Copy").key("Primary+Shift+C").key("Primary+C").category("Edit")
+        Command::new(PASTE, "Paste").key("Primary+Shift+V").key("Primary+V").category("Edit")
+        Command::new(SELECT_ALL, "Select All").key("Primary+Shift+A").key("Primary+A").category("Edit")
+        Command::new(OPEN_LINK, "Open Link").category("Edit").visible(!link.is_empty())
+        Command::new(COPY_LINK, "Copy Link").category("Edit").visible(!link.is_empty())
+        Command::new(COPY_EMAIL, "Copy Email Address").category("Edit").visible(email_of(link).is_some())
+        Command::new(FULLSCREEN, "Fullscreen").key("F11").category("View").checked(window.fullscreen)
+        Command::new(ZOOM_IN, "Zoom In").key("Primary+Shift+=").category("View").enabled(model::can_zoom(m.settings, window, ZOOM_STEP))
+        Command::new(ZOOM_OUT, "Zoom Out").key("Primary+Shift+-").category("View").enabled(model::can_zoom(m.settings, window, -ZOOM_STEP))
+        Command::new(NORMAL_SIZE, "Normal Size").key("Primary+Shift+0").category("View").enabled(window.zoom != 0.0)
+        Command::new(FIND, "Find").key("Primary+Shift+F").category("Terminal").enabled(has_tab)
+        Command::new(FIND_NEXT, "Find Next").key("Primary+Shift+G").category("Terminal").enabled(searchable)
+        Command::new(FIND_PREVIOUS, "Find Previous").key("Primary+Shift+H").category("Terminal").enabled(searchable)
+        Command::new(FIND_CLOSE, "Close Find").key("Escape").category("Terminal").enabled(window.find.open).visible(window.find.open)
+        Command::new(PREVIOUS_PROMPT, "Previous Prompt").key("Primary+Shift+Up").category("Terminal").enabled(has_tab)
+        Command::new(NEXT_PROMPT, "Next Prompt").key("Primary+Shift+Down").category("Terminal").enabled(has_tab)
+        Command::new(SELECT_OUTPUT, "Select Last Output").category("Terminal").enabled(has_tab)
+        Command::new(RESET, "Reset").category("Terminal").enabled(has_tab)
+        Command::new(SETTINGS, "Settings...").category("Terminal")
+        Command::new(PREVIOUS_TAB, "Previous Tab").key("Ctrl+Shift+Tab").category("Tabs").enabled(tabs > 1)
+        Command::new(NEXT_TAB, "Next Tab").key("Ctrl+Tab").category("Tabs").enabled(tabs > 1)
+        Command::new(LAST_TAB, "Last Active Tab").key("Primary+Shift+L").category("Tabs").enabled(window.index_of(window.previous).is_some())
+        Command::new(MOVE_LEFT, "Move Tab Left").key("Primary+Shift+PageUp").category("Tabs").enabled(has_tab && at > 0)
+        Command::new(MOVE_RIGHT, "Move Tab Right").key("Primary+Shift+PageDown").category("Tabs").enabled(has_tab && at + 1 < tabs)
+        Command::new(ABOUT, "About waftty").category("Help")
+    ]
+    let sendable = has_tab && signals::supported()
+    for s in signals::table() {
+        out.push(Command::new(signal_command(s.number), f"{s.number} {s.name}").category("Send Signal").enabled(sendable))
+    }
+    for c in encodings::all() {
+        out.push(Command::new(encoding_command(c.label), c.name).category("Set Encoding").enabled(has_tab).checked(c.label == encoding))
+    }
+    let mut n = 0
+    for t in window.tabs {
+        n += 1
+        out.push(Command::new(show_command(t.key), f"{n}  {t.label()}").category("Tabs").checked(t.key == window.active))
+    }
+    shortcuts::apply(out, m.shortcuts)
+}
+
+// The Send Signal submenu, one entry per signal.
+fn signal_menu() -> MenuItem {
+    let mut items = #[]
+    for s in signals::table() { items.push(menus::item(signal_command(s.number))) }
+    menus::submenu("Send &Signal", items)
+}
+
+fn zoom_menu() -> MenuItem {
+    menus::submenu("&Zoom", #[menus::item(ZOOM_IN), menus::item(ZOOM_OUT), menus::item(NORMAL_SIZE)])
+}
+
+/// What a right click on a terminal offers.
+pub fn context_menu() -> Vec<MenuItem> {
+    #[
+        menus::item(OPEN_LINK), menus::item(COPY_LINK), menus::item(COPY_EMAIL), MenuItem::Separator
+        menus::item(COPY), menus::item(PASTE), MenuItem::Separator, signal_menu(), zoom_menu()
+    ]
+}
+
+/// The menu bar of window `key`; its Tabs menu lists the window's tabs.
+pub fn menu_bar(m: Model, key: String) -> gui::Widget {
+    let mut encoding_items = #[menus::radio(encoding_command(encodings::DEFAULT), "")]
+    encoding_items.push(MenuItem::Separator)
+    for g in encodings::groups() {
+        encoding_items.push(menus::submenu(g.title, g.charsets.map(|c| menus::radio(encoding_command(c.label), ""))))
+    }
+    let mut tab_items = #[
+        menus::item(PREVIOUS_TAB), menus::item(NEXT_TAB), menus::item(LAST_TAB), MenuItem::Separator
+        menus::item(MOVE_LEFT), menus::item(MOVE_RIGHT), MenuItem::Separator
+    ]
+    if let Some(w) = model::window_index(m, key) {
+        for t in m.windows[w].tabs { tab_items.push(menus::radio(show_command(t.key), "")) }
+    }
+    gui::Widget::joined_menu_bar("menu", #[
+        Menu::new("&File", #[
+            menus::item(NEW_TAB), menus::item(NEW_WINDOW), MenuItem::Separator
+            menus::item(CLOSE_TAB), menus::item(CLOSE_WINDOW)
+        ])
+        Menu::new("&Edit", #[menus::item(COPY), menus::item(PASTE), MenuItem::Separator, menus::item(SELECT_ALL)])
+        Menu::new("&View", #[menus::item(FULLSCREEN), MenuItem::Separator, zoom_menu()])
+        Menu::new("&Terminal", #[
+            menus::item(FIND), menus::item(FIND_NEXT), menus::item(FIND_PREVIOUS), MenuItem::Separator
+            menus::item(PREVIOUS_PROMPT), menus::item(NEXT_PROMPT), menus::item(SELECT_OUTPUT), MenuItem::Separator
+            menus::item(RESET), signal_menu(), menus::submenu("Set &Encoding", encoding_items)
+            MenuItem::Separator
+            menus::item(SETTINGS)
+        ])
+        Menu::new("T&abs", tab_items)
+        Menu::new("&Help", #[menus::item(ABOUT)])
+    ])
+}
+
+#[cfg(test)]
+mod tests {
+    use gui::terminal::Terminal
+
+    use model
+    use model::Model
+    use settings::Settings
+
+    #[test]
+    fn signal_encoding_and_tab_commands_read_back_what_they_name() {
+        assert_eq(super::signal_of(super::signal_command(15)), Some(15))
+        assert_eq(super::signal_of(super::FIND), None)
+        assert_eq(super::encoding_of(super::encoding_command("KOI8-R")), Some("KOI8-R"))
+        assert_eq(super::encoding_of(super::RESET), None)
+        assert_eq(super::shown_tab_of(super::show_command("tab-3")), Some("tab-3"))
+        assert_eq(super::shown_tab_of(super::NEXT_TAB), None)
+    }
+
+    fn shown(m: Model, id: String) -> bool {
+        super::registry(m, "main").iter().find(|c| c.id == id).map(|c| c.visible) == Some(true)
+    }
+
+    #[test]
+    fn the_link_entries_show_only_over_a_link_and_the_email_entry_over_an_address() {
+        let mut m = model::new(Settings::default())
+        m.windows[0].tabs.push(model::Tab { key: "tab-1", terminal: Terminal { id: 0 }, title: "", encoding: "", pinned: false, link: "", attention: false })
+        m.windows[0].active = "tab-1"
+        assert(!shown(m, super::OPEN_LINK) && !shown(m, super::COPY_LINK) && !shown(m, super::COPY_EMAIL))
+        m.windows[0].tabs[0].link = "https://example.org/"
+        assert(shown(m, super::OPEN_LINK) && shown(m, super::COPY_LINK))
+        assert(!shown(m, super::COPY_EMAIL))
+        m.windows[0].tabs[0].link = "mailto:me@example.org"
+        assert(shown(m, super::OPEN_LINK) && shown(m, super::COPY_LINK) && shown(m, super::COPY_EMAIL))
+    }
+
+    #[test]
+    fn an_email_address_is_read_from_its_mailto_link() {
+        assert_eq(super::email_of("mailto:me@example.org"), Some("me@example.org"))
+        assert_eq(super::email_of("mailto:me@example.org?subject=hi"), Some("me@example.org"))
+        assert_eq(super::email_of("mailto:"), None)
+        assert_eq(super::email_of("https://example.org/"), None)
+    }
+}

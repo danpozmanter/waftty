@@ -1,0 +1,5 @@
+// What identifies waftty to the desktop and in its About dialog.
+
+pub const NAME: String = "waftty"
+pub const APP_ID: String = "dev.gossamer.waftty"
+pub const VERSION: String = "0.1.0"

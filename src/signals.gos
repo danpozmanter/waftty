@@ -1,0 +1,73 @@
+// The signals the Send Signal menu offers: numbers 1 to 30 with the names
+// this platform gives them. Linux and the BSDs (macOS included) number them
+// differently; Windows has none to send.
+
+/// One signal: its number on this platform and its name.
+#[derive(PartialEq)]
+pub struct Signal {
+    pub number: i64
+    pub name: String
+}
+
+/// Whether this platform can send signals to a terminal's job.
+#[cfg(unix)]
+pub fn supported() -> bool { true }
+
+/// Whether this platform can send signals to a terminal's job.
+#[cfg(not(unix))]
+pub fn supported() -> bool { false }
+
+fn numbered(names: [String; 30]) -> Vec<Signal> {
+    let mut out = #[]
+    let mut n = 0
+    for name in names {
+        n += 1
+        out.push(Signal { number: n, name: name })
+    }
+    out
+}
+
+/// Signals 1 to 30 as this platform numbers them.
+#[cfg(target_os = "linux")]
+pub fn table() -> Vec<Signal> {
+    numbered(LINUX)
+}
+
+/// Signals 1 to 30 as this platform numbers them.
+#[cfg(all(unix, not(target_os = "linux")))]
+pub fn table() -> Vec<Signal> {
+    numbered(BSD)
+}
+
+/// Signals 1 to 30 by their Linux numbers; on Windows they are listed but
+/// cannot be sent.
+#[cfg(not(unix))]
+pub fn table() -> Vec<Signal> {
+    numbered(LINUX)
+}
+
+const LINUX: [String; 30] = [
+    "SIGHUP", "SIGINT", "SIGQUIT", "SIGILL", "SIGTRAP", "SIGABRT", "SIGBUS", "SIGFPE", "SIGKILL", "SIGUSR1"
+    "SIGSEGV", "SIGUSR2", "SIGPIPE", "SIGALRM", "SIGTERM", "SIGSTKFLT", "SIGCHLD", "SIGCONT", "SIGSTOP", "SIGTSTP"
+    "SIGTTIN", "SIGTTOU", "SIGURG", "SIGXCPU", "SIGXFSZ", "SIGVTALRM", "SIGPROF", "SIGWINCH", "SIGIO", "SIGPWR"
+]
+
+const BSD: [String; 30] = [
+    "SIGHUP", "SIGINT", "SIGQUIT", "SIGILL", "SIGTRAP", "SIGABRT", "SIGEMT", "SIGFPE", "SIGKILL", "SIGBUS"
+    "SIGSEGV", "SIGSYS", "SIGPIPE", "SIGALRM", "SIGTERM", "SIGURG", "SIGSTOP", "SIGTSTP", "SIGCONT", "SIGCHLD"
+    "SIGTTIN", "SIGTTOU", "SIGIO", "SIGXCPU", "SIGXFSZ", "SIGVTALRM", "SIGPROF", "SIGWINCH", "SIGINFO", "SIGUSR1"
+]
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_table_numbers_thirty_signals_with_the_common_ones_in_place() {
+        let table = super::table()
+        assert_eq(table.len(), 30)
+        assert_eq(table[0].number, 1)
+        assert_eq(table[29].number, 30)
+        assert_eq(table[1].name, "SIGINT")
+        assert_eq(table[8].name, "SIGKILL")
+        assert_eq(table[14].name, "SIGTERM")
+    }
+}

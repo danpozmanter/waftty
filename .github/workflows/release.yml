@@ -1,0 +1,267 @@
+name: Build Release Binaries
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GOSSAMER_REPO: gossamer-lang/gossamer
+  # The toolchain release waftty requires. Its runtime targets macOS 15 and
+  # glibc 2.39 (Ubuntu 24.04), which are the floors of the packages here.
+  GOSSAMER_VERSION: v0.75.13
+  # project.toml reaches the libraries at ../goose-libs/<name>. Set these
+  # repository variables to tags or commits to release against a fixed set.
+  WINDOWING_REF: ${{ vars.WINDOWING_REF || 'main' }}
+  ENGINE_REF: ${{ vars.ENGINE_REF || 'main' }}
+  GUI_REF: ${{ vars.GUI_REF || 'main' }}
+  RUSTUP_TOOLCHAIN: 1.95.0
+  APPIMAGETOOL_VERSION: "1.9.0"
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            platform: linux
+            arch: x86_64
+          - name: Windows x86_64
+            os: windows-latest
+            platform: windows
+            arch: x86_64
+          - name: macOS Intel
+            os: macos-15-intel
+            platform: macos
+            arch: x86_64
+          - name: macOS Apple Silicon
+            os: macos-15
+            platform: macos
+            arch: aarch64
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: waftty
+      - uses: actions/checkout@v6
+        with:
+          repository: gossamer-lang/windowing-gos
+          ref: ${{ env.WINDOWING_REF }}
+          path: goose-libs/windowing-gos
+      - uses: actions/checkout@v6
+        with:
+          repository: gossamer-lang/gui-engine-gos
+          ref: ${{ env.ENGINE_REF }}
+          path: goose-libs/gui-engine-gos
+      - uses: actions/checkout@v6
+        with:
+          repository: gossamer-lang/gui-gos
+          ref: ${{ env.GUI_REF }}
+          path: goose-libs/gui-gos
+
+      - name: Read the version
+        run: |
+          version=$(awk -F'"' '/^version = / { print $2; exit }' waftty/project.toml)
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Check the tag names the project's version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          if [ "$GITHUB_REF_NAME" != "v$VERSION" ]; then
+            echo "tag $GITHUB_REF_NAME does not match project.toml version $VERSION" >&2
+            exit 1
+          fi
+
+      - name: Install SDL's build dependencies, LLVM and the Gossamer toolchain (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config llvm-18 desktop-file-utils \
+            dpkg-dev rpm valgrind xvfb xserver-xephyr dbus \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
+            libxss-dev libxfixes-dev libxtst-dev libxkbcommon-dev libwayland-dev \
+            wayland-protocols libegl-dev libgl-dev libdecor-0-dev
+          curl -fsSL "https://raw.githubusercontent.com/${GOSSAMER_REPO}/main/scripts/install.sh" | sh
+          curl -fsSL -o "$HOME/.local/bin/appimagetool" \
+            "https://github.com/AppImage/appimagetool/releases/download/${APPIMAGETOOL_VERSION}/appimagetool-x86_64.AppImage"
+          chmod +x "$HOME/.local/bin/appimagetool"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Install the Gossamer toolchain, LLVM and Ninja (macOS)
+        if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: |
+          curl -fsSL "https://raw.githubusercontent.com/${GOSSAMER_REPO}/main/scripts/install.sh" | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          brew install llvm@22 ninja
+          prefix="$(brew --prefix llvm@22)"
+          echo "GOS_LLVM_OPT=$prefix/bin/opt" >> "$GITHUB_ENV"
+          echo "GOS_LLC=$prefix/bin/llc" >> "$GITHUB_ENV"
+      - name: Install the Gossamer toolchain and LLVM (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release download $env:GOSSAMER_VERSION --repo $env:GOSSAMER_REPO --pattern 'gos-*-windows-x86_64.zip' --dir gos-dist
+          Expand-Archive -Path (Get-ChildItem gos-dist\*.zip).FullName -DestinationPath gos-dist\gos
+          $bin = (Get-ChildItem gos-dist\gos -Recurse -Filter gos.exe | Select-Object -First 1).DirectoryName
+          Add-Content $env:GITHUB_PATH $bin
+          & 'C:\msys64\usr\bin\pacman.exe' -S --noconfirm --needed mingw-w64-x86_64-llvm mingw-w64-x86_64-gcc
+          if ($LASTEXITCODE -ne 0) { throw "pacman failed (exit $LASTEXITCODE)" }
+          Add-Content $env:GITHUB_ENV "GOS_LLVM_OPT=C:\msys64\mingw64\bin\opt.exe"
+          Add-Content $env:GITHUB_ENV "GOS_LLC=C:\msys64\mingw64\bin\llc.exe"
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - run: gos --version
+
+      - name: Fetch the dependencies
+        run: |
+          sh goose-libs/gui-gos/tools/fetch.sh
+          (cd waftty && gos fetch)
+
+      # Symbol names differ between builds made in different places, so the
+      # link order is profiled from this job's own build.
+      - name: Profile the link order (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          xvfb-run -a bash waftty/scripts/link-order.sh "$RUNNER_TEMP/link-order.txt"
+          echo "GOS_SYMBOL_ORDER=$RUNNER_TEMP/link-order.txt" >> "$GITHUB_ENV"
+
+      - name: Build and package
+        run: bash waftty/scripts/package.sh --installers dist
+      - name: List the package
+        run: ls -la dist
+
+      # The zip as a user gets it, installed by its install-mac.sh and run.
+      - name: Install with install-mac.sh and run the app (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          ditto -x -k dist/waftty-*-macos-*.zip try
+          bash try/install-mac.sh
+          /Applications/waftty.app/Contents/MacOS/waftty --version
+
+      # Each Linux package as a user gets it, installed and run: the .deb here,
+      # the .rpm on Fedora, and the AppImage as downloaded.
+      - name: Install the .deb, .rpm and AppImage and run the app (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y ./dist/waftty_*.deb
+          /usr/bin/waftty --version
+          sudo apt-get remove -y waftty
+          docker run --rm -v "$PWD/dist:/dist:ro" fedora:41 \
+            sh -c 'dnf -y -q install /dist/waftty-*.rpm && waftty --version'
+          APPIMAGE_EXTRACT_AND_RUN=1 ./dist/waftty-*.AppImage --version
+
+      # The installer as a user runs it: installed for the current user with
+      # waftty on the PATH, run, uninstalled, and then extracted portably.
+      - name: Install with the setup program and run the app (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # waftty.exe is a windowed program, which the shell starts without
+          # waiting for, so each run waits on the process for its exit code.
+          function Assert-Version($exe) {
+            $out = "$env:RUNNER_TEMP\waftty-version.txt"
+            $run = Start-Process $exe -Wait -PassThru -NoNewWindow -ArgumentList '--version' -RedirectStandardOutput $out
+            if ($run.ExitCode -ne 0) { throw "$exe exited with $($run.ExitCode)" }
+            $printed = (Get-Content $out -Raw).Trim()
+            if ($printed -ne "waftty $env:VERSION") { throw "$exe printed '$printed'" }
+            Write-Output $printed
+          }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          foreach ($zip in Get-ChildItem dist\*.zip) {
+            $archive = [System.IO.Compression.ZipFile]::OpenRead($zip.FullName)
+            $named = @($archive.Entries | Where-Object { $_.FullName.Contains('\') })
+            $archive.Dispose()
+            if ($named.Count -gt 0) { throw "$($zip.Name) names entries with backslashes" }
+          }
+          $setup = (Get-ChildItem dist\waftty-*-setup.exe).FullName
+          $dir = "$env:RUNNER_TEMP\waftty-installed"
+          $run = Start-Process $setup -Wait -PassThru -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/CURRENTUSER', '/TASKS=envpath', "/DIR=$dir"
+          if ($run.ExitCode -ne 0) { throw "setup exited with $($run.ExitCode)" }
+          Assert-Version "$dir\waftty.exe"
+          if (-not ([Environment]::GetEnvironmentVariable('Path', 'User') -split ';' -contains $dir)) { throw "setup did not put $dir on the PATH" }
+          # The uninstaller hands its work to a copy of itself in TEMP (_iu*.tmp) and exits.
+          $run = Start-Process "$dir\unins000.exe" -Wait -PassThru -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES'
+          if ($run.ExitCode -ne 0) { throw "the uninstaller exited with $($run.ExitCode)" }
+          Get-Process -Name '_iu*' -ErrorAction SilentlyContinue | Wait-Process
+          if (Test-Path "$dir\waftty.exe") { throw "the uninstaller left waftty.exe" }
+          if ([Environment]::GetEnvironmentVariable('Path', 'User') -split ';' -contains $dir) { throw "the uninstaller left $dir on the PATH" }
+          $portable = "$env:RUNNER_TEMP\waftty-portable"
+          $run = Start-Process $setup -Wait -PassThru -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/CURRENTUSER', '/TASKS=portablemode', "/DIR=$portable"
+          if ($run.ExitCode -ne 0) { throw "the portable setup exited with $($run.ExitCode)" }
+          if (-not (Test-Path "$portable\user" -PathType Container)) { throw "the portable extraction has no user folder" }
+          if (Test-Path "$portable\unins000.exe") { throw "the portable extraction has an uninstaller" }
+          Assert-Version "$portable\waftty.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: waftty-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.deb
+            dist/*.rpm
+            dist/*.AppImage
+            dist/*.exe
+            dist/*.sha256
+          if-no-files-found: error
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: CHANGELOG.md
+          sparse-checkout-cone-mode: false
+      - name: Release notes
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            index($0, "## " v " - ") == 1 || $0 == "## " v { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          if ! grep -q . notes.md; then
+            echo "::error::CHANGELOG.md has no ## $version section"
+            exit 1
+          fi
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: waftty-*
+          path: artifacts/
+      - name: Collect release files
+        run: |
+          find artifacts -mindepth 2 -maxdepth 2 -type f \
+            \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.deb' -o -name '*.rpm' \
+               -o -name '*.AppImage' -o -name '*.exe' -o -name '*.sha256' \) \
+            -exec mv {} artifacts/ \;
+          ls -la artifacts
+      - uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          body_path: notes.md
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.zip
+            artifacts/*.deb
+            artifacts/*.rpm
+            artifacts/*.AppImage
+            artifacts/*.exe
+            artifacts/*.sha256

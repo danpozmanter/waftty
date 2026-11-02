@@ -1,0 +1,151 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GOSSAMER_REPO: gossamer-lang/gossamer
+  # The toolchain release waftty requires.
+  GOSSAMER_VERSION: v0.75.13
+  # project.toml reaches the libraries at ../goose-libs/<name>. Set these
+  # repository variables to a tag or commit to check against a fixed set.
+  WINDOWING_REF: ${{ vars.WINDOWING_REF || 'main' }}
+  ENGINE_REF: ${{ vars.ENGINE_REF || 'main' }}
+  GUI_REF: ${{ vars.GUI_REF || 'main' }}
+  RUSTUP_TOOLCHAIN: 1.95.0
+  # The journey draws into SDL's offscreen driver; no display is needed.
+  SDL_VIDEO_DRIVER: offscreen
+  # Settings and caches of the runs stay out of the runner's home.
+  XDG_CONFIG_HOME: ${{ github.workspace }}/.ci-config
+  XDG_CACHE_HOME: ${{ github.workspace }}/.ci-cache
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-24.04
+          - name: macOS
+            os: macos-15
+          - name: Windows
+            os: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: waftty
+      - uses: actions/checkout@v6
+        with:
+          repository: gossamer-lang/windowing-gos
+          ref: ${{ env.WINDOWING_REF }}
+          path: goose-libs/windowing-gos
+      - uses: actions/checkout@v6
+        with:
+          repository: gossamer-lang/gui-engine-gos
+          ref: ${{ env.ENGINE_REF }}
+          path: goose-libs/gui-engine-gos
+      - uses: actions/checkout@v6
+        with:
+          repository: gossamer-lang/gui-gos
+          ref: ${{ env.GUI_REF }}
+          path: goose-libs/gui-gos
+
+      - name: Install SDL's build dependencies, LLVM and the Gossamer toolchain (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config llvm-18 \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
+            libxss-dev libxfixes-dev libxtst-dev libxkbcommon-dev libwayland-dev \
+            wayland-protocols libegl-dev libgl-dev libdecor-0-dev
+          curl -fsSL "https://raw.githubusercontent.com/${GOSSAMER_REPO}/main/scripts/install.sh" | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Install the Gossamer toolchain, LLVM and Ninja (macOS)
+        if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: |
+          curl -fsSL "https://raw.githubusercontent.com/${GOSSAMER_REPO}/main/scripts/install.sh" | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          brew install llvm@22 ninja
+          prefix="$(brew --prefix llvm@22)"
+          echo "GOS_LLVM_OPT=$prefix/bin/opt" >> "$GITHUB_ENV"
+          echo "GOS_LLC=$prefix/bin/llc" >> "$GITHUB_ENV"
+      - name: Install the Gossamer toolchain and LLVM (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release download $env:GOSSAMER_VERSION --repo $env:GOSSAMER_REPO --pattern 'gos-*-windows-x86_64.zip' --dir gos-dist
+          Expand-Archive -Path (Get-ChildItem gos-dist\*.zip).FullName -DestinationPath gos-dist\gos
+          $bin = (Get-ChildItem gos-dist\gos -Recurse -Filter gos.exe | Select-Object -First 1).DirectoryName
+          Add-Content $env:GITHUB_PATH $bin
+          & 'C:\msys64\usr\bin\pacman.exe' -S --noconfirm --needed mingw-w64-x86_64-llvm mingw-w64-x86_64-gcc
+          if ($LASTEXITCODE -ne 0) { throw "pacman failed (exit $LASTEXITCODE)" }
+          Add-Content $env:GITHUB_ENV "GOS_LLVM_OPT=C:\msys64\mingw64\bin\opt.exe"
+          Add-Content $env:GITHUB_ENV "GOS_LLC=C:\msys64\mingw64\bin\llc.exe"
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - run: gos --version
+
+      - name: Fetch the dependencies
+        run: |
+          sh goose-libs/gui-gos/tools/fetch.sh
+          (cd waftty && gos fetch)
+
+      - name: Format and lint
+        if: runner.os == 'Linux'
+        working-directory: waftty
+        run: |
+          gos fmt --check .
+          gos lint .
+      - name: Check every release target
+        if: runner.os == 'Linux'
+        working-directory: waftty
+        run: |
+          for target in x86_64-pc-windows-msvc x86_64-apple-darwin aarch64-apple-darwin; do
+            echo "== $target"
+            gos check --target "$target" .
+          done
+      - name: Unit tests
+        working-directory: waftty
+        run: gos test
+
+      # The journey's shell is /bin/sh, so it runs where there is one.
+      - name: Journey (VM)
+        if: runner.os == 'Linux'
+        working-directory: waftty
+        env:
+          GOS_RUN_ENGINE: vm
+          GOS_JIT: "0"
+        run: gos run . --fixture
+      - name: Journey (JIT)
+        if: runner.os == 'Linux'
+        working-directory: waftty
+        env:
+          GOS_RUN_ENGINE: vm
+          GOS_JIT: "1"
+          GOSSAMER_JIT_THRESHOLD: "1"
+        run: gos run . --fixture
+      - name: Journey (native)
+        if: runner.os != 'Windows'
+        working-directory: waftty
+        run: gos run --native . --fixture
+      - name: Release build
+        if: runner.os == 'Windows'
+        working-directory: waftty
+        run: gos build --release

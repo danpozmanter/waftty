@@ -1,0 +1,72 @@
+site_name: waftty
+site_url: https://danpozmanter.github.io/waftty/
+site_description: A tabbed terminal emulator for Linux, macOS and Windows, light on memory and CPU. Written in Gossamer.
+site_author: Dan Pozmanter
+repo_url: https://github.com/danpozmanter/waftty
+repo_name: danpozmanter/waftty
+edit_uri: ""
+
+docs_dir: docs_src
+site_dir: target/site
+exclude_docs: |
+  _overrides/
+
+theme:
+  name: material
+  custom_dir: docs_src/_overrides
+  logo: assets/logo.svg
+  favicon: assets/icon.svg
+  font:
+    text: Inter
+    code: JetBrains Mono
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tabs
+    - content.code.copy
+    - toc.integrate
+
+extra_css:
+  - stylesheets/extra.css
+
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - User Guide: guide.md
+  - About: about.md
+
+markdown_extensions:
+  - tables
+  - attr_list
+  - md_in_html
+  - admonition
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.keys
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/danpozmanter/waftty

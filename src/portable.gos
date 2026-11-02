@@ -1,0 +1,47 @@
+// Portable mode: a `user` folder beside waftty keeps its settings, schemes,
+// shortcuts and caches, so an unpacked folder carries them wherever it goes
+// and nothing is written to the user's profile.
+
+use std::{env, fs, path}
+
+use gui::services
+
+/// Keeps every setting under the `user` folder beside waftty when that
+/// folder exists; answers the folder.
+pub fn enable() -> Option<String> {
+    let exe = env::current_exe().ok()?
+    let root = user_dir(exe)
+    if !fs::is_dir(root) { return None }
+    services::set_config_root(root)
+    Some(root)
+}
+
+// The executable of a macOS app sits in `waftty.app/Contents/MacOS`, whose
+// signed contents must stay as shipped, so the folder goes beside the app.
+fn user_dir(exe: String) -> String {
+    let dir = path::parent(exe).unwrap_or("")
+    let contents = path::parent(dir).unwrap_or("")
+    let bundle = path::parent(contents).unwrap_or("")
+    let in_app = path::file_name(dir) == Some("MacOS") &&
+        path::file_name(contents) == Some("Contents") &&
+        path::extension(bundle) == Some(".app")
+    let base = if in_app { path::parent(bundle).unwrap_or("") } else { dir }
+    path::join(base, "user")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::user_dir
+
+    #[test]
+    fn the_folder_sits_beside_the_executable() {
+        assert_eq(user_dir("/opt/waftty/bin/waftty"), "/opt/waftty/bin/user")
+        assert_eq(user_dir("D:\\tools\\waftty\\waftty.exe"), "D:\\tools\\waftty/user")
+    }
+
+    #[test]
+    fn a_mac_app_keeps_the_folder_beside_the_app() {
+        assert_eq(user_dir("/Volumes/stick/waftty.app/Contents/MacOS/waftty"), "/Volumes/stick/user")
+        assert_eq(user_dir("/Applications/MacOS/waftty"), "/Applications/MacOS/user")
+    }
+}

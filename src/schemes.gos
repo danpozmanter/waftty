@@ -1,0 +1,165 @@
+// Color schemes: the built-in ones and any `scheme-<name>.toml` in the
+// configuration directory. A scheme sets the terminal's colors and whether
+// the window around it is light or dark; "system" follows the desktop with
+// the theme's own colors.
+
+use std::{errors, fs, path}
+use std::encoding::{json, toml}
+
+use gui
+use gui::Effect
+use gui::services
+use gui::terminal::Scheme
+
+use info
+
+/// The scheme that follows the desktop's light or dark setting.
+pub const SYSTEM: String = "system"
+
+// Where a user scheme's id begins.
+const USER_PREFIX: String = "user:"
+
+/// A scheme the Settings dialog offers.
+#[derive(PartialEq)]
+pub struct Entry {
+    pub id: String
+    pub name: String
+    /// "light", "dark", or "" to follow the desktop.
+    pub appearance: String
+    /// The colors, or `None` for the theme's own.
+    pub colors: Option<Scheme>
+}
+
+// A scheme file as written: its name and appearance beside the colors.
+#[derive(Default)]
+struct File {
+    #[default] name: String
+    #[default] appearance: String
+    #[default] foreground: String
+    #[default] background: String
+    #[default] cursor: String
+    #[default] selection: String
+    #[default] selection_text: String
+    #[default] ansi: Vec<String>
+}
+
+fn colors(foreground: String, background: String, cursor: String, selection: String, selection_text: String, ansi: [String; 16]) -> Option<Scheme> {
+    Some(Scheme { foreground: foreground, background: background, cursor: cursor, selection: selection, selection_text: selection_text, ansi: ansi.to_vec() })
+}
+
+// The Solarized named colors, in terminal order.
+const SOLARIZED: [String; 16] = [
+    "#073642", "#dc322f", "#859900", "#b58900", "#268bd2", "#d33682", "#2aa198", "#eee8d5"
+    "#002b36", "#cb4b16", "#586e75", "#657b83", "#839496", "#6c71c4", "#93a1a1", "#fdf6e3"
+]
+
+const CONTRAST_DARK: [String; 16] = [
+    "#000000", "#ff5555", "#55ff55", "#ffff55", "#5c9dff", "#ff55ff", "#55ffff", "#ffffff"
+    "#808080", "#ff8080", "#80ff80", "#ffff80", "#8fbfff", "#ff80ff", "#80ffff", "#ffffff"
+]
+
+const CONTRAST_LIGHT: [String; 16] = [
+    "#000000", "#a00000", "#006400", "#6b5000", "#0000c0", "#8b008b", "#005f6b", "#404040"
+    "#303030", "#c00000", "#007a00", "#7a5c00", "#0030d0", "#a000a0", "#006f7f", "#000000"
+]
+
+/// The schemes waftty ships, the desktop-following one first.
+pub fn built_in() -> Vec<Entry> {
+    #[
+        Entry { id: SYSTEM, name: "Follow the system", appearance: "", colors: None }
+        Entry { id: "light", name: "Light", appearance: "light", colors: None }
+        Entry { id: "dark", name: "Dark", appearance: "dark", colors: None }
+        Entry { id: "solarized-light", name: "Solarized Light", appearance: "light", colors: colors("#657b83", "#fdf6e3", "#586e75", "#eee8d5", "#586e75", SOLARIZED) }
+        Entry { id: "solarized-dark", name: "Solarized Dark", appearance: "dark", colors: colors("#839496", "#002b36", "#93a1a1", "#073642", "#93a1a1", SOLARIZED) }
+        Entry { id: "contrast-light", name: "High Contrast Light", appearance: "light", colors: colors("#000000", "#ffffff", "#000000", "#000000", "#ffffff", CONTRAST_LIGHT) }
+        Entry { id: "contrast-dark", name: "High Contrast Dark", appearance: "dark", colors: colors("#ffffff", "#000000", "#ffff00", "#ffffff", "#000000", CONTRAST_DARK) }
+    ]
+}
+
+/// The scheme a `scheme-<name>.toml` file holds, its id naming the file.
+pub fn parse(file_name: String, text: String) -> Result<Entry, errors::Error> {
+    let stem = file_name.substring(7, file_name.byte_len() - 5)
+    let parsed = json::decode::<File>(toml::to_json(text)?)?
+    if parsed.appearance != "light" && parsed.appearance != "dark" {
+        return Err(errors::new(f"{file_name}: appearance must be \"light\" or \"dark\""))
+    }
+    if parsed.ansi.len() != 0 && parsed.ansi.len() != 16 {
+        return Err(errors::new(f"{file_name}: ansi lists {parsed.ansi.len()} colors, not 16"))
+    }
+    let name = if parsed.name.is_empty() { stem } else { parsed.name }
+    let scheme = Scheme { foreground: parsed.foreground, background: parsed.background, cursor: parsed.cursor, selection: parsed.selection, selection_text: parsed.selection_text, ansi: parsed.ansi }
+    Ok(Entry { id: f"{USER_PREFIX}{stem}", name: name, appearance: parsed.appearance, colors: Some(scheme) })
+}
+
+/// The schemes in the configuration directory, by file name, and the
+/// reasons any could not be read.
+pub fn user() -> (Vec<Entry>, Vec<String>) {
+    let mut found = #[]
+    let mut problems = #[]
+    let Ok(entries) = fs::read_dir(services::config_dir(info::APP_ID)) else { return (found, problems) }
+    let mut files = entries.filter(|e| e.is_file && e.name.starts_with("scheme-") && e.name.ends_with(".toml") && e.name.byte_len() > 12)
+    files.sort_by_key(|e| e.name)
+    for e in files {
+        let read = fs::read_to_string(e.path).map_err(|why| errors::wrap(why, f"reading {e.name}"))
+        match read.and_then(|text| parse(e.name, text)) {
+            Ok(entry) => found.push(entry)
+            Err(why) => problems.push(f"{why}")
+        }
+    }
+    (found, problems)
+}
+
+/// Every scheme on offer: the built-in ones, then the user's.
+pub fn all(user: Vec<Entry>) -> Vec<Entry> {
+    let mut out = built_in()
+    for e in user { out.push(e) }
+    out
+}
+
+/// The scheme `id` names, or the desktop-following one when none does.
+pub fn find(entries: Vec<Entry>, id: String) -> Entry {
+    match entries.iter().find(|e| e.id == id) {
+        Some(e) => e
+        None => built_in()[0]
+    }
+}
+
+/// The effect that puts the window theme scheme `e` asks for in place.
+pub fn theme_effect(e: Entry) -> Effect {
+    match e.appearance {
+        "light" => Effect::SetTheme(gui::ThemeKind::Light)
+        "dark" => Effect::SetTheme(gui::ThemeKind::Dark)
+        _ => Effect::FollowSystemTheme
+    }
+}
+
+/// Where a scheme file named `name` goes, for the Settings help text.
+pub fn file_for(name: String) -> String {
+    path::join(services::config_dir(info::APP_ID), f"scheme-{name}.toml")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_scheme_file_reads_as_a_user_scheme_named_for_its_file() {
+        let text = "appearance = \"dark\"\nforeground = \"#eeeeee\"\nbackground = \"#101010\"\n"
+        let Ok(e) = super::parse("scheme-night.toml", text) else { panic("the scheme did not parse") }
+        assert_eq(e.id, "user:night")
+        assert_eq(e.name, "night")
+        assert_eq(e.appearance, "dark")
+        let Some(colors) = e.colors else { panic("the scheme has no colors") }
+        assert_eq(colors.background, "#101010")
+    }
+
+    #[test]
+    fn a_scheme_file_without_an_appearance_or_with_too_few_colors_is_refused() {
+        assert(super::parse("scheme-x.toml", "foreground = \"#ffffff\"").is_err())
+        assert(super::parse("scheme-x.toml", "appearance = \"light\"\nansi = [\"#000000\"]").is_err())
+    }
+
+    #[test]
+    fn an_unknown_scheme_follows_the_system() {
+        assert_eq(super::find(super::built_in(), "nope").id, super::SYSTEM)
+        assert_eq(super::find(super::built_in(), "solarized-dark").appearance, "dark")
+    }
+}

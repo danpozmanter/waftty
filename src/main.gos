@@ -1,0 +1,112 @@
+// waftty: a tabbed terminal emulator. It runs the user's shell in each tab,
+// or with `-e program [args...]` that program in the first one. `--fixture`
+// runs the scripted journey the checks use instead of opening a window.
+
+use std::{env, errors, process}
+
+use gui::terminal::Command
+
+use application
+use console
+use fixture
+use info
+use portable
+use settings
+use settings::Settings
+
+const USAGE: String = "usage: waftty [--version] [--help] [--fixture] [-e program [args...]]\n"
+
+// What the command line asks for.
+#[derive(Debug, PartialEq)]
+enum Invocation {
+    Open(Option<Command>)
+    Version
+    Help
+    Fixture
+}
+
+// Options are read up to `-e`; every argument after it belongs to the
+// program, so `-e git --version` runs git's `--version`.
+fn invocation(args: Vec<String>) -> Result<Invocation, String> {
+    for (i, a) in args.iter().enumerate() {
+        match a {
+            "--version" => return Ok(Invocation::Version)
+            "-h" | "--help" => return Ok(Invocation::Help)
+            "--fixture" => return Ok(Invocation::Fixture)
+            "-e" => {
+                let rest = args.skip(i + 1)
+                if rest.is_empty() { return Err("-e needs a program to run") }
+                let program = Command { program: rest[0], args: rest.skip(1), cwd: "", env: #[] }
+                return Ok(Invocation::Open(Some(program)))
+            }
+            _ => return Err(f"unknown argument {a}")
+        }
+    }
+    Ok(Invocation::Open(None))
+}
+
+fn main() -> Result<(), errors::Error> {
+    let invoked = invocation(env::args())
+    match invoked {
+        Ok(Invocation::Open(_)) => {}
+        _ => console::attach()
+    }
+    let program = match invoked {
+        Ok(Invocation::Version) => {
+            println(f"{info::NAME} {info::VERSION}")
+            return Ok(())
+        }
+        Ok(Invocation::Help) => {
+            print(USAGE)
+            return Ok(())
+        }
+        Ok(Invocation::Fixture) => return fixture::journey()
+        Ok(Invocation::Open(program)) => program
+        Err(why) => {
+            eprint(f"{info::NAME}: {why}\n{USAGE}")
+            process::exit(2)
+        }
+    }
+    portable::enable()
+    let s = match settings::load() {
+        Ok(s) => s
+        Err(why) => {
+            eprintln(f"{info::NAME}: ignoring unreadable settings: {why}")
+            Settings::default()
+        }
+    }
+    let first = match program {
+        Some(c) => Command { cwd: s.directory, ..c }
+        None => settings::command(s)
+    }
+    application::app(s, first).run()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Invocation
+
+    fn parse(args: [String]) -> Result<super::Invocation, String> {
+        super::invocation(args.to_vec())
+    }
+
+    #[test]
+    fn options_are_read_only_before_the_program() {
+        let Ok(Invocation::Open(Some(c))) = parse(["-e", "git", "--version"]) else {
+            panic("-e did not name a program")
+        }
+        assert_eq(c.program, "git")
+        assert_eq(c.args, #["--version"])
+        assert_eq(parse(["--version"]), Ok(Invocation::Version))
+        assert_eq(parse(["--help"]), Ok(Invocation::Help))
+        assert_eq(parse(["-h"]), Ok(Invocation::Help))
+        assert_eq(parse(["--fixture"]), Ok(Invocation::Fixture))
+        assert_eq(parse([]), Ok(Invocation::Open(None)))
+    }
+
+    #[test]
+    fn unknown_arguments_and_a_bare_dash_e_are_refused() {
+        assert_eq(parse(["--nope"]), Err("unknown argument --nope"))
+        assert_eq(parse(["-e"]), Err("-e needs a program to run"))
+    }
+}

@@ -1,0 +1,17 @@
+# gossamer project.lock v1
+
+[[project]]
+id = "github.com/gossamer-lang/gui-engine-gos"
+source = "path"
+path = "../goose-libs/gui-engine-gos"
+
+[[project]]
+id = "github.com/gossamer-lang/gui-gos"
+source = "path"
+path = "../goose-libs/gui-gos"
+
+[[project]]
+id = "github.com/gossamer-lang/windowing-gos"
+source = "path"
+path = "../goose-libs/windowing-gos"
+

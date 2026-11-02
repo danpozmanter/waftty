@@ -1,0 +1,417 @@
+// The application state: windows, each with its tabs in order and the one
+// showing, and the operations that open, close, show and move them. Every
+// operation queues the effects that keep titles and focus in step. Closing
+// what still runs a program's job asks first.
+
+use std::errors
+
+use gui
+use gui::Effect
+use gui::dialogs::request
+use gui::terminal::{Options, Span, Terminal}
+use gui::widgets::find::FindBar
+
+use encodings
+use info
+use schemes
+use settings
+use settings::Settings
+
+const WINDOW_WIDTH: i64 = 760
+const WINDOW_HEIGHT: i64 = 520
+
+/// One tab: a terminal and what the window says about it.
+#[derive(PartialEq)]
+pub struct Tab {
+    pub key: String
+    pub terminal: Terminal
+    /// The title the program set; empty until it sets one.
+    pub title: String
+    /// The character set the tab's program reads and writes.
+    pub encoding: String
+    /// Pinned tabs sit first and show no close button.
+    pub pinned: bool
+    /// The link under the pointer when it last pressed on the terminal, or
+    /// empty, which the context menu's link entries act on.
+    pub link: String
+    /// The program rang the bell or sent a notification while the tab was
+    /// not in front of the user; the tab strip marks it until it is.
+    pub attention: bool
+}
+
+impl Tab {
+    /// The widget id of the tab's terminal view.
+    pub fn view_id(&self) -> String {
+        f"term-{self.key}"
+    }
+
+    /// What the tab strip, the window title and the Tabs menu call the tab.
+    pub fn label(&self) -> String {
+        if self.title.is_empty() { "Terminal" } else { self.title }
+    }
+
+    /// Whether a job other than the shell runs in the tab, which closing
+    /// it would end.
+    pub fn busy(&self) -> bool {
+        match self.terminal.snapshot() {
+            Ok(shown) => shown.busy
+            Err(_) => false
+        }
+    }
+}
+
+/// One window: its tabs in order and which one it shows.
+#[derive(PartialEq)]
+pub struct Window {
+    pub key: String
+    pub tabs: Vec<Tab>
+    pub active: String
+    /// The tab that was active before `active`, for Last Active Tab, or "".
+    pub previous: String
+    /// Whether the window covers its display.
+    pub fullscreen: bool
+    /// Points added to the settings' font size in this window.
+    pub zoom: f64
+    /// Whether the window has keyboard focus.
+    pub focused: bool
+    /// The find bar under the window's terminal.
+    pub find: FindBar
+}
+
+impl Window {
+    /// The index of tab `key`, if this window holds it.
+    pub fn index_of(&self, key: String) -> Option<i64> {
+        self.tabs.iter().position(|t| t.key == key)
+    }
+
+    /// The tab the window shows, if it has any.
+    pub fn current(&self) -> Option<Tab> {
+        let at = self.index_of(self.active)?
+        Some(self.tabs[at])
+    }
+
+    /// The window title: the label of the tab it shows.
+    pub fn title(&self) -> String {
+        match self.current() {
+            Some(tab) => tab.label()
+            None => info::NAME
+        }
+    }
+
+    /// The id of the window's tab strip.
+    pub fn strip_id(&self) -> String {
+        f"tabs:{self.key}"
+    }
+}
+
+/// A window `key` with no tabs yet.
+pub fn window(key: String) -> Window {
+    Window { key: key, tabs: #[], active: "", previous: "", fullscreen: false, zoom: 0.0, focused: true, find: FindBar::new(f"find-{key}") }
+}
+
+/// The match the last search selected, and the tab it is in.
+#[derive(PartialEq)]
+pub struct Found {
+    pub tab: String
+    pub span: Span
+}
+
+pub struct Model {
+    pub windows: Vec<Window>
+    pub settings: Settings
+    /// Numbers the next tab or window key.
+    pub next: i64
+    pub found: Option<Found>
+    /// The color schemes read from the configuration directory.
+    pub user_schemes: Vec<schemes::Entry>
+    /// The shortcuts the user set, by command id.
+    pub shortcuts: Map<String, Vec<String>>
+    /// The installed monospace font families, once listed.
+    pub fonts: Option<Vec<String>>
+    /// The window waiting for the font list to open Settings, or "".
+    pub settings_window: String
+}
+
+/// A model with one window, "main", and no tabs yet.
+pub fn new(s: Settings) -> Model {
+    Model {
+        windows: #[window("main")]
+        settings: s
+        next: 1
+        found: None
+        user_schemes: #[]
+        shortcuts: Map::new()
+        fonts: None
+        settings_window: ""
+    }
+}
+
+/// The index of window `key`, if it is open.
+pub fn window_index(m: Model, key: String) -> Option<i64> {
+    m.windows.iter().position(|w| w.key == key)
+}
+
+/// The window a tab strip id names.
+pub fn strip_window(strip: String) -> String {
+    strip.substring(5, strip.byte_len())
+}
+
+/// The window holding the tab with terminal `id`, and the tab's index.
+pub fn terminal_location(m: Model, id: i64) -> Option<(i64, i64)> {
+    let mut w = 0
+    while w < m.windows.len() {
+        if let Some(t) = m.windows[w].tabs.iter().position(|t| t.terminal.id == id) {
+            return Some((w, t))
+        }
+        w += 1
+    }
+    None
+}
+
+/// The window holding tab `key`, and the tab's index.
+pub fn tab_location(m: Model, key: String) -> Option<(i64, i64)> {
+    let mut w = 0
+    while w < m.windows.len() {
+        if let Some(t) = m.windows[w].index_of(key) {
+            return Some((w, t))
+        }
+        w += 1
+    }
+    None
+}
+
+/// Opens a tab running `command` at the end of window `w` and shows it.
+pub fn open_tab(m: &mut Model, w: i64, command: gui::terminal::Command) -> Result<(), errors::Error> {
+    let s = m.settings
+    let terminal = Terminal::open(Options { scrollback: s.scrollback, ..Options::default() })?
+    let started = if s.encoding == encodings::DEFAULT { Ok(()) } else { terminal.set_encoding(s.encoding) }
+    // Programs that adapt to their terminal, such as image tools, read its name.
+    let mut named = command
+    named.env.push(("TERM_PROGRAM", info::NAME))
+    named.env.push(("TERM_PROGRAM_VERSION", info::VERSION))
+    if let Err(why) = started.and_then(|_| terminal.spawn(named)) {
+        terminal.close()
+        return Err(errors::wrap(why, f"running {command.program}"))
+    }
+    let key = f"tab-{m.next}"
+    m.next += 1
+    m.windows[w].tabs.push(Tab { key: key, terminal: terminal, title: "", encoding: s.encoding, pinned: false, link: "", attention: false })
+    activate(m, w, key)
+    Ok(())
+}
+
+/// Opens a window with one tab running `command`.
+pub fn open_window(m: &mut Model, command: gui::terminal::Command) -> Result<(), errors::Error> {
+    let key = f"window-{m.next}"
+    m.next += 1
+    m.windows.push(window(key))
+    let w = m.windows.len() - 1
+    gui::perform(Effect::OpenWindow { key: key, title: info::NAME, width: WINDOW_WIDTH, height: WINDOW_HEIGHT })
+    if let Err(why) = open_tab(m, w, command) {
+        let _ = m.windows.remove(w)
+        gui::perform(Effect::CloseWindow(key))
+        return Err(why)
+    }
+    Ok(())
+}
+
+/// Shows tab `key` of window `w`, remembering the one it replaces.
+pub fn activate(m: &mut Model, w: i64, key: String) {
+    let Some(at) = m.windows[w].index_of(key) else { return }
+    if m.windows[w].active != key {
+        m.windows[w].previous = m.windows[w].active
+        m.windows[w].active = key
+    }
+    m.windows[w].tabs[at].attention = false
+    retitle(m, w)
+    gui::perform(Effect::FocusIn(m.windows[w].key, m.windows[w].tabs[at].view_id()))
+}
+
+/// Brings window `w`'s title up to date with the tab it shows.
+pub fn retitle(m: &mut Model, w: i64) {
+    gui::perform(Effect::SetTitle(m.windows[w].key, m.windows[w].title()))
+}
+
+/// Shows the tab `step` places from the active one, wrapping around.
+pub fn cycle(m: &mut Model, w: i64, step: i64) {
+    let n = m.windows[w].tabs.len()
+    let Some(at) = m.windows[w].index_of(m.windows[w].active) else { return }
+    if n < 2 { return }
+    activate(m, w, m.windows[w].tabs[(at + step).rem_euclid(n)].key)
+}
+
+/// Shows the tab that was active before the current one.
+pub fn last_active(m: &mut Model, w: i64) {
+    let previous = m.windows[w].previous
+    if m.windows[w].index_of(previous).is_some() { activate(m, w, previous) }
+}
+
+/// The font size window `w` shows its terminals at: the settings' size
+/// plus the window's zoom.
+pub fn font_size(m: Model, w: i64) -> f64 {
+    m.settings.font_size + m.windows[w].zoom
+}
+
+/// Whether zooming `window` by `step` points keeps its font size within
+/// the sizes Settings offers.
+pub fn can_zoom(s: Settings, window: Window, step: f64) -> bool {
+    let size = s.font_size + window.zoom + step
+    size >= settings::FONT_SIZE_MIN as f64 && size <= settings::FONT_SIZE_MAX as f64
+}
+
+/// Zooms window `w` by `step` points, or back to the settings' size when
+/// `step` is 0.
+pub fn zoom(m: &mut Model, w: i64, step: f64) {
+    if step == 0.0 {
+        m.windows[w].zoom = 0.0
+    } else if can_zoom(m.settings, m.windows[w], step) {
+        m.windows[w].zoom += step
+    }
+}
+
+/// Makes window `w` cover its display, or gives it back its frame.
+pub fn toggle_fullscreen(m: &mut Model, w: i64) {
+    m.windows[w].fullscreen = !m.windows[w].fullscreen
+    gui::perform(Effect::SetFullscreen(m.windows[w].key, m.windows[w].fullscreen))
+}
+
+/// Moves tab `key` of window `w` to index `to`; pinned tabs stay ahead of
+/// the others.
+pub fn move_tab(m: &mut Model, w: i64, key: String, to: i64) {
+    let Some(from) = m.windows[w].index_of(key) else { return }
+    let tabs = m.windows[w].tabs
+    if to < 0 || to >= tabs.len() || to == from || tabs[from].pinned != tabs[to].pinned { return }
+    let tab = tabs[from]
+    let _ = m.windows[w].tabs.remove(from)
+    let _ = m.windows[w].tabs.insert(to, tab)
+}
+
+/// Pins or unpins tab `key` of window `w`, keeping pinned tabs first in the
+/// order they were pinned.
+pub fn pin(m: &mut Model, w: i64, key: String, pinned: bool) {
+    let Some(from) = m.windows[w].index_of(key) else { return }
+    let mut tab = m.windows[w].tabs[from]
+    if tab.pinned == pinned { return }
+    tab.pinned = pinned
+    let _ = m.windows[w].tabs.remove(from)
+    let at = m.windows[w].tabs.iter().position(|t| !t.pinned).unwrap_or(m.windows[w].tabs.len())
+    let _ = m.windows[w].tabs.insert(at, tab)
+}
+
+/// Closes tab `t` of window `w` and its program; a window left without
+/// tabs closes too.
+pub fn close_tab(m: &mut Model, w: i64, t: i64) {
+    let tab = m.windows[w].tabs[t]
+    tab.terminal.close()
+    let _ = m.windows[w].tabs.remove(t)
+    if m.windows[w].tabs.is_empty() {
+        close_window(m, w)
+        return
+    }
+    if m.windows[w].previous == tab.key { m.windows[w].previous = "" }
+    if m.windows[w].active == tab.key {
+        let previous = m.windows[w].previous
+        let next = if previous.is_empty() { m.windows[w].tabs[t.min(m.windows[w].tabs.len() - 1)].key } else { previous }
+        m.windows[w].active = ""
+        activate(m, w, next)
+        m.windows[w].previous = ""
+    } else {
+        retitle(m, w)
+    }
+}
+
+/// Closes window `w` and every program in it; closing the last window
+/// quits.
+pub fn close_window(m: &mut Model, w: i64) {
+    let window = m.windows[w]
+    for tab in window.tabs { tab.terminal.close() }
+    let _ = m.windows.remove(w)
+    if m.windows.is_empty() {
+        gui::perform(Effect::Quit)
+    } else {
+        gui::perform(Effect::CloseWindow(window.key))
+    }
+}
+
+/// Closes tab `key`, asking first when a job runs in it.
+pub fn request_close_tab(m: &mut Model, key: String) {
+    let Some(loc) = tab_location(*m, key) else { return }
+    let w, t = loc
+    if m.windows[w].tabs[t].busy() {
+        gui::perform(Effect::OpenDialogIn(m.windows[w].key, request::confirm(f"close-tab:{key}", "Close this tab?", "A program is still running in this tab. Closing the tab ends it.", "Close Tab", true)))
+    } else {
+        close_tab(m, w, t)
+    }
+}
+
+/// Closes window `w`, asking first when a job runs in any of its tabs.
+pub fn request_close_window(m: &mut Model, w: i64) {
+    let window = m.windows[w]
+    if window.tabs.any(|t| t.busy()) {
+        gui::perform(Effect::OpenDialogIn(window.key, request::confirm(f"close-window:{window.key}", "Close this window?", "A program is still running in one of its tabs. Closing the window ends it.", "Close Window", true)))
+    } else {
+        close_window(m, w)
+    }
+}
+
+/// Quits, asking first when a job runs in any tab.
+pub fn request_quit(m: &mut Model) {
+    let busy = m.windows.iter().position(|w| w.tabs.any(|t| t.busy()))
+    match busy {
+        Some(w) => gui::perform(Effect::OpenDialogIn(m.windows[w].key, request::confirm("close-all", "Quit waftty?", "A program is still running. Quitting ends it.", "Quit", true)))
+        None => close_all(m)
+    }
+}
+
+/// Closes every window and quits.
+pub fn close_all(m: &mut Model) {
+    while !m.windows.is_empty() { close_window(m, m.windows.len() - 1) }
+}
+
+/// Shows `why` in window `window` as an error titled `title`.
+pub fn report(window: String, title: String, why: errors::Error) {
+    gui::perform(Effect::OpenDialogIn(window, request::error("error", title, why.message(), f"{why}", false)))
+}
+
+/// The program a new tab runs under the current settings.
+pub fn shell(m: Model) -> gui::terminal::Command {
+    settings::command(m.settings)
+}
+
+/// The program a tab opened from window `w` runs: in the directory of the
+/// tab the window shows, when the settings ask for that and it is known.
+pub fn shell_here(m: Model, w: i64) -> gui::terminal::Command {
+    let command = shell(m)
+    if m.settings.new_tabs != "current" { return command }
+    let Some(tab) = m.windows[w].current() else { return command }
+    match tab.terminal.cwd() {
+        Ok(dir) if !dir.is_empty() => gui::terminal::Command { cwd: dir, ..command }
+        _ => command
+    }
+}
+
+/// The color scheme the settings name, among the built-in and user ones.
+pub fn scheme(m: Model) -> schemes::Entry {
+    schemes::find(schemes::all(m.user_schemes), m.settings.scheme)
+}
+
+#[cfg(test)]
+mod tests {
+    use settings::Settings
+
+    #[test]
+    fn zoom_stops_at_the_font_sizes_settings_offers_and_normal_size_undoes_it() {
+        let mut m = super::new(Settings { font_size: 46.0, ..Settings::default() })
+        super::zoom(&mut m, 0, 1.0)
+        super::zoom(&mut m, 0, 1.0)
+        assert_eq(super::font_size(m, 0), 48.0)
+        super::zoom(&mut m, 0, 1.0)
+        assert_eq(super::font_size(m, 0), 48.0)
+        assert(!super::can_zoom(m.settings, m.windows[0], 1.0))
+        super::zoom(&mut m, 0, 0.0)
+        assert_eq(super::font_size(m, 0), 46.0)
+        m.settings.font_size = 6.0
+        super::zoom(&mut m, 0, -1.0)
+        assert_eq(super::font_size(m, 0), 6.0)
+    }
+}

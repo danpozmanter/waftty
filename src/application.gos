@@ -1,0 +1,53 @@
+// The application: its model, update and view, and the windows' settings.
+
+use std::errors
+
+use gui
+use gui::terminal::Command
+
+use commands
+use icon
+use info
+use model
+use model::Model
+use schemes
+use settings::Settings
+use shortcuts
+use update
+use view
+
+fn init(s: Settings, first: Command) -> Model {
+    let mut m = model::new(s)
+    let found, scheme_problems = schemes::user()
+    m.user_schemes = found
+    gui::perform(schemes::theme_effect(model::scheme(m)))
+    if let Err(why) = model::open_tab(&mut m, 0, first) {
+        eprintln(f"{info::NAME}: {why}")
+        gui::perform(gui::Effect::Quit)
+        return m
+    }
+    let mut problems = scheme_problems
+    match shortcuts::load() {
+        Ok(chosen) => {
+            m.shortcuts = chosen
+            for why in shortcuts::problems(chosen, commands::registry(model::new(s), "main")) { problems.push(why) }
+        }
+        Err(why) => problems.push(f"{why}")
+    }
+    if !problems.is_empty() {
+        let found = problems.join("\n")
+        model::report("main", "Some settings were not used", errors::new(found))
+    }
+    m
+}
+
+/// The application with settings `s`, its first tab running `first`.
+pub fn app(s: Settings, first: Command) -> gui::App<Model> {
+    gui::application(info::NAME, info::APP_ID, || init(s, first), update::update, view::main)
+        .size(760, 520)
+        .min_size(360, 220)
+        .window_commands(commands::registry)
+        .windows(view::window)
+        .ask_before_close()
+        .icon(icon::waftty(128))
+}

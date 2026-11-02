@@ -1,0 +1,118 @@
+// The character sets a tab can read and write, grouped as the Set Encoding
+// menu shows them. Labels are WHATWG names the terminal engine accepts.
+
+/// The character set every new tab starts with unless settings say otherwise.
+pub const DEFAULT: String = "UTF-8"
+
+/// One character set: its label and the name menus show.
+#[derive(PartialEq)]
+pub struct Charset {
+    pub label: String
+    pub name: String
+}
+
+/// A titled group of character sets (one Set Encoding submenu).
+#[derive(PartialEq)]
+pub struct Group {
+    pub title: String
+    pub charsets: Vec<Charset>
+}
+
+fn set(label: String, name: String) -> Charset {
+    Charset { label: label, name: name }
+}
+
+fn group(title: String, charsets: Vec<Charset>) -> Group {
+    Group { title: title, charsets: charsets }
+}
+
+/// Every non-Unicode character set, by script or region.
+pub fn groups() -> Vec<Group> {
+    #[
+        group("Western European", #[
+            set("ISO-8859-1", "Western (ISO-8859-1)")
+            set("ISO-8859-15", "Western (ISO-8859-15)")
+            set("windows-1252", "Western (Windows-1252)")
+            set("macintosh", "Western (Mac Roman)")
+        ])
+        group("Central European", #[
+            set("ISO-8859-2", "Central European (ISO-8859-2)")
+            set("windows-1250", "Central European (Windows-1250)")
+            set("ISO-8859-16", "South-Eastern European (ISO-8859-16)")
+        ])
+        group("Other European", #[
+            set("ISO-8859-3", "South European (ISO-8859-3)")
+            set("ISO-8859-10", "Nordic (ISO-8859-10)")
+            set("ISO-8859-14", "Celtic (ISO-8859-14)")
+        ])
+        group("Baltic", #[
+            set("ISO-8859-4", "Baltic (ISO-8859-4)")
+            set("ISO-8859-13", "Baltic (ISO-8859-13)")
+            set("windows-1257", "Baltic (Windows-1257)")
+        ])
+        group("Cyrillic", #[
+            set("ISO-8859-5", "Cyrillic (ISO-8859-5)")
+            set("windows-1251", "Cyrillic (Windows-1251)")
+            set("KOI8-R", "Cyrillic (KOI8-R)")
+            set("KOI8-U", "Cyrillic/Ukrainian (KOI8-U)")
+            set("IBM866", "Cyrillic (IBM866)")
+            set("x-mac-cyrillic", "Cyrillic (Mac)")
+        ])
+        group("Greek", #[
+            set("ISO-8859-7", "Greek (ISO-8859-7)")
+            set("windows-1253", "Greek (Windows-1253)")
+        ])
+        group("Turkish", #[
+            set("ISO-8859-9", "Turkish (ISO-8859-9)")
+            set("windows-1254", "Turkish (Windows-1254)")
+        ])
+        group("Hebrew", #[
+            set("ISO-8859-8", "Hebrew (ISO-8859-8)")
+            set("windows-1255", "Hebrew (Windows-1255)")
+        ])
+        group("Arabic", #[
+            set("ISO-8859-6", "Arabic (ISO-8859-6)")
+            set("windows-1256", "Arabic (Windows-1256)")
+        ])
+        group("Vietnamese", #[set("windows-1258", "Vietnamese (Windows-1258)")])
+        group("Thai", #[set("windows-874", "Thai (Windows-874)")])
+        group("Chinese", #[
+            set("GBK", "Chinese Simplified (GBK)")
+            set("GB18030", "Chinese Simplified (GB18030)")
+            set("Big5", "Chinese Traditional (Big5)")
+        ])
+        group("Japanese", #[
+            set("Shift_JIS", "Japanese (Shift_JIS)")
+            set("EUC-JP", "Japanese (EUC-JP)")
+        ])
+        group("Korean", #[set("EUC-KR", "Korean (EUC-KR)")])
+    ]
+}
+
+/// Every character set, Unicode first.
+pub fn all() -> Vec<Charset> {
+    let mut out = #[set(DEFAULT, "Unicode (UTF-8)")]
+    for g in groups() {
+        for c in g.charsets { out.push(c) }
+    }
+    out
+}
+
+/// Whether `label` names one of the character sets offered.
+pub fn known(label: String) -> bool {
+    all().any(|c| c.label == label)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn every_label_is_offered_once_with_unicode_first() {
+        let all = super::all()
+        assert_eq(all[0].label, super::DEFAULT)
+        let mut seen: Set<String> = #{}
+        for c in all { seen.insert(c.label) }
+        assert_eq(seen.len(), all.len())
+        assert(super::known("Shift_JIS"))
+        assert(!super::known("UTF-16LE"))
+    }
+}
