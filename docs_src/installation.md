@@ -56,18 +56,8 @@ Not sure which Mac you have? Open the Apple menu and choose About This Mac:
 
 === "macOS"
 
-    With [Homebrew](https://brew.sh):
-
-    ```sh
-    brew install --cask danpozmanter/tap/waftty
-    ```
-
-    This installs `waftty.app` into `/Applications`, links the `waftty`
-    command, and clears the download quarantine. `brew upgrade` moves it to
-    each new release.
-
-    Or unzip the package and double-click `install.command` in the
-    unzipped folder. It runs in Terminal and asks for your password to link
+    Unzip the package and double-click `install.command` in the unzipped
+    folder. It runs in Terminal and asks for your password to link
     the `waftty` command.
 
     The script is not notarized, so macOS blocks it the first time it is
