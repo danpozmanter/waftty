@@ -1,14 +1,17 @@
 // Folds each message into the model: commands from menus and shortcuts,
 // the tab strip's requests, what the terminals report, window closing, and
-// the Find, Settings, About and close-confirmation dialogs.
+// the Find, Settings, Edit Colors, About and confirmation dialogs.
 
-use std::{errors, runtime}
+use std::{errors, fs, os, runtime}
 
 use gui
 use gui::{Effect, Outcome, UiMsg}
+use gui::dialogs::request
 use gui::dialogs::request::DialogRequest
+use gui::services
 use gui::services::desktop::Urgency
 use gui::terminal::Event
+use windowing
 
 use commands
 use info
@@ -19,6 +22,7 @@ use schemes
 use search
 use search::Step
 use settings
+use shortcuts
 
 /// The model after `msg`.
 pub fn update(m: Model, msg: UiMsg) -> Model {
@@ -61,6 +65,7 @@ pub fn update(m: Model, msg: UiMsg) -> Model {
                 if model::window_index(n, window).is_some() { open_settings(&mut n, window) }
             }
         }
+        UiMsg::DialogPreview(id, Outcome::Action(action)) if id == "settings" => settings_action(&mut n, action)
         UiMsg::Dialog(id, outcome) | UiMsg::DialogApplied(id, outcome) => dialog(&mut n, id, outcome)
         _ => ()
     }
@@ -69,13 +74,41 @@ pub fn update(m: Model, msg: UiMsg) -> Model {
 
 fn dialog(m: &mut Model, id: String, outcome: Outcome) {
     let accepted = outcome == Outcome::Action("accept")
-    if id == "settings" && let Outcome::Values(values) = outcome {
-        apply_settings(m, values)
+    if id == "settings" {
+        if let Outcome::Values(values) = outcome { apply_settings(m, values) }
+        if outcome != Outcome::Action("apply") { m.offered_scheme = "" }
+    } else if id == "scheme-editor" && let Outcome::Values(values) = outcome {
+        // A user scheme edited under its own name keeps its file.
+        let mut e = schemes::edited(values)
+        let original = schemes::find(schemes::all(m.user_schemes), m.editing_scheme)
+        if original.id == m.editing_scheme && original.id.starts_with("user:") && original.name == e.name { e.id = original.id }
+        save_scheme(m, e)
+    } else if id == "export-scheme" && let Outcome::Paths(files) = outcome && !files.is_empty() {
+        let e = schemes::find(schemes::all(m.user_schemes), m.editing_scheme)
+        if let Err(why) = fs::write(files[0], schemes::text(e).bytes()) { model::report(m.windows[0].key, "The scheme couldn't be exported", why) }
+    } else if id == "import-scheme" && let Outcome::Paths(files) = outcome && !files.is_empty() {
+        match schemes::import(files[0]) {
+            Ok(e) => save_scheme(m, e)
+            Err(why) => model::report(m.windows[0].key, "The scheme could not be imported", why)
+        }
+    } else if accepted && id.starts_with("paste:") {
+        if let Some(held) = m.held_paste {
+            let key, text = held
+            if let Some(loc) = model::tab_location(*m, key) {
+                let w, t = loc
+                let _ = m.windows[w].tabs[t].terminal.paste(text)
+            }
+        }
+        m.held_paste = None
+    } else if id.starts_with("paste:") {
+        m.held_paste = None
     } else if accepted && id.starts_with("close-tab:") {
         if let Some(loc) = model::tab_location(*m, id.substring(10, id.byte_len())) {
             let w, t = loc
             model::close_tab(m, w, t)
         }
+    } else if accepted && id.starts_with("close-tabs:") {
+        model::close_tabs(m, id.substring(11, id.byte_len()).split(","))
     } else if accepted && id.starts_with("close-window:") {
         if let Some(w) = model::window_index(*m, id.substring(13, id.byte_len())) { model::close_window(m, w) }
     } else if accepted && id == "close-all" {
@@ -95,61 +128,101 @@ fn command(m: &mut Model, window: String, id: String) {
     if let Some(key) = commands::shown_tab_of(id) {
         return model::activate(m, w, key)
     }
+    if let Some(n) = commands::number_of(id) {
+        let tabs = m.windows[w].tabs
+        if tabs.is_empty() { return }
+        let at = if n == 9 { tabs.len() - 1 } else { n - 1 }
+        if at < tabs.len() { model::activate(m, w, tabs[at].key) }
+        return
+    }
+    let tab = m.windows[w].current()
     match id {
         commands::NEW_TAB => {
-            if let Err(why) = model::open_tab(m, w, model::shell_here(*m, w)) { model::report(window, "Could not open a tab", why) }
+            if let Err(why) = model::open_tab(m, w, model::shell_here(*m, w)) { model::report(window, "Couldn't open a tab", why) }
         }
         commands::NEW_WINDOW => {
-            if let Err(why) = model::open_window(m, model::shell_here(*m, w)) { model::report(window, "Could not open a window", why) }
+            if let Err(why) = model::open_window(m, model::shell_here(*m, w)) { model::report(window, "Couldn't open a window", why) }
         }
         commands::CLOSE_TAB => {
-            if let Some(tab) = m.windows[w].current() && !tab.pinned { model::request_close_tab(m, tab.key) }
+            if let Some(t) = tab && !t.pinned { model::request_close_tab(m, t.key) }
         }
         commands::CLOSE_WINDOW => model::request_close_window(m, w)
+        commands::QUIT => model::request_quit(m)
         commands::OPEN_LINK => {
-            if let Some(tab) = m.windows[w].current() && !tab.link.is_empty() { gui::perform(Effect::OpenUrl(tab.link)) }
+            if let Some(t) = tab && !t.link.is_empty() { gui::perform(Effect::OpenUrl(t.link)) }
         }
         commands::COPY_LINK => {
-            if let Some(tab) = m.windows[w].current() && !tab.link.is_empty() { gui::perform(Effect::SetClipboard(tab.link)) }
+            if let Some(t) = tab && !t.link.is_empty() { gui::perform(Effect::SetClipboard(t.link)) }
         }
         commands::COPY_EMAIL => {
-            if let Some(tab) = m.windows[w].current() && let Some(address) = commands::email_of(tab.link) { gui::perform(Effect::SetClipboard(address)) }
-        }
-        commands::FULLSCREEN => model::toggle_fullscreen(m, w)
-        commands::ZOOM_IN => model::zoom(m, w, commands::ZOOM_STEP)
-        commands::ZOOM_OUT => model::zoom(m, w, -commands::ZOOM_STEP)
-        commands::NORMAL_SIZE => model::zoom(m, w, 0.0)
-        commands::FIND => search::open(m, w)
-        commands::FIND_NEXT => search::run(m, window, Step::Next)
-        commands::FIND_PREVIOUS => search::run(m, window, Step::Previous)
-        commands::FIND_CLOSE => search::close(m, w)
-        commands::PREVIOUS_PROMPT | commands::NEXT_PROMPT => {
-            if let Some(tab) = m.windows[w].current() && let Err(why) = prompts::jump(tab.terminal, id == commands::PREVIOUS_PROMPT) {
-                model::report(window, "Could not move to the prompt", why)
-            }
-        }
-        commands::SELECT_OUTPUT => {
-            if let Some(tab) = m.windows[w].current() {
-                match prompts::select_output(tab.terminal) {
-                    Ok(true) => ()
-                    Ok(false) => gui::perform(Effect::Announce("No command output is marked; see Shell Integration in the guide."))
-                    Err(why) => model::report(window, "Could not select the output", why)
-                }
-            }
-        }
-        commands::RESET => {
-            if let Some(tab) = m.windows[w].current() && let Err(why) = tab.terminal.reset() {
-                model::report(window, "Could not reset the terminal", why)
-            }
+            if let Some(t) = tab && let Some(address) = commands::email_of(t.link) { gui::perform(Effect::SetClipboard(address)) }
         }
         commands::SETTINGS => {
             if m.fonts.is_some() {
                 open_settings(m, window)
             } else {
                 // The font list comes from the installed fonts, read off the
-                // UI thread; the dialog opens once it arrives.
+                // UI thread; the window opens once it arrives.
                 m.settings_window = window
                 gui::perform(Effect::LoadFonts("settings"))
+            }
+        }
+        commands::FULLSCREEN => model::toggle_fullscreen(m, w)
+        commands::ZOOM_IN => model::zoom(m, w, commands::ZOOM_STEP)
+        commands::ZOOM_OUT => model::zoom(m, w, -commands::ZOOM_STEP)
+        commands::NORMAL_SIZE => model::zoom(m, w, 0.0)
+        commands::MENU_BAR => {
+            let mut chosen = m.settings
+            chosen.menu_bar = !chosen.menu_bar
+            store_settings(m, chosen)
+        }
+        commands::RESET_WINDOW_SIZE => {
+            let width, height = model::window_size(m.settings, model::font_size(*m, w))
+            gui::perform(Effect::SetWindowSize(window, width, height))
+        }
+        commands::FIND => search::open(m, w)
+        commands::FIND_NEXT => search::run(m, window, Step::Next)
+        commands::FIND_PREVIOUS => search::run(m, window, Step::Previous)
+        commands::FIND_CLOSE => search::close(m, w)
+        commands::PREVIOUS_PROMPT | commands::NEXT_PROMPT => {
+            if let Some(t) = tab && let Err(why) = prompts::jump(t.terminal, id == commands::PREVIOUS_PROMPT) {
+                model::report(window, "Couldn't move to the prompt", why)
+            }
+        }
+        commands::SELECT_OUTPUT => {
+            if let Some(t) = tab {
+                match prompts::select_output(t.terminal) {
+                    Ok(true) => ()
+                    Ok(false) => gui::perform(Effect::Announce("Command output can't be found: shell integration is off. See Shell Integration in the guide."))
+                    Err(why) => model::report(window, "Couldn't select the output", why)
+                }
+            }
+        }
+        commands::SCROLL_PAGE_UP | commands::SCROLL_PAGE_DOWN | commands::SCROLL_TOP | commands::SCROLL_BOTTOM => {
+            if let Some(t) = tab && let Ok(shown) = t.terminal.snapshot() {
+                let rows = match id {
+                    commands::SCROLL_PAGE_UP => shown.rows
+                    commands::SCROLL_PAGE_DOWN => -shown.rows
+                    commands::SCROLL_TOP => shown.history
+                    _ => -shown.scrolled
+                }
+                let _ = t.terminal.scroll(rows)
+            }
+        }
+        commands::CLEAR_SCROLLBACK => {
+            if let Some(t) = tab && let Err(why) = t.terminal.clear_scrollback() {
+                model::report(window, "Couldn't clear the scrollback", why)
+            }
+        }
+        commands::RESET | commands::RESET_AND_CLEAR => {
+            if let Some(t) = tab {
+                let mut done = t.terminal.reset()
+                // Clearing erases the screen and its history, then asks the
+                // program to draw again (Ctrl+L).
+                if id == commands::RESET_AND_CLEAR {
+                    done = done.and_then(|_| t.terminal.feed("\u{1b}[H\u{1b}[2J")).and_then(|_| t.terminal.clear_scrollback()).and_then(|_| t.terminal.input("\u{c}"))
+                }
+                if let Err(why) = done { model::report(window, "Couldn't reset the terminal", why) }
             }
         }
         commands::NEXT_TAB => model::cycle(m, w, 1)
@@ -162,9 +235,24 @@ fn command(m: &mut Model, window: String, id: String) {
                 model::retitle(m, w)
             }
         }
+        commands::PIN_TAB => {
+            if let Some(t) = tab { model::pin(m, w, t.key, !t.pinned) }
+        }
+        commands::CLOSE_OTHER_TABS => {
+            let active = m.windows[w].index_of(m.windows[w].active).unwrap_or(-1)
+            model::request_close_tabs(m, w, |i| i != active)
+        }
+        commands::CLOSE_TABS_RIGHT => {
+            let active = m.windows[w].index_of(m.windows[w].active).unwrap_or(-1)
+            model::request_close_tabs(m, w, |i| active >= 0 && i > active)
+        }
+        commands::GUIDE => gui::perform(Effect::OpenUrl(commands::GUIDE_URL))
+        commands::SHORTCUTS => gui::perform(Effect::OpenUrl(commands::SHORTCUTS_URL))
+        commands::REPORT => gui::perform(Effect::OpenUrl(commands::REPORT_URL))
         commands::ABOUT => gui::perform(Effect::OpenDialogIn(window, about()))
         _ => ()
     }
+    if let Some(w) = model::window_index(*m, window) { model::retitle(m, w) }
 }
 
 fn open_settings(m: &mut Model, window: String) {
@@ -173,46 +261,72 @@ fn open_settings(m: &mut Model, window: String) {
     let found, problems = schemes::user()
     m.user_schemes = found
     for why in problems { gui::perform(Effect::Announce(why)) }
-    gui::perform(Effect::OpenDialogIn(window, settings::dialog(m.settings, fonts, schemes::all(m.user_schemes))))
+    let mut shown = m.settings
+    if !m.offered_scheme.is_empty() { shown.scheme = m.offered_scheme }
+    let registry = commands::registry(model::new(m.settings), window)
+    gui::perform(Effect::OpenDialogIn(window, settings::dialog(shown, fonts, schemes::all(m.user_schemes), registry, m.shortcuts)))
+}
+
+// A button of the Settings window: the color scheme's.
+fn settings_action(m: &mut Model, action: String) {
+    let window = m.windows[0].key
+    match action {
+        "edit_scheme" => {
+            let id = if m.offered_scheme.is_empty() { m.settings.scheme } else { m.offered_scheme }
+            m.editing_scheme = id
+            gui::perform(Effect::OpenDialogIn(window, schemes::editor(schemes::find(schemes::all(m.user_schemes), id))))
+        }
+        "import_scheme" => {
+            let filters = #[request::FileFilter { name: "Color schemes", patterns: #["*.itermcolors", "*.json", "*.theme", "*.yaml", "*.yml", "*.toml"] }]
+            gui::perform(Effect::OpenDialogIn(window, request::open_file("import-scheme", "Import Scheme", filters)))
+        }
+        "export_scheme" => {
+            let id = if m.offered_scheme.is_empty() { m.settings.scheme } else { m.offered_scheme }
+            m.editing_scheme = id
+            let e = schemes::find(schemes::all(m.user_schemes), id)
+            let filters = #[request::FileFilter { name: "waftty schemes", patterns: #["*.toml"] }]
+            gui::perform(Effect::OpenDialogIn(window, request::save_file("export-scheme", "Export Scheme", f"scheme-{schemes::slug(e.name)}.toml", filters)))
+        }
+        "scheme_folder" => {
+            let folder = services::config_dir(info::APP_ID)
+            let _ = fs::create_dir_all(folder)
+            gui::perform(Effect::OpenUrl(f"file://{folder}"))
+        }
+        _ => ()
+    }
+}
+
+// Saves scheme `e` and offers it in the open Settings window, chosen.
+fn save_scheme(m: &mut Model, e: schemes::Entry) {
+    if let Err(why) = schemes::write(e) {
+        model::report(m.windows[0].key, "The scheme couldn't be saved", why)
+        return
+    }
+    m.offered_scheme = e.id
+    open_settings(m, m.windows[0].key)
 }
 
 // A tab strip request for tab `key` of window `window`.
 fn tab_action(m: &mut Model, window: String, key: String, action: String) {
     let Some(w) = model::window_index(*m, window) else { return }
-    let keys = m.windows[w].tabs.map(|t| t.key)
-    let at = m.windows[w].index_of(key)
+    let at = m.windows[w].index_of(key).unwrap_or(-1)
     match action {
         "close" => model::request_close_tab(m, key)
-        "close-others" => {
-            for k in keys {
-                if k != key { close_unpinned(m, k) }
-            }
-        }
-        "close-right" => {
-            if let Some(t) = at {
-                for k in keys.skip(t + 1) { close_unpinned(m, k) }
-            }
-        }
+        "close-others" => model::request_close_tabs(m, w, |i| i != at)
+        "close-right" => model::request_close_tabs(m, w, |i| at >= 0 && i > at)
         "pin" | "unpin" => model::pin(m, w, key, action == "pin")
         "move-left" | "move-right" => {
-            if let Some(t) = at { model::move_tab(m, w, key, t + if action == "move-left" { -1 } else { 1 }) }
+            if at >= 0 { model::move_tab(m, w, key, at + if action == "move-left" { -1 } else { 1 }) }
         }
         _ => ()
     }
     if let Some(w) = model::window_index(*m, window) { model::retitle(m, w) }
 }
 
-fn close_unpinned(m: &mut Model, key: String) {
-    if let Some(loc) = model::tab_location(*m, key) {
-        let w, t = loc
-        if !m.windows[w].tabs[t].pinned { model::request_close_tab(m, key) }
-    }
-}
-
 fn send_signal(m: &mut Model, w: i64, number: i64) {
     let Some(tab) = m.windows[w].current() else { return }
     if let Err(why) = tab.terminal.signal(number) {
-        model::report(m.windows[w].key, f"Could not send signal {number}", why)
+        model::report(m.windows[w].key, f"Couldn't send signal {number}", why)
     }
 }
 
@@ -220,7 +334,7 @@ fn set_encoding(m: &mut Model, w: i64, label: String) {
     let Some(t) = m.windows[w].index_of(m.windows[w].active) else { return }
     match m.windows[w].tabs[t].terminal.set_encoding(label) {
         Ok(()) => m.windows[w].tabs[t].encoding = label
-        Err(why) => model::report(m.windows[w].key, f"Could not use {label}", why)
+        Err(why) => model::report(m.windows[w].key, f"{label} isn't available", why)
     }
 }
 
@@ -234,9 +348,12 @@ fn terminal_event(m: &mut Model, id: i64, event: Event) {
             m.windows[w].tabs[t].title = title
             model::retitle(m, w)
         }
-        Event::Bell => call_attention(m, w, t)
+        Event::Bell => {
+            if m.settings.bell == "sound" { let _ = windowing::system::beep() }
+            call_attention(m, w, t)
+        }
         Event::Notify(title, body) => {
-            if !in_front(*m, w, t) {
+            if m.settings.notifications && !in_front(*m, w, t) {
                 let heading = if title.is_empty() { m.windows[w].tabs[t].label() } else { title }
                 gui::perform(Effect::Notify { id: f"notify:{m.windows[w].tabs[t].key}", title: heading, body: body, urgency: Urgency::Normal })
             }
@@ -249,15 +366,27 @@ fn terminal_event(m: &mut Model, id: i64, event: Event) {
             if m.settings.clipboard_write { gui::perform(Effect::SetPrimarySelection(text)) }
         }
         Event::PathActivated(path, line, col) => open_path(m, w, path, line, col)
+        Event::PasteHeld(text) => hold_paste(m, w, t, text)
         Event::Exited(_) => model::close_tab(m, w, t)
         Event::Failed(why) => {
             model::close_tab(m, w, t)
-            if model::window_index(*m, window).is_some() { model::report(window, "The program could not be waited for", errors::new(why)) }
+            if model::window_index(*m, window).is_some() { model::report(window, "waftty lost track of the program in this tab", errors::new(why)) }
         }
         Event::Refused(why) => gui::perform(Effect::Announce(why))
         Event::LinkPointed(uri) => m.windows[w].tabs[t].link = uri
         Event::LinkActivated(uri) => gui::perform(Effect::OpenUrl(uri))
     }
+}
+
+// Asks before pasting `text`, which runs commands or sends control
+// characters, into tab `t` of window `w`.
+fn hold_paste(m: &mut Model, w: i64, t: i64, text: String) {
+    let tab = m.windows[w].tabs[t]
+    let lines = text.trim_end_matches("\n").lines().len()
+    let detail = if lines > 1 { f"The text has {lines} lines; the shell may run each one as a command." } else { "The text holds control characters, which a program may act on." }
+    m.held_paste = Some((tab.key, text))
+    let title = if lines > 1 { f"Paste {lines} lines?" } else { "Paste control characters?" }
+    gui::perform(Effect::OpenDialogIn(m.windows[w].key, request::confirm(f"paste:{tab.key}", title, detail, "Paste", false)))
 }
 
 // Whether tab `t` of window `w` is in front of the user: shown in a window
@@ -275,9 +404,10 @@ fn call_attention(m: &mut Model, w: i64, t: i64) {
 }
 
 /// The program and arguments the editor setting `template` runs for a
-/// place, with {path}, {line} and {col} filled in.
+/// place, with {path}, {line} and {col} filled in; the template's words
+/// split as a command line, so a quoted path with spaces stays whole.
 pub fn editor_command(template: String, path: String, line: i64, col: i64) -> Vec<String> {
-    template.split_whitespace().map(|word| word.replace("{path}", path).replace("{line}", f"{line.max(1)}").replace("{col}", f"{col.max(1)}"))
+    settings::words(template).map(|word| word.replace("{path}", path).replace("{line}", f"{line.max(1)}").replace("{col}", f"{col.max(1)}"))
 }
 
 // Opens the file a Ctrl+click on the screen named: in the editor the
@@ -288,33 +418,57 @@ fn open_path(m: &mut Model, w: i64, path: String, line: i64, col: i64) {
         return
     }
     let words = editor_command(m.settings.editor, path, line, col)
+    if words.is_empty() { return }
     let here = model::shell_here(*m, w)
     let command = gui::terminal::Command { program: words[0], args: words.skip(1), cwd: here.cwd, env: #[] }
     if let Err(why) = model::open_tab(m, w, command) {
-        model::report(m.windows[w].key, "Could not open the editor", why)
+        model::report(m.windows[w].key, "Couldn't open the editor", why)
     }
 }
 
 fn apply_settings(m: &mut Model, values: Map<String, String>) {
-    let chosen = settings::with_values(m.settings, values)
+    let registry = commands::registry(model::new(m.settings), "main")
+    let chosen_keys = settings::chosen_shortcuts(values, registry)
+    if chosen_keys != m.shortcuts {
+        let problems = shortcuts::problems(chosen_keys, registry)
+        if !problems.is_empty() { model::report(m.windows[0].key, "Some shortcuts were not used", errors::new(problems.join("\n"))) }
+        m.shortcuts = chosen_keys
+        if let Err(why) = shortcuts::save(chosen_keys) { model::report(m.windows[0].key, "Couldn't save the shortcuts", why) }
+    }
+    store_settings(m, settings::with_values(m.settings, values))
+}
+
+// Takes settings `chosen`, puts their window theme in place and saves them.
+fn store_settings(m: &mut Model, chosen: settings::Settings) {
     if chosen == m.settings { return }
     m.settings = chosen
     gui::perform(schemes::theme_effect(model::scheme(*m)))
+    gui::perform(Effect::SetTransparent(chosen.opacity < 100))
     if let Err(why) = settings::save(chosen) {
-        model::report(m.windows[0].key, "Could not save the settings", why)
+        model::report(m.windows[0].key, "Couldn't save the settings", why)
     }
 }
 
-/// The About dialog: waftty's version and the toolchain it was built with.
+/// The About window: what waftty is, its version and toolchain, its
+/// license, and where to read more or report a problem.
 pub fn about() -> DialogRequest {
     DialogRequest::About {
         id: "about"
         name: info::NAME
         version: info::VERSION
-        description: f"Gossamer {runtime::version()} \u{b7} gui-gos {gui::VERSION}"
-        credits: ""
-        licenses: ""
-        diagnostics: ""
-        links: #[]
+        description: "A light, tabbed terminal emulator."
+        credits: f"By Dan Pozmanter. Built with Gossamer {runtime::version()}, gui-gos {gui::VERSION} and wezterm-lite."
+        licenses: "waftty is licensed under the Apache License 2.0. It includes SDL (zlib license), IBM Plex Mono (SIL Open Font License 1.1) and terminal code from WezTerm (MIT license)."
+        diagnostics: f"waftty {info::VERSION}\nGossamer {runtime::version()}\ngui-gos {gui::VERSION}\n{os::family()} {os::arch()}"
+        links: #[("Website", "https://danpozmanter.github.io/waftty/"), ("Guide", commands::GUIDE_URL), ("Report a problem", commands::REPORT_URL)]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn an_editor_template_keeps_quoted_words_whole() {
+        assert_eq(super::editor_command("'/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl' {path}:{line}", "/tmp/a b.txt", 3, 0), #["/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl", "/tmp/a b.txt:3"])
+        assert_eq(super::editor_command("vim +{line} {path}", "/x", 0, 0), #["vim", "+1", "/x"])
     }
 }

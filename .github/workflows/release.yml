@@ -265,3 +265,20 @@ jobs:
             artifacts/*.AppImage
             artifacts/*.exe
             artifacts/*.sha256
+
+  homebrew:
+    name: Update the Homebrew tap
+    needs: release
+    runs-on: ubuntu-latest
+    if: github.repository == 'danpozmanter/waftty' && startsWith(github.ref, 'refs/tags/v')
+    permissions: {}
+    steps:
+      # The tap's Bump workflow sets the waftty cask to this release and checks it.
+      - name: Send the release to danpozmanter/homebrew-tap
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          gh api repos/danpozmanter/homebrew-tap/dispatches \
+            -f event_type=release \
+            -f "client_payload[package]=waftty" \
+            -f "client_payload[version]=${GITHUB_REF_NAME#v}"

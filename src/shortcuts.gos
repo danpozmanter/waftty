@@ -56,14 +56,59 @@ fn unusable(chord: String) -> String {
     let ctrl = first.ctrl || (first.primary && !mac)
     let meta = first.meta || (first.primary && mac)
     let alt, shift = first.alt, first.shift
-    let printable = gui::input::key_name(first.key).len() == 1
+    let name = gui::input::key_name(first.key)
+    let printable = name.len() == 1
+    let letter = printable && name[0].is_alphabetic()
     if printable && !ctrl && !alt && !meta {
         return f"\"{chord}\" is a key the terminal types"
     }
-    if printable && ctrl && !alt && !shift && !meta {
+    if letter && ctrl && !alt && !shift && !meta {
         return f"\"{chord}\" is a Ctrl key programs need; add Shift"
     }
+    if letter && alt && !ctrl && !meta {
+        return f"\"{chord}\" is an Alt key programs read as Meta; add Ctrl"
+    }
     ""
+}
+
+/// `shortcut` spelled as a chord the shortcuts file and Settings read back,
+/// such as "Ctrl+Shift+T" or, on macOS, "Cmd+T".
+pub fn spelled(shortcut: Shortcut) -> String {
+    let mac = gui::input::platform_is_macos()
+    shortcut.strokes.map(|s| {
+        let mut parts = #[]
+        if s.ctrl || (s.primary && !mac) { parts.push("Ctrl") }
+        if s.alt { parts.push(if mac { "Option" } else { "Alt" }) }
+        if s.shift { parts.push("Shift") }
+        if s.meta || (s.primary && mac) { parts.push(if mac { "Cmd" } else { "Super" }) }
+        parts.push(gui::input::key_name(s.key))
+        parts.join("+")
+    }).join(" ")
+}
+
+/// Whether Settings offers a shortcut for command `id`: the commands of the
+/// Send Signal, Set Encoding and tab lists are many and change, so they
+/// are bound in the shortcuts file only.
+pub fn bindable(id: String) -> bool {
+    !id.starts_with("terminal.signal:") && !id.starts_with("terminal.encoding:") && !id.starts_with("tabs.show:")
+}
+
+// `text` quoted as a TOML basic string.
+fn quoted(text: String) -> String {
+    f"\"{text.replace("\\", "\\\\").replace("\"", "\\\"")}\""
+}
+
+/// Writes `chosen`, the chords that differ from the defaults, as the
+/// shortcuts file.
+pub fn save(chosen: Map<String, Vec<String>>) -> Result<(), errors::Error> {
+    let mut ids = chosen.keys()
+    ids.sort()
+    let mut text = String::new()
+    for id in ids {
+        text += f"{quoted(id)} = [{chosen[id].map(quoted).join(", ")}]\n"
+    }
+    fs::create_dir_all(services::config_dir(info::APP_ID))?
+    fs::write(file(), text.bytes())
 }
 
 /// The problems with `chosen` against the commands `registry` offers: ids
@@ -73,13 +118,23 @@ pub fn problems(chosen: Map<String, Vec<String>>, registry: Vec<Command>) -> Vec
     let mut ids = chosen.keys()
     ids.sort()
     for id in ids {
-        if !registry.any(|c| c.id == id) {
+        let Some(c) = registry.iter().find(|c| c.id == id) else {
             out.push(f"{id} is not a command")
             continue
         }
         for chord in chosen[id] {
-            let why = unusable(chord)
+            let why = if defaults_of(c).contains(chord) { "" } else { unusable(chord) }
             if !why.is_empty() { out.push(f"{id}: {why}") }
+        }
+    }
+    // A chord set for two commands runs only one of them.
+    let mut seen: Map<String, String> = Map::new()
+    for c in apply(registry, chosen) {
+        for chord in c.shortcuts.map(spelled) {
+            match seen.get(chord) {
+                Some(other) => out.push(f"{chord} is set for both {other} and {c.label}")
+                None => seen[chord] = c.label
+            }
         }
     }
     out
@@ -90,12 +145,20 @@ pub fn problems(chosen: Map<String, Vec<String>>, registry: Vec<Command>) -> Vec
 pub fn apply(registry: Vec<Command>, chosen: Map<String, Vec<String>>) -> Vec<Command> {
     registry.map(|c| {
         let Some(chords) = chosen.get(c.id) else { return c }
+        let defaults = defaults_of(c)
         let mut out = Command { shortcuts: #[], ..c }
         for chord in chords {
-            if unusable(chord).is_empty() { out = out.key(chord) }
+            if defaults.contains(chord) || unusable(chord).is_empty() { out = out.key(chord) }
         }
         out
     })
+}
+
+// The chords command `c` has by default, which stay usable when chosen
+// again: Copy's plain Ctrl+C serves text fields, which the terminal leaves
+// to its program.
+fn defaults_of(c: Command) -> Vec<String> {
+    c.shortcuts.map(spelled)
 }
 
 #[cfg(test)]
@@ -118,12 +181,19 @@ mod tests {
         let registry = #[Command::new("file.new-tab", "New Tab").key("Primary+Shift+T"), Command::new("tabs.next", "Next Tab")]
         let chosen = { "file.new-tab": #["Ctrl+T", "Ctrl+Shift+Y"], "tabs.next": #["x"], "no.such": #["F5"] }
         let found = super::problems(chosen, registry)
-        assert_eq(found.len(), 3)
+        assert_eq(found.len(), 3, f"{found}")
         assert(found[0].contains("Ctrl key programs need"))
         assert(found[1].contains("no.such"))
         assert(found[2].contains("the terminal types"))
         let applied = super::apply(registry, chosen)
         assert_eq(applied[0].shortcuts.len(), 1)
         assert_eq(applied[1].shortcuts.len(), 0)
+    }
+
+    #[test]
+    fn a_chord_set_for_two_commands_is_reported() {
+        let registry = #[Command::new("file.new-tab", "New Tab").key("Ctrl+Shift+T"), Command::new("tabs.next", "Next Tab").key("Ctrl+Tab")]
+        let found = super::problems({ "tabs.next": #["Ctrl+Shift+T"] }, registry)
+        assert_eq(found, #["Ctrl+Shift+T is set for both New Tab and Next Tab"])
     }
 }

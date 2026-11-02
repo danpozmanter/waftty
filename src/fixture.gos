@@ -13,6 +13,7 @@ use windowing::{Key, Mods}
 
 use application
 use commands
+use model
 use settings::Settings
 
 fn require(value: bool, why: String) -> Result<(), errors::Error> {
@@ -49,13 +50,15 @@ fn find(s: &mut gui::Session, text: String) -> Result<(), errors::Error> {
     s.flush()
 }
 
-// The shortcut modifiers: Command+Shift on macOS, Ctrl+Shift elsewhere.
-fn primary_shift() -> Mods {
-    if gui::input::platform_is_macos() {
-        Mods { gui: true, shift: true, ..Mods::default() }
-    } else {
-        Mods { ctrl: true, shift: true, ..Mods::default() }
-    }
+// Presses the first shortcut of command `id` as this platform binds it.
+fn shortcut(s: &mut gui::Session, id: String) -> Result<(), errors::Error> {
+    let registry = commands::registry(model::new(Settings::default()), "main")
+    let Some(c) = registry.iter().find(|c| c.id == id) else { return Err(errors::new(f"{id} is not a command")) }
+    if c.shortcuts.is_empty() { return Err(errors::new(f"{id} has no shortcut")) }
+    let stroke = c.shortcuts[0].strokes[0]
+    let mac = gui::input::platform_is_macos()
+    let mods = Mods { ctrl: stroke.ctrl || (stroke.primary && !mac), alt: stroke.alt, shift: stroke.shift, gui: stroke.meta || (stroke.primary && mac), ..Mods::default() }
+    s.press(stroke.key, mods)
 }
 
 // How many columns the main window's terminal shows: the width of its first
@@ -126,19 +129,18 @@ pub fn journey() -> Result<(), errors::Error> {
     // The prompt carries the marks a shell integration script writes
     // (OSC 133), so the journey can move between prompts.
     let first = Command { program: "/bin/sh", args: #[], cwd: "", env: #[("PS1", "\u{1b}]133;A\u{7}ready$ \u{1b}]133;I\u{7}")] }
-    let mut s = application::app(chosen, first).start()?
+    let mut s = application::app(chosen, first, false).start()?
     await_text(&mut s, 0, "ready$")?
     require(s.focused() == "term-tab-1", f"focus starts at {s.focused()}")?
-    let chord = primary_shift()
 
     require(!s.semantics(0).dump().contains("tablist"), "one tab shows a tab strip")?
-    s.press(Key::T, chord)?
+    shortcut(&mut s, commands::NEW_TAB)?
     await_text(&mut s, 0, "[selected 2/2]")?
-    s.press(Key::L, chord)?
+    shortcut(&mut s, commands::LAST_TAB)?
     await_text(&mut s, 0, "[selected 1/2]")?
-    s.press(Key::PageDown, chord)?
+    shortcut(&mut s, commands::MOVE_RIGHT)?
     await_text(&mut s, 0, "[selected 2/2]")?
-    s.press(Key::PageUp, chord)?
+    shortcut(&mut s, commands::MOVE_LEFT)?
     await_text(&mut s, 0, "[selected 1/2]")?
     s.run_command(0, commands::show_command("tab-2"))
     s.flush()?
@@ -150,17 +152,17 @@ pub fn journey() -> Result<(), errors::Error> {
 
     enter(&mut s, "echo needle-one; echo needle-two")?
     await_text(&mut s, 0, "\nneedle-two")?
-    s.press(Key::F, chord)?
+    shortcut(&mut s, commands::FIND)?
     s.flush()?
     require(s.focused() == "find-main:query", f"Find left focus at {s.focused()}")?
     s.type_text("NEEDLE")?
     await_spoken(&mut s, "Match 4 of 4")?
     await_text(&mut s, 0, "4 of 4")?
-    s.press(Key::H, chord)?
+    shortcut(&mut s, commands::FIND_PREVIOUS)?
     await_spoken(&mut s, "Match 3 of 4")?
-    s.press(Key::G, chord)?
+    shortcut(&mut s, commands::FIND_NEXT)?
     await_spoken(&mut s, "Match 4 of 4")?
-    s.press(Key::G, chord)?
+    shortcut(&mut s, commands::FIND_NEXT)?
     await_spoken(&mut s, "Match 1 of 4")?
     s.click("find-main:regex")?
     find(&mut s, "needle-t\\w+")?
@@ -183,7 +185,7 @@ pub fn journey() -> Result<(), errors::Error> {
 
     enter(&mut s, "sh -c 'echo started; exec sleep 30'; echo slept:$?")?
     await_text(&mut s, 0, "\nstarted")?
-    s.press(Key::W, chord)?
+    shortcut(&mut s, commands::CLOSE_TAB)?
     await_dialog(&mut s, "close-tab:tab-1")?
     s.close_dialog("close-tab:tab-1", Outcome::Cancelled)
     s.flush()?
@@ -227,7 +229,7 @@ pub fn journey() -> Result<(), errors::Error> {
 
     enter(&mut s, f"cd {config} && echo moved")?
     await_text(&mut s, 0, "\nmoved")?
-    s.press(Key::T, chord)?
+    shortcut(&mut s, commands::NEW_TAB)?
     await_text(&mut s, 0, "[selected 3/3]")?
     enter(&mut s, "ls")?
     await_text(&mut s, 0, "\ngate")?
@@ -237,17 +239,17 @@ pub fn journey() -> Result<(), errors::Error> {
 
     enter(&mut s, "seq 200")?
     await_text(&mut s, 0, "\n200")?
-    s.press(Key::Up, chord)?
+    shortcut(&mut s, commands::PREVIOUS_PROMPT)?
     while !screen_rows(s).first().unwrap_or("").contains("ready$ seq 200") {
         require(s.step()?, f"the session ended before Previous Prompt showed the prompt: {screen_rows(s)}")?
     }
-    s.press(Key::Down, chord)?
+    shortcut(&mut s, commands::NEXT_PROMPT)?
     while !screen_rows(s).any(|row| row == "200") {
         require(s.step()?, f"the session ended before Next Prompt came back: {screen_rows(s)}")?
     }
     s.run_command(0, commands::SELECT_OUTPUT)
     s.flush()?
-    s.press(Key::C, chord)?
+    shortcut(&mut s, commands::COPY)?
     require(clipboard::text().starts_with("1\n2\n3"), f"Select Last Output copied {clipboard::text()}")?
     println("prompts: Previous Prompt showed the marked prompt, Next Prompt the live screen, and Select Last Output took the last command's output")
     // Later steps read the screen, so it ends as it began, with "plain".
@@ -276,18 +278,18 @@ pub fn journey() -> Result<(), errors::Error> {
         require(order.all(|at| at >= 0) && order.windows(2).all(|pair| pair[0] < pair[1]), f"the menus are not in order:\n{shown}")?
     }
     let normal = columns(s)
-    s.press(Key::Char('='), chord)?
+    shortcut(&mut s, commands::ZOOM_IN)?
     s.flush()?
     let zoomed = columns(s)
     require(zoomed < normal, f"Zoom In left {zoomed} of {normal} columns")?
-    s.press(Key::Char('-'), chord)?
+    shortcut(&mut s, commands::ZOOM_OUT)?
     s.flush()?
     require(columns(s) == normal, "Zoom Out did not undo Zoom In")?
-    s.press(Key::Char('='), chord)?
-    s.press(Key::Char('='), chord)?
-    s.press(Key::Num0, chord)?
+    shortcut(&mut s, commands::ZOOM_IN)?
+    shortcut(&mut s, commands::ZOOM_IN)?
+    shortcut(&mut s, commands::NORMAL_SIZE)?
     s.flush()?
-    require(columns(s) == normal, "Normal Size kept the zoom")?
+    require(columns(s) == normal, "Reset Zoom kept the zoom")?
     let framed = s.window_size(0)
     s.press(Key::F11, Mods::default())?
     s.flush()?
@@ -295,7 +297,7 @@ pub fn journey() -> Result<(), errors::Error> {
     s.press(Key::F11, Mods::default())?
     s.flush()?
     require(s.window_size(0) == framed, f"leaving fullscreen made the window {s.window_size(0)}")?
-    println(f"view: the menus run File to Help; Zoom In and Out changed {normal} columns to {zoomed} and back, Normal Size restored them; F11 went fullscreen and back")
+    println(f"view: the menus run File to Help; Zoom In and Out changed {normal} columns to {zoomed} and back, Reset Zoom restored them; F11 went fullscreen and back")
 
     s.press(Key::F10, Mods { shift: true, ..Mods::default() })?
     s.flush()?
@@ -308,7 +310,7 @@ pub fn journey() -> Result<(), errors::Error> {
     s.flush()?
     require(s.popup_owners().is_empty(), "Escape left the terminal's menu open")?
     clipboard::set_text("")
-    s.press(Key::A, chord)?
+    shortcut(&mut s, commands::SELECT_ALL)?
     s.press(Key::F10, Mods { shift: true, ..Mods::default() })?
     s.press(Key::Return, Mods::default())?
     s.flush()?
@@ -366,22 +368,22 @@ pub fn journey() -> Result<(), errors::Error> {
     s.flush()?
     println("links: the pointer showed a hand over a printed URL; a right click on it offered Open Link and Copy Link, and on an email address Copy Email Address too; each copied what it names")
 
-    s.press(Key::N, chord)?
+    shortcut(&mut s, commands::NEW_WINDOW)?
     s.flush()?
     require(s.window_count() == 2, f"New Window left {s.window_count()} windows")?
     await_text(&mut s, 1, "$ ")?
     s.run_command(1, commands::CLOSE_WINDOW)
     s.flush()?
     require(s.window_count() == 1, f"Close Window left {s.window_count()} windows")?
-    println("windows: Ctrl+Shift+N opened one, Close Window closed it")
+    println("windows: New Window's shortcut opened one, Close Window closed it")
 
     s.focus("term-tab-1")?
-    s.press(Key::W, chord)?
+    shortcut(&mut s, commands::CLOSE_TAB)?
     while s.semantics(0).dump().contains("tablist") { require(s.step()?, "the session ended closing a tab")? }
     enter(&mut s, "exit")?
     while s.step()? {}
     s.shutdown()
     require(gui::app::host::callback_count() == 0, "the session leaked callbacks")?
-    println("close: Ctrl+Shift+W closed a tab, and the last shell's exit ended the session")
+    println("close: Close Tab's shortcut closed a tab, and the last shell's exit ended the session")
     Ok(())
 }

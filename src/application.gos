@@ -11,13 +11,15 @@ use info
 use model
 use model::Model
 use schemes
+use settings
 use settings::Settings
 use shortcuts
 use update
 use view
 
-fn init(s: Settings, first: Command) -> Model {
+fn init(s: Settings, first: Command, restore: bool) -> Model {
     let mut m = model::new(s)
+    m.desktop_font = settings::desktop_font()
     let found, scheme_problems = schemes::user()
     m.user_schemes = found
     gui::perform(schemes::theme_effect(model::scheme(m)))
@@ -26,6 +28,7 @@ fn init(s: Settings, first: Command) -> Model {
         gui::perform(gui::Effect::Quit)
         return m
     }
+    if restore { reopen(&mut m) }
     let mut problems = scheme_problems
     match shortcuts::load() {
         Ok(chosen) => {
@@ -41,10 +44,29 @@ fn init(s: Settings, first: Command) -> Model {
     m
 }
 
-/// The application with settings `s`, its first tab running `first`.
-pub fn app(s: Settings, first: Command) -> gui::App<Model> {
-    gui::application(info::NAME, info::APP_ID, || init(s, first), update::update, view::main)
-        .size(760, 520)
+// Opens the windows and tabs of the session saved at the last quit: the
+// first window's first tab is the one already open in its folder.
+fn reopen(m: &mut Model) {
+    let Some(saved) = model::saved_session() else { return }
+    let mut w = 0
+    for window in saved.windows {
+        for (i, folder) in window.folders.iter().enumerate() {
+            let mut command = model::shell(*m)
+            if !folder.is_empty() { command.cwd = folder }
+            let opened = if w == 0 && i == 0 { Ok(()) } else if i == 0 { model::open_window(m, command) } else { model::open_tab(m, m.windows.len() - 1, command) }
+            if let Err(why) = opened { eprintln(f"{info::NAME}: {why}") }
+        }
+        w += 1
+    }
+}
+
+/// The application with settings `s`, its first tab running `first`; with
+/// `restore`, the windows and tabs saved at the last quit open after it.
+pub fn app(s: Settings, first: Command, restore: bool) -> gui::App<Model> {
+    let width, height = model::window_size(s, s.font_size)
+    gui::application(info::NAME, info::APP_ID, || init(s, first, restore), update::update, view::main)
+        .size(width, height)
+        .transparent(s.opacity < 100)
         .min_size(360, 220)
         .window_commands(commands::registry)
         .windows(view::window)

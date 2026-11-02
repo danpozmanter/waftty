@@ -46,6 +46,31 @@ pub fn table() -> Vec<Signal> {
     numbered(LINUX)
 }
 
+/// What signal `name` does, in plain words, for the ones people send by
+/// hand; "" for the rest.
+pub fn meaning(name: String) -> String {
+    match name {
+        "SIGINT" => "Interrupt"
+        "SIGTERM" => "Terminate"
+        "SIGKILL" => "Kill"
+        "SIGHUP" => "Hang Up"
+        "SIGQUIT" => "Quit"
+        "SIGTSTP" => "Suspend"
+        "SIGSTOP" => "Stop"
+        "SIGCONT" => "Continue"
+        "SIGUSR1" => "User Signal 1"
+        "SIGUSR2" => "User Signal 2"
+        _ => ""
+    }
+}
+
+/// How the Send Signal menu names `s`: "Terminate (SIGTERM)" for a common
+/// one, "SIGWINCH (28)" for the rest.
+pub fn label(s: Signal) -> String {
+    let words = meaning(s.name)
+    if words.is_empty() { f"{s.name} ({s.number})" } else { f"{words} ({s.name})" }
+}
+
 const LINUX: [String; 30] = [
     "SIGHUP", "SIGINT", "SIGQUIT", "SIGILL", "SIGTRAP", "SIGABRT", "SIGBUS", "SIGFPE", "SIGKILL", "SIGUSR1"
     "SIGSEGV", "SIGUSR2", "SIGPIPE", "SIGALRM", "SIGTERM", "SIGSTKFLT", "SIGCHLD", "SIGCONT", "SIGSTOP", "SIGTSTP"
@@ -69,5 +94,11 @@ mod tests {
         assert_eq(table[1].name, "SIGINT")
         assert_eq(table[8].name, "SIGKILL")
         assert_eq(table[14].name, "SIGTERM")
+    }
+
+    #[test]
+    fn common_signals_read_in_words_and_others_by_number() {
+        assert_eq(super::label(super::Signal { number: 15, name: "SIGTERM" }), "Terminate (SIGTERM)")
+        assert_eq(super::label(super::Signal { number: 28, name: "SIGWINCH" }), "SIGWINCH (28)")
     }
 }

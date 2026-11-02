@@ -10,6 +10,7 @@ use application
 use console
 use fixture
 use info
+use model
 use portable
 use settings
 use settings::Settings
@@ -75,11 +76,17 @@ fn main() -> Result<(), errors::Error> {
             Settings::default()
         }
     }
-    let first = match program {
-        Some(c) => Command { cwd: s.directory, ..c }
+    // A session comes back when no program was asked for; its first window's
+    // first tab opens in its folder.
+    let restore = program.is_none() && s.restore
+    let mut first = match program {
+        Some(c) => Command { cwd: settings::start_folder(s), ..c }
         None => settings::command(s)
     }
-    application::app(s, first).run()
+    if restore && let Some(saved) = model::saved_session() && !saved.windows[0].folders.is_empty() && !saved.windows[0].folders[0].is_empty() {
+        first.cwd = saved.windows[0].folders[0]
+    }
+    application::app(s, first, restore).run()
 }
 
 #[cfg(test)]

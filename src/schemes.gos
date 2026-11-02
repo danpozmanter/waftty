@@ -8,6 +8,8 @@ use std::encoding::{json, toml}
 
 use gui
 use gui::Effect
+use gui::dialogs::request
+use gui::dialogs::request::{PreferenceField, PreferenceKind, PreferencePage}
 use gui::services
 use gui::terminal::Scheme
 
@@ -138,6 +140,223 @@ pub fn file_for(name: String) -> String {
     path::join(services::config_dir(info::APP_ID), f"scheme-{name}.toml")
 }
 
+/// The id a user scheme named `name` takes, from its file name: lowercase
+/// letters, digits and dashes.
+pub fn slug(name: String) -> String {
+    let mut out = String::new()
+    for c in name.to_lowercase() {
+        if c.is_alphanumeric() { out.push(c) } else if !out.is_empty() && !out.ends_with("-") { out.push('-') }
+    }
+    let trimmed = out.trim_end_matches("-")
+    if trimmed.is_empty() { "scheme" } else { trimmed }
+}
+
+/// The colors of the scheme `e` shows: its own, or for a scheme that takes
+/// the theme's, the dark built-in ones to start an edit from.
+pub fn colors_of(e: Entry) -> Scheme {
+    match e.colors {
+        Some(c) if c.ansi.len() == 16 => c
+        Some(c) => Scheme { ansi: CONTRAST_DARK.to_vec(), ..c }
+        None => Scheme { foreground: "#d8d8d8", background: "#1e1e1e", cursor: "#d8d8d8", selection: "#3a5a80", selection_text: "#ffffff", ansi: ANSI_DEFAULT.to_vec() }
+    }
+}
+
+// Tango's named colors, which an edit of a theme-colored scheme starts from.
+const ANSI_DEFAULT: [String; 16] = [
+    "#000000", "#cc0000", "#4e9a06", "#c4a000", "#3465a4", "#75507b", "#06989a", "#d3d7cf"
+    "#555753", "#ef2929", "#8ae234", "#fce94f", "#729fcf", "#ad7fa8", "#34e2e2", "#eeeeec"
+]
+
+const ANSI_NAMES: [String; 16] = [
+    "Black", "Red", "Green", "Yellow", "Blue", "Magenta", "Cyan", "White"
+    "Bright black", "Bright red", "Bright green", "Bright yellow", "Bright blue", "Bright magenta", "Bright cyan", "Bright white"
+]
+
+/// The Edit Colors window for scheme `e`; OK saves a user scheme by the
+/// name it shows.
+pub fn editor(e: Entry) -> gui::DialogRequest {
+    let c = colors_of(e)
+    let color = |key: String, label: String, value: String| PreferenceField { key: key, label: label, kind: PreferenceKind::Color, value: value, default: value, help: "" }
+    let name = if e.id.starts_with(USER_PREFIX) { e.name } else { f"{e.name} (edited)" }
+    let appearance = if e.appearance.is_empty() { "dark" } else { e.appearance }
+    let mut named = #[]
+    for i in 0..16 { named.push(color(f"ansi{i}", ANSI_NAMES[i], c.ansi[i])) }
+    request::preferences("scheme-editor", "Edit Colors", #[
+        PreferencePage { key: "scheme", title: "Scheme", fields: #[
+            PreferenceField { key: "name", label: "Name", kind: PreferenceKind::Text, value: name, default: name, help: "Saved as a scheme file by this name." }
+            PreferenceField { key: "appearance", label: "Window", kind: PreferenceKind::Choice(#[("dark", "Dark"), ("light", "Light")]), value: appearance, default: appearance, help: "The look of the window around the terminal." }
+            color("foreground", "Text", c.foreground)
+            color("background", "Background", c.background)
+            color("cursor", "Cursor", c.cursor)
+            color("selection", "Selection", c.selection)
+            color("selection_text", "Selected text", c.selection_text)
+        ] }
+        PreferencePage { key: "named", title: "Named Colors", fields: named }
+    ])
+}
+
+/// The scheme an Edit Colors answer describes.
+pub fn edited(values: Map<String, String>) -> Entry {
+    let get = |key: String| normalized(values.get(key).unwrap_or("")).unwrap_or("")
+    let mut ansi = #[]
+    for i in 0..16 { ansi.push(get(f"ansi{i}")) }
+    let name = values.get("name").map(|n| n.trim()).filter(|n| !n.is_empty()).unwrap_or("Custom")
+    let appearance = if values.get("appearance") == Some("light") { "light" } else { "dark" }
+    let colors = Scheme { foreground: get("foreground"), background: get("background"), cursor: get("cursor"), selection: get("selection"), selection_text: get("selection_text"), ansi: ansi }
+    Entry { id: f"{USER_PREFIX}{slug(name)}", name: name, appearance: appearance, colors: Some(colors) }
+}
+
+/// Saves user scheme `e` as its scheme file.
+pub fn write(e: Entry) -> Result<(), errors::Error> {
+    fs::create_dir_all(services::config_dir(info::APP_ID))?
+    fs::write(file_for(e.id.substring(USER_PREFIX.byte_len(), e.id.byte_len())), text(e).bytes())
+}
+
+/// Scheme `e` as a scheme file's text, which waftty reads back.
+pub fn text(e: Entry) -> String {
+    let c = colors_of(e)
+    let quoted = |v: String| f"\"{v.replace("\\", "\\\\").replace("\"", "\\\"")}\""
+    let appearance = if e.appearance.is_empty() { "dark" } else { e.appearance }
+    let mut text = f"name = {quoted(e.name)}\nappearance = {quoted(appearance)}\n"
+    text += f"foreground = {quoted(c.foreground)}\nbackground = {quoted(c.background)}\ncursor = {quoted(c.cursor)}\n"
+    text += f"selection = {quoted(c.selection)}\nselection_text = {quoted(c.selection_text)}\n"
+    text += f"ansi = [\n  {c.ansi.take(8).map(quoted).join(", ")},\n  {c.ansi.skip(8).map(quoted).join(", ")},\n]\n"
+    text
+}
+
+/// `text` as "#rrggbb": from #rgb, #rrggbb, #rrrrggggbbbb or rgb(r, g, b).
+pub fn normalized(text: String) -> Option<String> {
+    let t = text.trim().to_lowercase()
+    let hex = |s: String| s.byte_len() > 0 && s.chars().all(|c| c.is_ascii_hexdigit())
+    if t.starts_with("rgb(") && t.ends_with(")") {
+        let parts = t.substring(4, t.byte_len() - 1).split(",").map(|p| p.trim().to_i64().unwrap_or(-1))
+        if parts.len() != 3 || parts.any(|p| p < 0 || p > 255) { return None }
+        return Some(f"#{parts[0]:02x}{parts[1]:02x}{parts[2]:02x}")
+    }
+    let body = t.strip_prefix("#").unwrap_or(t)
+    if !hex(body) { return None }
+    match body.byte_len() {
+        3 => Some(f"#{body.substring(0, 1)}{body.substring(0, 1)}{body.substring(1, 2)}{body.substring(1, 2)}{body.substring(2, 3)}{body.substring(2, 3)}")
+        6 => Some(f"#{body}")
+        12 => Some(f"#{body.substring(0, 2)}{body.substring(4, 6)}{body.substring(8, 10)}")
+        _ => None
+    }
+}
+
+// The color red, green and blue fractions from 0 to 1 make.
+fn from_fractions(r: f64, g: f64, b: f64) -> String {
+    let byte = |f: f64| (f.clamp(0.0, 1.0) * 255.0).round() as i64
+    f"#{byte(r):02x}{byte(g):02x}{byte(b):02x}"
+}
+
+// The value of two hex digits.
+fn hex_byte(digits: String) -> i64 {
+    let mut n = 0
+    for c in digits { n = n * 16 + c.to_digit(16).unwrap_or(0) as i64 }
+    n
+}
+
+// Whether color `hex` is dark, by its relative luminance.
+fn is_dark(hex: String) -> bool {
+    let Some(c) = normalized(hex) else { return true }
+    let channel = |at: i64| (hex_byte(c.substring(at, at + 2)) as f64) / 255.0
+    0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5) < 0.5
+}
+
+// A scheme named `name` from colors read out of another terminal's file.
+fn imported(name: String, fg: String, bg: String, cursor: String, selection: String, selection_text: String, ansi: Vec<String>) -> Result<Entry, errors::Error> {
+    if ansi.len() != 16 || ansi.any(|c| c.is_empty()) { return Err(errors::new("the file does not hold sixteen named colors")) }
+    if fg.is_empty() || bg.is_empty() { return Err(errors::new("the file does not hold text and background colors")) }
+    let colors = Scheme { foreground: fg, background: bg, cursor: if cursor.is_empty() { fg } else { cursor }, selection: selection, selection_text: selection_text, ansi: ansi }
+    Ok(Entry { id: f"{USER_PREFIX}{slug(name)}", name: name, appearance: if is_dark(bg) { "dark" } else { "light" }, colors: Some(colors) })
+}
+
+/// The scheme in another terminal's color file at `file`: an iTerm2
+/// .itermcolors, a Windows Terminal scheme (.json), an xfce4-terminal
+/// .theme, or a base16 scheme (.yaml); a waftty .toml reads as it is.
+pub fn import(file: String) -> Result<Entry, errors::Error> {
+    let text = fs::read_to_string(file).map_err(|why| errors::wrap(why, f"reading {file}"))?
+    let name = path::file_stem(file).unwrap_or("Imported")
+    let ext = path::extension(file).unwrap_or("").to_lowercase().trim_start_matches(".")
+    let found = match ext {
+        "itermcolors" => from_iterm(name, text)
+        "json" => from_windows_terminal(name, text)
+        "theme" => from_xfce(name, text)
+        "yaml" | "yml" => from_base16(name, text)
+        "toml" => parse(f"scheme-{slug(name)}.toml", text)
+        _ => Err(errors::new("waftty reads .itermcolors, .json, .theme, .yaml and .toml schemes"))
+    }
+    found.map_err(|why| errors::wrap(why, f"importing {path::file_name(file).unwrap_or(file)}"))
+}
+
+// The text between `open` and `close` after byte `from`, and where it ends.
+fn between(text: String, open: String, close: String, from: i64) -> Option<(String, i64)> {
+    let rest = text.substring(from, text.byte_len())
+    let start = rest.find(open)? + open.byte_len()
+    let tail = rest.substring(start, rest.byte_len())
+    let end = tail.find(close)?
+    Some((tail.substring(0, end), from + start + end + close.byte_len()))
+}
+
+fn from_iterm(name: String, text: String) -> Result<Entry, errors::Error> {
+    let mut colors: Map<String, String> = Map::new()
+    let mut at = 0
+    while let Some(found) = between(text, "<key>", "</key>", at) {
+        let key, after = found
+        at = after
+        if !key.ends_with(" Color") { continue }
+        let Some(block) = between(text, "<dict>", "</dict>", at) else { break }
+        let body, end = block
+        let component = |which: String| {
+            match body.find(f"<key>{which} Component</key>") {
+                Some(k) => between(body, "<real>", "</real>", k).map(|r| r.0.trim().to_f64().unwrap_or(0.0)).unwrap_or(0.0)
+                None => 0.0
+            }
+        }
+        colors[key] = from_fractions(component("Red"), component("Green"), component("Blue"))
+        at = end
+    }
+    let get = |key: String| colors.get(key).unwrap_or("")
+    let mut ansi = #[]
+    for i in 0..16 { ansi.push(get(f"Ansi {i} Color")) }
+    imported(name, get("Foreground Color"), get("Background Color"), get("Cursor Color"), get("Selection Color"), get("Selected Text Color"), ansi)
+}
+
+fn from_windows_terminal(name: String, text: String) -> Result<Entry, errors::Error> {
+    let mut v = json::parse(text)?
+    // A whole settings file holds its schemes in a list; the first is taken.
+    if let Some(schemes) = json::get(v, "schemes") && let Some(list) = json::as_array(schemes) && !list.is_empty() { v = list[0] }
+    let get = |key: String| json::get(v, key).and_then(json::as_str).and_then(normalized).unwrap_or("")
+    let named = json::get(v, "name").and_then(json::as_str).unwrap_or(name)
+    let order = ["black", "red", "green", "yellow", "blue", "purple", "cyan", "white", "brightBlack", "brightRed", "brightGreen", "brightYellow", "brightBlue", "brightPurple", "brightCyan", "brightWhite"]
+    imported(named, get("foreground"), get("background"), get("cursorColor"), get("selectionBackground"), "", order.map(|k| get(k)))
+}
+
+fn from_xfce(name: String, text: String) -> Result<Entry, errors::Error> {
+    let mut values: Map<String, String> = Map::new()
+    for line in text.lines() {
+        if let Some(at) = line.find("=") { values[line.substring(0, at).trim()] = line.substring(at + 1, line.byte_len()).trim() }
+    }
+    let get = |key: String| normalized(values.get(key).unwrap_or("")).unwrap_or("")
+    let palette = values.get("ColorPalette").unwrap_or("").split(";").map(|c| normalized(c).unwrap_or("")).filter(|c| !c.is_empty())
+    let named = values.get("Name").unwrap_or(name)
+    imported(named, get("ColorForeground"), get("ColorBackground"), get("ColorCursor"), get("ColorSelectionBackground"), get("ColorSelection"), palette)
+}
+
+fn from_base16(name: String, text: String) -> Result<Entry, errors::Error> {
+    let mut base: Map<String, String> = Map::new()
+    let mut named = name
+    for line in text.lines() {
+        let Some(at) = line.find(":") else { continue }
+        let key = line.substring(0, at).trim().to_lowercase()
+        let value = line.substring(at + 1, line.byte_len()).trim().trim_matches("\"").trim_matches("'")
+        if key == "scheme" || key == "name" { named = value } else if key.starts_with("base") { base[key] = normalized(value).unwrap_or("") }
+    }
+    let b = |n: String| base.get(f"base{n}").unwrap_or("")
+    let ansi = #[b("00"), b("08"), b("0b"), b("0a"), b("0d"), b("0e"), b("0c"), b("05"), b("03"), b("08"), b("0b"), b("0a"), b("0d"), b("0e"), b("0c"), b("07")]
+    imported(named, b("05"), b("00"), b("05"), b("02"), b("05"), ansi)
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -155,6 +374,64 @@ mod tests {
     fn a_scheme_file_without_an_appearance_or_with_too_few_colors_is_refused() {
         assert(super::parse("scheme-x.toml", "foreground = \"#ffffff\"").is_err())
         assert(super::parse("scheme-x.toml", "appearance = \"light\"\nansi = [\"#000000\"]").is_err())
+    }
+
+    #[test]
+    fn colors_read_in_their_common_spellings() {
+        assert_eq(super::normalized("#ABC"), Some("#aabbcc"))
+        assert_eq(super::normalized("#112233"), Some("#112233"))
+        assert_eq(super::normalized("#1111aaaaffff"), Some("#11aaff"))
+        assert_eq(super::normalized("rgb(0, 128, 255)"), Some("#0080ff"))
+        assert_eq(super::normalized("blue"), None)
+        assert_eq(super::slug("Night Sky!"), "night-sky")
+    }
+
+    fn named(c: [String]) -> String {
+        let mut out = String::new()
+        for (i, x) in c.iter().enumerate() { out += f"{if i > 0 { ";" } else { "" }}{x}" }
+        out
+    }
+
+    #[test]
+    fn other_terminals_schemes_import_with_their_colors() {
+        let ansi = ["#000000", "#110000", "#001100", "#111100", "#000011", "#110011", "#001111", "#cccccc", "#555555", "#ff0000", "#00ff00", "#ffff00", "#0000ff", "#ff00ff", "#00ffff", "#ffffff"]
+        let xfce = f"[Scheme]\nName=Paper\nColorForeground=#222222\nColorBackground=#f8f8f8\nColorCursor=#222222\nColorPalette={named(ansi)}\n"
+        let Ok(x) = super::from_xfce("paper", xfce) else { panic("the xfce scheme did not import") }
+        assert_eq(x.name, "Paper")
+        assert_eq(x.appearance, "light")
+        let Some(c) = x.colors else { panic("no colors") }
+        assert_eq(c.ansi[9], "#ff0000")
+        let wt = "{\"name\": \"Campbell\", \"foreground\": \"#CCCCCC\", \"background\": \"#0C0C0C\", \"cursorColor\": \"#FFFFFF\", \"black\": \"#0C0C0C\", \"red\": \"#C50F1F\", \"green\": \"#13A10E\", \"yellow\": \"#C19C00\", \"blue\": \"#0037DA\", \"purple\": \"#881798\", \"cyan\": \"#3A96DD\", \"white\": \"#CCCCCC\", \"brightBlack\": \"#767676\", \"brightRed\": \"#E74856\", \"brightGreen\": \"#16C60C\", \"brightYellow\": \"#F9F1A5\", \"brightBlue\": \"#3B78FF\", \"brightPurple\": \"#B4009E\", \"brightCyan\": \"#61D6D6\", \"brightWhite\": \"#F2F2F2\"}"
+        let Ok(w) = super::from_windows_terminal("campbell", wt) else { panic("the Windows Terminal scheme did not import") }
+        assert_eq(w.id, "user:campbell")
+        assert_eq(w.appearance, "dark")
+        let base16 = "scheme: \"Ocean\"\nbase00: \"2b303b\"\nbase01: \"343d46\"\nbase02: \"4f5b66\"\nbase03: \"65737e\"\nbase04: \"a7adba\"\nbase05: \"c0c5ce\"\nbase06: \"dfe1e8\"\nbase07: \"eff1f5\"\nbase08: \"bf616a\"\nbase09: \"d08770\"\nbase0A: \"ebcb8b\"\nbase0B: \"a3be8c\"\nbase0C: \"96b5b4\"\nbase0D: \"8fa1b3\"\nbase0E: \"b48ead\"\nbase0F: \"ab7967\"\n"
+        let Ok(b) = super::from_base16("ocean", base16) else { panic("the base16 scheme did not import") }
+        assert_eq(b.name, "Ocean")
+        let Some(bc) = b.colors else { panic("no colors") }
+        assert_eq(bc.background, "#2b303b")
+        assert_eq(bc.ansi[1], "#bf616a")
+        let iterm = "<plist><dict><key>Ansi 0 Color</key><dict><key>Blue Component</key><real>0</real><key>Green Component</key><real>0</real><key>Red Component</key><real>1</real></dict></dict></plist>"
+        assert(super::from_iterm("one", iterm).is_err())
+        let mut full = "<plist><dict>"
+        for i in 0..16 { full += f"<key>Ansi {i} Color</key><dict><key>Blue Component</key><real>0.5</real><key>Green Component</key><real>0</real><key>Red Component</key><real>1</real></dict>" }
+        full += "<key>Background Color</key><dict><key>Blue Component</key><real>0</real><key>Green Component</key><real>0</real><key>Red Component</key><real>0</real></dict>"
+        full += "<key>Foreground Color</key><dict><key>Blue Component</key><real>1</real><key>Green Component</key><real>1</real><key>Red Component</key><real>1</real></dict></dict></plist>"
+        let Ok(i) = super::from_iterm("full", full) else { panic("the iTerm2 scheme did not import") }
+        let Some(ic) = i.colors else { panic("no colors") }
+        assert_eq(ic.ansi[3], "#ff0080")
+        assert_eq(ic.background, "#000000")
+    }
+
+    #[test]
+    fn an_edited_scheme_reads_back_from_its_fields() {
+        let mut values: Map<String, String> = { "name": "My Night", "appearance": "dark", "foreground": "#eeeeee", "background": "#101010", "cursor": "#ffffff", "selection": "#333333", "selection_text": "#ffffff" }
+        for i in 0..16 { values[f"ansi{i}"] = "#123456" }
+        let e = super::edited(values)
+        assert_eq(e.id, "user:my-night")
+        let Some(c) = e.colors else { panic("no colors") }
+        assert_eq(c.ansi.len(), 16)
+        assert_eq(c.background, "#101010")
     }
 
     #[test]

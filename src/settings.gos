@@ -1,17 +1,22 @@
-// The user's settings: what new tabs run and how terminals look, stored in
-// the application's configuration directory and edited in the Settings
-// dialog.
+// The user's settings: what new tabs run, how terminals look and behave,
+// and the shortcuts, stored in the application's configuration directory
+// and edited in the Settings window. Only values that differ from the
+// defaults are stored, so the defaults keep following the desktop.
 
-use std::{env, errors, os}
+use std::{env, errors, fs, os, path, process}
 
 use gui
+use gui::Command
 use gui::dialogs::request
 use gui::dialogs::request::{PreferenceField, PreferenceKind, PreferencePage}
 use gui::services
+use gui::terminal::{ViewOptions, WORD_CHARS}
+use windowing
 
 use encodings
 use info
 use schemes
+use shortcuts
 
 // The layout of the stored settings; a change of meaning bumps it. Format 2
 // names the color scheme `scheme`, where format 1 named the light or dark
@@ -21,23 +26,66 @@ const FORMAT: i64 = 2
 /// What every new tab and window uses.
 #[derive(PartialEq)]
 pub struct Settings {
-    /// The program new tabs run; empty runs the user's shell.
+    /// The command line new tabs run; empty runs the login shell.
     pub shell: String
-    /// Where new tabs start; empty starts where waftty did.
+    /// Where new windows start; empty starts in the home folder.
     pub directory: String
-    /// The character set new tabs start with.
+    /// Where a new tab starts: "current", the folder of the tab it opens
+    /// from, or "configured", `directory`.
+    pub new_tabs: String
+    /// The character encoding new tabs start with.
     pub encoding: String
-    /// The font family; empty takes the bundled monospace face.
+    /// Whether the windows and tabs open at the last quit come back.
+    pub restore: bool
+    /// The size in characters a new window opens at.
+    pub columns: i64
+    pub rows: i64
+    /// Whether closing a tab or window with a running program asks first.
+    pub confirm_close: bool
+    /// The font family; empty takes the desktop's monospace font, or the
+    /// bundled one where the desktop names none.
     pub font: String
     /// The text size in points.
     pub font_size: f64
-    /// Rows of history each new tab keeps.
-    pub scrollback: i64
+    /// The font's weight on the CSS scale; 400 is regular.
+    pub font_weight: i64
+    /// Letters join into the font's ligatures.
+    pub ligatures: bool
     /// The color scheme's id: "system", a built-in one, or "user:<name>".
     pub scheme: String
-    /// Where a new tab starts: "current", the directory of the tab it opens
-    /// from, or "configured", `directory`.
-    pub new_tabs: String
+    /// The cursor's shape: "block", "bar" or "underline".
+    pub cursor: String
+    pub cursor_blink: bool
+    /// Bold text in the standard colors takes their bright forms.
+    pub bold_bright: bool
+    /// Text too close to its background is moved toward a readable color.
+    pub legible: bool
+    /// Space around the terminal, in interface units.
+    pub padding: i64
+    /// How opaque the terminal's background is, in percent.
+    pub opacity: i64
+    /// The height of a line as a multiple of the font's.
+    pub line_spacing: f64
+    /// When the scrollbar shows: "always", "scrolling" or "never".
+    pub scrollbar: String
+    pub menu_bar: bool
+    /// When the tab bar shows: "always", "several" (with two tabs or more)
+    /// or "never".
+    pub tab_bar: String
+    /// Lines of history each new tab keeps.
+    pub scrollback: i64
+    pub scroll_on_output: bool
+    pub scroll_on_keystroke: bool
+    /// Characters a double click selects along with letters and digits.
+    pub word_chars: String
+    pub copy_on_select: bool
+    /// Whether pasting several lines, or control characters, asks first.
+    pub confirm_paste: bool
+    /// What a program's bell does besides marking its tab: "none", "flash"
+    /// or "sound".
+    pub bell: String
+    /// Whether programs' notifications (OSC 9 and 777) reach the desktop.
+    pub notifications: bool
     /// Whether programs may write the clipboard (OSC 52); they can never
     /// read it.
     pub clipboard_write: bool
@@ -45,138 +93,425 @@ pub struct Settings {
     /// {path}, {line} and {col} filled in; empty opens the path with the
     /// desktop's opener.
     pub editor: String
+    /// On macOS, Option sends Meta instead of the character it types.
+    pub option_as_meta: bool
 }
 
 impl Default for Settings {
     fn default() -> Settings {
-        Settings { shell: "", directory: "", encoding: encodings::DEFAULT, font: "", font_size: 10.0, scrollback: 2_000, scheme: schemes::SYSTEM, new_tabs: "current", clipboard_write: true, editor: "" }
+        Settings {
+            shell: "", directory: "", new_tabs: "current", encoding: encodings::DEFAULT, restore: false, columns: 90, rows: 28, confirm_close: true
+            font: "", font_size: 10.0, font_weight: 400, ligatures: true, scheme: schemes::SYSTEM, cursor: "block", cursor_blink: true, bold_bright: false, legible: true, padding: 4, opacity: 100, line_spacing: 1.0, scrollbar: "scrolling", menu_bar: true, tab_bar: "several"
+            scrollback: 10_000, scroll_on_output: false, scroll_on_keystroke: true, word_chars: WORD_CHARS, copy_on_select: false, confirm_paste: true, bell: "none", notifications: true, clipboard_write: true, editor: "", option_as_meta: false
+        }
     }
 }
 
 pub const FONT_SIZE_MIN: i64 = 6
 pub const FONT_SIZE_MAX: i64 = 48
-const SCROLLBACK_MAX: i64 = 100_000
+const SCROLLBACK_MAX: i64 = 1_000_000
+// The font weights the settings offer, by their number on the CSS scale.
+const WEIGHTS: [(String, String); 7] = [("100", "Thin"), ("200", "Extra light"), ("300", "Light"), ("400", "Regular"), ("500", "Medium"), ("600", "Semibold"), ("700", "Bold")]
+
+/// The defaults on this desktop: its monospace font's size and weight where it names
+/// one, and the size Terminal.app uses on macOS.
+pub fn defaults() -> Settings {
+    let mut d = Settings::default()
+    let desktop = windowing::system::monospace_font()
+    match desktop {
+        Some(font) if font.size >= FONT_SIZE_MIN as f64 && font.size <= FONT_SIZE_MAX as f64 => d.font_size = font.size
+        _ => if gui::input::platform_is_macos() { d.font_size = 12.0 }
+    }
+    if let Some(font) = desktop { d.font_weight = nearest_weight(font.weight) }
+    d
+}
+
+// The offered weight nearest `weight`, the lighter of two as near.
+fn nearest_weight(weight: i64) -> i64 {
+    let mut best = WEIGHTS[0].0.to_i64().unwrap_or(400)
+    for w in WEIGHTS {
+        let n = w.0.to_i64().unwrap_or(400)
+        if (n - weight).abs() < (best - weight).abs() { best = n }
+    }
+    best
+}
+
+/// The family an empty font setting shows: the desktop's monospace font,
+/// else a platform's own, else "" for the bundled face.
+pub fn desktop_font() -> String {
+    match windowing::system::monospace_font() {
+        Some(font) => font.family
+        None => if gui::input::platform_is_macos() { "Menlo" } else if os::family() == "windows" { "Cascadia Mono" } else { "" }
+    }
+}
 
 fn file() -> String {
     services::settings_path(info::APP_ID, "settings")
 }
 
-/// The stored settings; a missing file answers the defaults.
+/// The stored settings over the defaults; a missing file answers the
+/// defaults.
 pub fn load() -> Result<Settings, errors::Error> {
     let stored = services::load_settings(file(), FORMAT, |old, s| {
         let mut out = s
         if old < 2 && let Some(theme) = out.values.get("theme") { out.values["scheme"] = theme }
         out
     })?
-    Ok(with_values(Settings::default(), stored.values))
+    Ok(with_values(defaults(), stored.values))
 }
 
+/// Stores the values of `s` that differ from the defaults.
 pub fn save(s: Settings) -> Result<(), errors::Error> {
+    let d = values(defaults())
     let mut stored = services::Settings { version: FORMAT, values: Map::new() }
-    for (key, value) in values(s) { stored.set(key, value) }
+    for (key, value) in values(s) {
+        if !d.any(|kv| kv.0 == key && kv.1 == value) { stored.set(key, value) }
+    }
     services::save_settings(file(), stored)
+}
+
+fn flag(on: bool) -> String {
+    if on { "true" } else { "false" }
 }
 
 fn values(s: Settings) -> Vec<(String, String)> {
     #[
-        ("shell", s.shell)
-        ("directory", s.directory)
-        ("encoding", s.encoding)
-        ("font", s.font)
-        ("font_size", f"{s.font_size}")
-        ("scrollback", f"{s.scrollback}")
-        ("scheme", s.scheme)
-        ("new_tabs", s.new_tabs)
-        ("clipboard_write", if s.clipboard_write { "true" } else { "false" })
-        ("editor", s.editor)
+        ("shell", s.shell), ("directory", s.directory), ("new_tabs", s.new_tabs), ("encoding", s.encoding)
+        ("restore", flag(s.restore)), ("columns", f"{s.columns}"), ("rows", f"{s.rows}"), ("confirm_close", flag(s.confirm_close))
+        ("font", s.font), ("font_size", f"{s.font_size}"), ("font_weight", f"{s.font_weight}"), ("ligatures", flag(s.ligatures)), ("scheme", s.scheme), ("cursor", s.cursor)
+        ("cursor_blink", flag(s.cursor_blink)), ("bold_bright", flag(s.bold_bright)), ("legible", flag(s.legible))
+        ("padding", f"{s.padding}"), ("opacity", f"{s.opacity}"), ("line_spacing", f"{s.line_spacing}"), ("scrollbar", s.scrollbar), ("menu_bar", flag(s.menu_bar)), ("tab_bar", s.tab_bar)
+        ("scrollback", f"{s.scrollback}"), ("scroll_on_output", flag(s.scroll_on_output)), ("scroll_on_keystroke", flag(s.scroll_on_keystroke))
+        ("word_chars", s.word_chars), ("copy_on_select", flag(s.copy_on_select)), ("confirm_paste", flag(s.confirm_paste))
+        ("bell", s.bell), ("notifications", flag(s.notifications)), ("clipboard_write", flag(s.clipboard_write))
+        ("editor", s.editor), ("option_as_meta", flag(s.option_as_meta))
     ]
 }
 
+// The value `values` holds for `key`, when it is one of `choices`.
+fn one_of(values: Map<String, String>, key: String, choices: [String]) -> Option<String> {
+    let v = values.get(key)?
+    if choices.contains(v) { Some(v) } else { None }
+}
+
+// The flag `v` holds, if it holds one.
+fn flag_of(v: String) -> Option<bool> {
+    match v { "true" => Some(true), "false" => Some(false), _ => None }
+}
+
+// The whole number `v` holds within `min..=max`.
+fn number_in(v: String, min: i64, max: i64) -> Option<i64> {
+    let n = v.to_f64()?.round() as i64
+    if n >= min && n <= max { Some(n) } else { None }
+}
+
 /// `s` with the fields `values` names replaced, each one kept when its new
-/// value is out of range; a Settings dialog answers such a map.
+/// value is out of range; the Settings window answers such a map.
 pub fn with_values(s: Settings, values: Map<String, String>) -> Settings {
     let mut out = s
-    if let Some(v) = values.get("shell") { out.shell = v.trim() }
-    if let Some(v) = values.get("directory") { out.directory = v.trim() }
+    let text = |key: String| values.get(key).map(|v| v.trim())
+    if let Some(v) = text("shell") { out.shell = v }
+    if let Some(v) = text("directory") { out.directory = v }
+    if let Some(v) = one_of(values, "new_tabs", ["current", "configured"]) { out.new_tabs = v }
     if let Some(v) = values.get("encoding") && encodings::known(v) { out.encoding = v }
-    if let Some(v) = values.get("font") { out.font = v.trim() }
+    if let Some(v) = values.get("restore").and_then(flag_of) { out.restore = v }
+    if let Some(v) = values.get("columns").and_then(|v| number_in(v, 20, 500)) { out.columns = v }
+    if let Some(v) = values.get("rows").and_then(|v| number_in(v, 5, 200)) { out.rows = v }
+    if let Some(v) = values.get("confirm_close").and_then(flag_of) { out.confirm_close = v }
+    if let Some(v) = text("font") { out.font = v }
     if let Some(v) = values.get("font_size") && let Some(size) = v.to_f64() && size >= FONT_SIZE_MIN as f64 && size <= FONT_SIZE_MAX as f64 {
         out.font_size = size
     }
-    if let Some(v) = values.get("scrollback") && let Some(rows) = v.to_i64() && rows >= 0 && rows <= SCROLLBACK_MAX {
-        out.scrollback = rows
-    }
-    if let Some(v) = values.get("scheme") && !v.trim().is_empty() { out.scheme = v.trim() }
-    if let Some(v) = values.get("new_tabs") && (v == "current" || v == "configured") { out.new_tabs = v }
-    if let Some(v) = values.get("clipboard_write") && (v == "true" || v == "false") { out.clipboard_write = v == "true" }
-    if let Some(v) = values.get("editor") { out.editor = v.trim() }
+    if let Some(v) = text("scheme") && !v.is_empty() { out.scheme = v }
+    if let Some(v) = one_of(values, "font_weight", WEIGHTS.map(|w| w.0)) { out.font_weight = v.to_i64().unwrap_or(400) }
+    if let Some(v) = one_of(values, "cursor", ["block", "bar", "underline"]) { out.cursor = v }
+    if let Some(v) = values.get("cursor_blink").and_then(flag_of) { out.cursor_blink = v }
+    if let Some(v) = values.get("bold_bright").and_then(flag_of) { out.bold_bright = v }
+    if let Some(v) = values.get("ligatures").and_then(flag_of) { out.ligatures = v }
+    if let Some(v) = values.get("legible").and_then(flag_of) { out.legible = v }
+    if let Some(v) = values.get("padding").and_then(|v| number_in(v, 0, 32)) { out.padding = v }
+    if let Some(v) = values.get("opacity").and_then(|v| number_in(v, 20, 100)) { out.opacity = v }
+    if let Some(v) = values.get("line_spacing") && let Some(f) = v.to_f64() && f >= 0.8 && f <= 3.0 { out.line_spacing = f }
+    if let Some(v) = one_of(values, "scrollbar", ["always", "scrolling", "never"]) { out.scrollbar = v }
+    if let Some(v) = values.get("menu_bar").and_then(flag_of) { out.menu_bar = v }
+    if let Some(v) = one_of(values, "tab_bar", ["always", "several", "never"]) { out.tab_bar = v }
+    if let Some(v) = values.get("scrollback").and_then(|v| number_in(v, 0, SCROLLBACK_MAX)) { out.scrollback = v }
+    if let Some(v) = values.get("scroll_on_output").and_then(flag_of) { out.scroll_on_output = v }
+    if let Some(v) = values.get("scroll_on_keystroke").and_then(flag_of) { out.scroll_on_keystroke = v }
+    if let Some(v) = values.get("word_chars") { out.word_chars = v }
+    if let Some(v) = values.get("copy_on_select").and_then(flag_of) { out.copy_on_select = v }
+    if let Some(v) = values.get("confirm_paste").and_then(flag_of) { out.confirm_paste = v }
+    if let Some(v) = one_of(values, "bell", ["none", "flash", "sound"]) { out.bell = v }
+    if let Some(v) = values.get("notifications").and_then(flag_of) { out.notifications = v }
+    if let Some(v) = values.get("clipboard_write").and_then(flag_of) { out.clipboard_write = v }
+    if let Some(v) = text("editor") { out.editor = v }
+    if let Some(v) = values.get("option_as_meta").and_then(flag_of) { out.option_as_meta = v }
     out
+}
+
+/// How a terminal view draws and behaves under `s`.
+pub fn view_options(s: Settings) -> ViewOptions {
+    ViewOptions {
+        cursor: s.cursor, blink: s.cursor_blink, bold_bright: s.bold_bright, legible: s.legible, padding: s.padding
+        scrollbar: s.scrollbar, scroll_on_output: s.scroll_on_output, scroll_on_keystroke: s.scroll_on_keystroke
+        word_chars: s.word_chars, option_as_meta: s.option_as_meta, copy_on_select: s.copy_on_select
+        confirm_paste: s.confirm_paste, flash_bell: s.bell == "flash", opacity: s.opacity as f64 / 100.0, line_height: s.line_spacing, font_weight: s.font_weight, ligatures: s.ligatures
+    }
 }
 
 fn field(key: String, label: String, kind: PreferenceKind, value: String, default: String, help: String) -> PreferenceField {
     PreferenceField { key: key, label: label, kind: kind, value: value, default: default, help: help }
 }
 
-/// The Settings dialog showing `s`, its font chosen from `fonts`, the
-/// installed monospace families, and its scheme from `offered`.
-pub fn dialog(s: Settings, fonts: Vec<String>, offered: Vec<schemes::Entry>) -> gui::DialogRequest {
-    let d = Settings::default()
+fn toggle(key: String, label: String, value: bool, default: bool, help: String) -> PreferenceField {
+    field(key, label, PreferenceKind::Toggle, flag(value), flag(default), help)
+}
+
+/// The Settings window showing `s`: its font chosen from `fonts`, the
+/// installed monospace families, its scheme from `offered`, and the
+/// shortcuts of `registry` with the user's `chosen` ones applied.
+pub fn dialog(s: Settings, fonts: Vec<String>, offered: Vec<schemes::Entry>, registry: Vec<Command>, chosen: Map<String, Vec<String>>) -> gui::DialogRequest {
+    let d = defaults()
     let charsets = encodings::all().map(|c| (c.label, c.name))
     let mut themes = offered.map(|e| (e.id, e.name))
     if !themes.any(|t| t.0 == s.scheme) { themes.push((s.scheme, s.scheme)) }
-    let starts = #[("current", "In the current tab's directory"), ("configured", "In the working directory")]
-    let mut families = #[("", "IBM Plex Mono (built in)")]
+    let starts = #[("current", "Same folder as the current tab"), ("configured", "The folder set above")]
+    let desktop = desktop_font()
+    let mut families = #[("", if desktop.is_empty() { "IBM Plex Mono (built in)" } else { f"Desktop font ({desktop})" })]
     for family in fonts { families.push((family, family)) }
-    if !s.font.is_empty() && !families.any(|f| f.0 == s.font) {
-        families.push((s.font, s.font))
+    if !s.font.is_empty() && !families.any(|f| f.0 == s.font) { families.push((s.font, s.font)) }
+    let weights = WEIGHTS.to_vec()
+    let cursors = #[("block", "Block"), ("bar", "Bar"), ("underline", "Underline")]
+    let scrollbars = #[("scrolling", "While scrolling back"), ("always", "Always"), ("never", "Never")]
+    let tab_bars = #[("several", "With two tabs or more"), ("always", "Always"), ("never", "Never")]
+    let bells = #[("none", "Mark the tab"), ("flash", "Flash the screen"), ("sound", "Play a sound")]
+    let mut behavior = #[
+        field("scrollback", "Scrollback lines", PreferenceKind::Integer(0, SCROLLBACK_MAX), f"{s.scrollback}", f"{d.scrollback}", "Lines each new tab keeps for scrolling back.")
+        toggle("scroll_on_output", "Scroll to the bottom on new output", s.scroll_on_output, d.scroll_on_output, "")
+        toggle("scroll_on_keystroke", "Scroll to the bottom when typing", s.scroll_on_keystroke, d.scroll_on_keystroke, "")
+        field("word_chars", "Word characters", PreferenceKind::Text, s.word_chars, d.word_chars, "Characters a double click selects along with letters and digits.")
+        toggle("copy_on_select", "Copy selected text", s.copy_on_select, d.copy_on_select, "Selecting text also copies it to the clipboard.")
+        toggle("confirm_paste", "Ask before pasting several lines", s.confirm_paste, d.confirm_paste, "Also asks before pasting control characters.")
+        field("bell", "Bell", PreferenceKind::Choice(bells), s.bell, d.bell, "A tab that rings while hidden is always marked.")
+        toggle("notifications", "Show notifications from programs", s.notifications, d.notifications, "")
+        toggle("clipboard_write", "Let programs copy to the clipboard", s.clipboard_write, d.clipboard_write, "Programs can never read it.")
+        field("editor", "Editor for file paths", PreferenceKind::Text, s.editor, d.editor, "Ctrl+click on a path runs it, as in vim +{line} {path}. Leave empty to open files with the desktop.")
+    ]
+    if gui::input::platform_is_macos() {
+        behavior.push(toggle("option_as_meta", "Use Option as Meta", s.option_as_meta, d.option_as_meta, "Option sends Escape and the key instead of typing a character."))
     }
+    let mut appearance = #[
+        field("font", "Font", PreferenceKind::Choice(families), s.font, d.font, "")
+        field("font_size", "Font size", PreferenceKind::Number(FONT_SIZE_MIN as f64, FONT_SIZE_MAX as f64), f"{s.font_size}", f"{d.font_size}", "In points.")
+        field("font_weight", "Font weight", PreferenceKind::Choice(weights), f"{s.font_weight}", f"{d.font_weight}", "The font's nearest weight draws it; bold text is heavier.")
+        toggle("ligatures", "Join letters into ligatures", s.ligatures, d.ligatures, "Where the font has them, such as a coding font's arrows.")
+        field("scheme", "Color scheme", PreferenceKind::Choice(themes), s.scheme, d.scheme, "")
+        field("edit_scheme", "Edit Colors…", PreferenceKind::Action, "", "", "")
+        field("import_scheme", "Import Scheme…", PreferenceKind::Action, "", "", "Reads iTerm2, Windows Terminal, xfce4-terminal and base16 schemes.")
+        field("export_scheme", "Export Scheme…", PreferenceKind::Action, "", "", "")
+        field("scheme_folder", "Open Schemes Folder", PreferenceKind::Action, "", "", "")
+        field("cursor", "Cursor shape", PreferenceKind::Choice(cursors), s.cursor, d.cursor, "")
+        toggle("cursor_blink", "Blinking cursor", s.cursor_blink, d.cursor_blink, "")
+        toggle("bold_bright", "Show bold text in bright colors", s.bold_bright, d.bold_bright, "")
+        toggle("legible", "Adjust colors for readability", s.legible, d.legible, "Moves text that is too close to its background toward a readable color.")
+        field("line_spacing", "Line spacing", PreferenceKind::Number(0.8, 3.0), f"{s.line_spacing}", f"{d.line_spacing}", "The height of a line, as a multiple of the font's.")
+        field("padding", "Padding", PreferenceKind::Integer(0, 32), f"{s.padding}", f"{d.padding}", "Space around the text.")
+        field("opacity", "Background opacity", PreferenceKind::Integer(20, 100), f"{s.opacity}", f"{d.opacity}", "In percent. Below 100 needs a desktop that blends windows.")
+        field("scrollbar", "Scrollbar", PreferenceKind::Choice(scrollbars), s.scrollbar, d.scrollbar, "")
+        field("tab_bar", "Tab bar", PreferenceKind::Choice(tab_bars), s.tab_bar, d.tab_bar, "")
+    ]
+    for f in menu_bar_field(s, d) { appearance.push(f) }
     request::preferences("settings", "Settings", #[
-        PreferencePage { key: "settings", title: "Settings", fields: #[
-            field("shell", "Shell", PreferenceKind::Text, s.shell, d.shell, f"The program new tabs run. Empty runs {default_shell()}.")
-            field("directory", "Working directory", PreferenceKind::Text, s.directory, d.directory, "Where new windows start. Empty starts where waftty did.")
-            field("new_tabs", "New tabs start", PreferenceKind::Choice(starts), s.new_tabs, d.new_tabs, "A shell that does not report its directory is read from its process on Linux and macOS.")
-            field("encoding", "Encoding", PreferenceKind::Choice(charsets), s.encoding, d.encoding, "The character set new tabs read and write.")
-            field("scrollback", "Scrollback rows", PreferenceKind::Integer(0, SCROLLBACK_MAX), f"{s.scrollback}", f"{d.scrollback}", "Rows of history each new tab keeps.")
-            field("font", "Font", PreferenceKind::Choice(families), s.font, d.font, "")
-            field("font_size", "Font size", PreferenceKind::Integer(FONT_SIZE_MIN, FONT_SIZE_MAX), f"{s.font_size as i64}", f"{d.font_size as i64}", "In points.")
-            field("scheme", "Color scheme", PreferenceKind::Choice(themes), s.scheme, d.scheme, f"More schemes load from files such as {schemes::file_for("name")}.")
-            field("clipboard_write", "Programs may copy to the clipboard", PreferenceKind::Toggle, if s.clipboard_write { "true" } else { "false" }, "true", "Lets programs such as neovim or tmux, local or over SSH, set the clipboard (OSC 52). Programs can never read it.")
-            field("editor", "Editor for file paths", PreferenceKind::Text, s.editor, d.editor, "Ctrl+click on a path runs this in a new tab, such as \"vim +{line} {path}\" or \"code -g {path}:{line}:{col}\". Empty opens the file with the desktop.")
+        PreferencePage { key: "general", title: "General", fields: #[
+            field("shell", "Shell", PreferenceKind::Text, s.shell, d.shell, f"Command new tabs run. Leave empty for your login shell ({path::file_name(login_shell().program).unwrap_or("")}).")
+            field("directory", "Starting folder", PreferenceKind::Text, s.directory, d.directory, "Folder new windows open in. Leave empty for your home folder.")
+            field("new_tabs", "New tabs open in", PreferenceKind::Choice(starts), s.new_tabs, d.new_tabs, "")
+            field("encoding", "Character encoding", PreferenceKind::Choice(charsets), s.encoding, d.encoding, "For new tabs; Terminal > Set Encoding changes the current one.")
+            field("columns", "Window width", PreferenceKind::Integer(20, 500), f"{s.columns}", f"{d.columns}", "In characters.")
+            field("rows", "Window height", PreferenceKind::Integer(5, 200), f"{s.rows}", f"{d.rows}", "In lines.")
+            toggle("restore", "Reopen windows and tabs from last time", s.restore, d.restore, "")
+            toggle("confirm_close", "Ask before closing a running program", s.confirm_close, d.confirm_close, "")
         ] }
+        PreferencePage { key: "appearance", title: "Appearance", fields: appearance }
+        PreferencePage { key: "behavior", title: "Behavior", fields: behavior }
+        PreferencePage { key: "shortcuts", title: "Shortcuts", fields: shortcut_fields(registry, chosen) }
     ])
 }
 
-/// The shell that runs when no shell is set.
-pub fn default_shell() -> String {
-    if os::family() == "windows" { "cmd.exe" } else { env::var("SHELL").unwrap_or("/bin/sh") }
+// The menu bar shows in the window except on macOS, whose menus live in the
+// system's menu bar.
+fn menu_bar_field(s: Settings, d: Settings) -> Vec<PreferenceField> {
+    if gui::input::platform_is_macos() { return #[] }
+    #[toggle("menu_bar", "Show the menu bar", s.menu_bar, d.menu_bar, "Ctrl+Shift+M or the terminal's right-click menu brings it back.")]
 }
 
-/// The program a new tab runs.
+// One field per command that can be bound, holding its chords.
+fn shortcut_fields(registry: Vec<Command>, chosen: Map<String, Vec<String>>) -> Vec<PreferenceField> {
+    let applied = shortcuts::apply(registry, chosen)
+    let mut out = #[]
+    for c in registry {
+        if !shortcuts::bindable(c.id) { continue }
+        let default = c.shortcuts.map(shortcuts::spelled).join(", ")
+        let mut current = default
+        if let Some(a) = applied.iter().find(|a| a.id == c.id) { current = a.shortcuts.map(shortcuts::spelled).join(", ") }
+        out.push(field(f"key:{c.id}", c.label.replace("…", ""), PreferenceKind::Text, current, default, ""))
+    }
+    if !out.is_empty() {
+        out[0].help = "Chords such as Ctrl+Shift+T, separated by commas. Leave empty for none."
+    }
+    out
+}
+
+/// The shortcut choices a Settings answer makes: each command whose chords
+/// differ from its defaults, with its chords.
+pub fn chosen_shortcuts(values: Map<String, String>, registry: Vec<Command>) -> Map<String, Vec<String>> {
+    let mut out: Map<String, Vec<String>> = Map::new()
+    for c in registry {
+        let Some(text) = values.get(f"key:{c.id}") else { continue }
+        let chords = text.split(",").map(|chord| chord.trim()).filter(|chord| !chord.is_empty())
+        if chords != c.shortcuts.map(shortcuts::spelled) { out[c.id] = chords }
+    }
+    out
+}
+
+/// The words of command line `line`, split at spaces outside quotes; a
+/// backslash outside single quotes takes the next character as it is.
+pub fn words(line: String) -> Vec<String> {
+    let mut out = #[]
+    let mut word = String::new()
+    let mut started = false
+    let mut quote = ' '
+    let mut escaped = false
+    for c in line {
+        if escaped {
+            word.push(c)
+            escaped = false
+        } else if quote != ' ' {
+            if c == quote { quote = ' ' } else if c == '\\' && quote == '"' { escaped = true } else { word.push(c) }
+        } else if c == '\'' || c == '"' {
+            quote = c
+            started = true
+        } else if c == '\\' {
+            escaped = true
+            started = true
+        } else if c == ' ' || c == '\t' {
+            if started || !word.is_empty() { out.push(word) }
+            word = String::new()
+            started = false
+        } else {
+            word.push(c)
+        }
+    }
+    if started || !word.is_empty() { out.push(word) }
+    out
+}
+
+// The shell the user database names for the user running waftty.
+fn user_database_shell() -> Option<String> {
+    let user = env::var("USER").or(env::var("LOGNAME"))?
+    if gui::input::platform_is_macos() {
+        let out = process::run("dscl", #[".", "-read", f"/Users/{user}", "UserShell"]).ok()?
+        let shell = out.stdout.trim().strip_prefix("UserShell:")?.trim()
+        return if shell.is_empty() { None } else { Some(shell) }
+    }
+    let out = process::run("getent", #["passwd", user]).ok()?
+    let shell = out.stdout.trim().split(":").last()?
+    if shell.is_empty() { None } else { Some(shell) }
+}
+
+// The first of `names` found in a folder on the PATH.
+fn on_path(names: [String]) -> Option<String> {
+    let dirs = env::var("PATH").unwrap_or("").split(";")
+    for name in names {
+        for dir in dirs {
+            let candidate = path::join(dir, name)
+            if !dir.is_empty() && fs::exists(candidate) { return Some(candidate) }
+        }
+    }
+    None
+}
+
+/// The shell an empty setting runs: on Windows PowerShell 7, else Windows
+/// PowerShell, else cmd.exe; elsewhere the login shell the user database
+/// names, else $SHELL, run as a login shell on macOS as Terminal.app does.
+pub fn login_shell() -> gui::terminal::Command {
+    let mut command = gui::terminal::Command { program: "", args: #[], cwd: "", env: #[] }
+    if os::family() == "windows" {
+        command.program = on_path(["pwsh.exe", "powershell.exe"]).unwrap_or("cmd.exe")
+        return command
+    }
+    let mac = gui::input::platform_is_macos()
+    command.program = user_database_shell().or(env::var("SHELL")).unwrap_or(if mac { "/bin/zsh" } else { "/bin/sh" })
+    if mac { command.args = #["-l"] }
+    command
+}
+
+/// The folder new windows start in under `s`.
+pub fn start_folder(s: Settings) -> String {
+    if !s.directory.is_empty() { return s.directory }
+    env::home_dir().unwrap_or("")
+}
+
+/// The program a new tab runs, and where.
 pub fn command(s: Settings) -> gui::terminal::Command {
-    let program = if s.shell.is_empty() { default_shell() } else { s.shell }
-    gui::terminal::Command { program: program, args: #[], cwd: s.directory, env: #[] }
+    let words = words(s.shell)
+    let mut command = if words.is_empty() { login_shell() } else { gui::terminal::Command { program: words[0], args: words.skip(1), cwd: "", env: #[] } }
+    command.cwd = start_folder(s)
+    command
 }
 
 #[cfg(test)]
 mod tests {
+    use std::env
+
     use super::Settings
 
     #[test]
     fn values_out_of_range_keep_the_setting_they_would_replace() {
-        let s = super::with_values(Settings::default(), { "font_size": "200", "scrollback": "500", "encoding": "UTF-16LE", "scheme": "dark", "new_tabs": "elsewhere", "clipboard_write": "maybe" })
+        let s = super::with_values(Settings::default(), { "font_size": "200", "scrollback": "-5", "encoding": "UTF-16LE", "scheme": "dark", "new_tabs": "elsewhere", "clipboard_write": "maybe", "cursor": "star", "padding": "99", "bell": "sound", "font_weight": "350" })
         assert_eq(s.font_size, 10.0)
-        assert_eq(s.scrollback, 500)
+        assert_eq(s.scrollback, 10_000)
         assert_eq(s.encoding, "UTF-8")
         assert_eq(s.scheme, "dark")
         assert_eq(s.new_tabs, "current")
         assert(s.clipboard_write)
+        assert_eq(s.cursor, "block")
+        assert_eq(s.padding, 4)
+        assert_eq(s.bell, "sound")
+        assert_eq(s.font_weight, 400)
+    }
+
+    #[test]
+    fn a_desktop_weight_takes_the_nearest_offered_one() {
+        assert_eq(super::nearest_weight(380), 400)
+        assert_eq(super::nearest_weight(350), 300)
+        assert_eq(super::nearest_weight(900), 700)
     }
 
     #[test]
     fn stored_values_read_back_as_the_same_settings() {
-        let s = Settings { shell: "/bin/zsh", directory: "/tmp", encoding: "KOI8-R", font: "Mono", font_size: 12.5, scrollback: 9000, scheme: "user:night", new_tabs: "configured", clipboard_write: false, editor: "vim +{line} {path}" }
+        let s = Settings { shell: "/bin/zsh -l", directory: "/tmp", encoding: "KOI8-R", font: "Mono", font_size: 12.5, font_weight: 300, ligatures: false, scrollback: 9000, scheme: "user:night", new_tabs: "configured", clipboard_write: false, editor: "vim +{line} {path}", cursor: "bar", scrollbar: "always", tab_bar: "always", bell: "flash", restore: true, columns: 120, rows: 40, ..Settings::default() }
         let mut map: Map<String, String> = Map::new()
         for (k, v) in super::values(s) { map[k] = v }
         assert_eq(super::with_values(Settings::default(), map), s)
+    }
+
+    #[test]
+    fn a_command_line_splits_at_spaces_outside_quotes() {
+        assert_eq(super::words("zsh -l"), #["zsh", "-l"])
+        assert_eq(super::words("  fish   --login "), #["fish", "--login"])
+        assert_eq(super::words("'/Applications/My Editor' --wait \"a b\" c\\ d ''"), #["/Applications/My Editor", "--wait", "a b", "c d", ""])
+        assert_eq(super::words(""), #[])
+    }
+
+    #[test]
+    fn a_shell_setting_runs_with_its_arguments_in_the_starting_folder() {
+        let c = super::command(Settings { shell: "bash --norc", directory: "/tmp", ..Settings::default() })
+        assert_eq(c.program, "bash")
+        assert_eq(c.args, #["--norc"])
+        assert_eq(c.cwd, "/tmp")
+        let home = super::command(Settings::default())
+        assert(!home.program.is_empty())
+        assert_eq(home.cwd, env::home_dir().unwrap_or(""))
     }
 }

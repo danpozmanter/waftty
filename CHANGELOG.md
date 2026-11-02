@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.0 - Settings, shortcuts and defaults
+
+- Settings is a tabbed window: General, Appearance, Behavior and Shortcuts. Every value resets on its own, and only changed values are saved, so defaults follow the desktop.
+- The shell setting takes a command line. Empty runs the login shell (as a login shell on macOS, PowerShell on Windows), starting in the home folder.
+- New settings: font weight, ligatures, cursor shape and blinking, bold as bright, readability, padding, background opacity, scrollbar, menu bar and tab bar, scrolling on output and typing, word characters, copy on select, asking before risky pastes, the bell, notifications, window size, reopening windows and tabs, close confirmation, and Option as Meta on macOS.
+- Color schemes can be edited, and imported from iTerm2, Windows Terminal, xfce4-terminal and base16.
+- macOS shortcuts use Command alone. New shortcuts: Settings, Quit, tabs by number, zoom with Ctrl, Clear Scrollback, scrolling, and Select Last Command Output.
+- New commands: Quit, Clear Scrollback, Reset and Clear, Scroll to Top and Bottom, Show Menu Bar, Reset Window Size, Pin Tab, Close Other Tabs, Close Tabs to the Right, and Help links.
+- The font defaults to the desktop's monospace font, size and weight, and more scrollback is kept.
+- Background opacity changes open windows too.
+- Linux release builds lay out their code from a correct profile of a session.
+- Tabs are named for their program, close prompts name the running program, a double click selects a word, dropped files paste as paths, and Find offers earlier searches.
+- Dialog text and controls follow the desktop's font size.
+- Clearer wording throughout.
+
 ## 0.1.1 - Settings window
 
 - Settings opens in a window of its own that can be moved and resized.

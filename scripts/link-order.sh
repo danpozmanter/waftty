@@ -56,10 +56,13 @@ EOF
 chmod +x "$work/output.sh"
 
 # Each function an executed instruction lies in, by the instructions' own
-# cost, hottest first. Instructions are mapped to functions here, from the
-# address valgrind loads the program at, which depends on the machine's
-# address space. Valgrind names functions by symbol when it can read the
-# symbol table and by address when it cannot, so the profile splits at the
+# cost, hottest first. Instructions are mapped to functions here. Where
+# valgrind reads the program's symbol table it files the program's code under
+# its path at link-time addresses; where it cannot, under "???" at run-time
+# ones, offset by where it loaded the program, which depends on the machine's
+# address space. Which happens varies between machines, so each profile is
+# read at the offset that puts its calls on function starts. Valgrind names
+# functions by symbol or by address to match, so the profile splits at the
 # engine's startup end under either name.
 nm -S --defined-only "$binary" | awk '$3 ~ /^[tTwW]$/ { print $1, $2, $4 }' > "$work/defined"
 address() {
@@ -94,9 +97,9 @@ for out in journey output; do
 done
 
 mkdir -p "$(dirname "$output")"
-python3 - "$base" "$work/defined" "$work"/output.out "$work"/journey.out.1 "$work"/output.out.1 \
+python3 - "$base" "$work/defined" "$binary" "$work"/output.out "$work"/journey.out.1 "$work"/output.out.1 \
     "$work"/journey.out > "$output" <<'EOF'
-import bisect, re, sys
+import bisect, os, re, sys
 LOAD_BASE = int(sys.argv[1], 16)
 symbols = []
 for line in open(sys.argv[2]):
@@ -104,13 +107,83 @@ for line in open(sys.argv[2]):
     symbols.append((int(address, 16), int(size, 16), name))
 symbols.sort()
 starts = [a for a, _, _ in symbols]
-session_part, startup_parts, feature_part = sys.argv[3], sys.argv[4:6], sys.argv[6]
+binary = os.path.realpath(sys.argv[3])
+session_part, startup_parts, feature_part = sys.argv[4], sys.argv[5:7], sys.argv[7]
 
 def symbol(address):
-    i = bisect.bisect_right(starts, address - LOAD_BASE) - 1
-    if i >= 0 and symbols[i][0] <= address - LOAD_BASE < symbols[i][0] + symbols[i][1]:
+    i = bisect.bisect_right(starts, address) - 1
+    if i >= 0 and symbols[i][0] <= address < symbols[i][0] + symbols[i][1]:
         return symbols[i][2]
     return None
+
+function_starts = set(starts)
+
+# A compressed name line: "ob=(3) name" names id 3, a later "ob=(3)" reuses it.
+def named(line, names):
+    m = re.match(r"\w+=\((\d+)\)\s*(.*)", line)
+    if not m:
+        return line.split("=", 1)[1].strip()
+    if m.group(2):
+        names[m.group(1)] = m.group(2).strip()
+    return names.get(m.group(1), "")
+
+# The parts callgrind dumped before `path` in the same run: out.1, out.2 ...
+# come before out, and before out.N come out.1 to out.N-1. A run names each
+# object once, in the part where it first appears.
+def earlier(path):
+    m = re.fullmatch(r"(.*)\.(\d+)", path)
+    base, last = (m.group(1), int(m.group(2))) if m else (path, None)
+    n = 1
+    while (last is None or n < last) and os.path.exists(f"{base}.{n}"):
+        yield f"{base}.{n}"
+        n += 1
+
+# Code valgrind has no symbols for sits under "???", the program's included
+# when its symbol table is unreadable.
+UNKNOWN = "???"
+
+def object_name(line, objects):
+    name = named(line, objects)
+    return name if name == UNKNOWN else os.path.realpath(name)
+
+# Each line of a profile with the object it lies in: a cost line's own, a
+# call line's callee's, which "cob=" names when it differs.
+def lines(path):
+    objects = {}
+    for part in earlier(path):
+        for line in open(part):
+            if line.startswith(("ob=", "cob=")):
+                named(line, objects)
+    current = callee = ""
+    for line in open(path):
+        if line.startswith("ob="):
+            current = callee = object_name(line, objects)
+        elif line.startswith("cob="):
+            callee = object_name(line, objects)
+        if line.startswith("calls="):
+            yield line, callee
+            callee = current
+        else:
+            yield line, current
+
+# The offset of each object's addresses from the program's link addresses,
+# for the objects that hold the program: the offset that puts most of their
+# calls on function starts, where that is most of them.
+def offsets(path):
+    targets = {binary: [], UNKNOWN: []}
+    for line, obj in lines(path):
+        m = re.match(r"calls=\d+\s+(0x[0-9a-f]+)", line)
+        if m and obj in targets:
+            targets[obj].append(int(m.group(1), 16))
+    found = {}
+    for obj, calls in targets.items():
+        hits = {b: sum(1 for t in calls if t - b in function_starts) for b in (0, LOAD_BASE)}
+        best = max(hits, key=hits.get)
+        if calls and hits[best] * 2 >= len(calls):
+            found[obj] = best
+    if not found:
+        sys.exit(f"{path}: no calls reach the program's function starts")
+    return found
 
 def costs(paths):
     cost = {}
@@ -119,9 +192,10 @@ def costs(paths):
     return cost
 
 def read(path, cost):
+    biases = offsets(path)
     at = 0
     after_call = False
-    for line in open(path):
+    for line, obj in lines(path):
         if line.startswith("calls="):
             after_call = True
             continue
@@ -133,7 +207,7 @@ def read(path, cost):
             at = int(position, 16)
         elif position != "*":
             at += int(position)
-        name = symbol(at)
+        name = symbol(at - biases[obj]) if obj in biases else None
         if name:
             # A call line's cost is the callee's; the call itself still ran.
             cost[name] = cost.get(name, 0) + (0 if after_call else int(amount))

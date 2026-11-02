@@ -1,7 +1,7 @@
-// The commands a window offers and the menu bar that names them, which is
-// all a window shows besides its terminal. A terminal takes plain Ctrl
-// chords for its program, so waftty's shortcuts sit on Ctrl+Shift
-// (Command+Shift on macOS), which the terminal leaves to the window.
+// The commands a window offers and the menu bar that names them. A
+// terminal takes plain Ctrl chords with letters for its program, so on Linux
+// and Windows waftty's shortcuts sit on Ctrl+Shift, as in other desktop
+// terminals; on macOS they sit on Command, which programs never read.
 
 use gui
 use gui::Command
@@ -18,16 +18,20 @@ pub const NEW_TAB: String = "file.new-tab"
 pub const NEW_WINDOW: String = "file.new-window"
 pub const CLOSE_TAB: String = "file.close-tab"
 pub const CLOSE_WINDOW: String = "file.close-window"
+pub const QUIT: String = "file.quit"
 pub const COPY: String = "edit.copy"
 pub const PASTE: String = "edit.paste"
 pub const SELECT_ALL: String = "edit.select-all"
 pub const OPEN_LINK: String = "edit.open-link"
 pub const COPY_LINK: String = "edit.copy-link"
 pub const COPY_EMAIL: String = "edit.copy-email"
+pub const SETTINGS: String = "edit.settings"
 pub const FULLSCREEN: String = "view.fullscreen"
 pub const ZOOM_IN: String = "view.zoom-in"
 pub const ZOOM_OUT: String = "view.zoom-out"
 pub const NORMAL_SIZE: String = "view.normal-size"
+pub const MENU_BAR: String = "view.menu-bar"
+pub const RESET_WINDOW_SIZE: String = "view.reset-window-size"
 pub const FIND: String = "terminal.find"
 pub const FIND_NEXT: String = "terminal.find-next"
 pub const FIND_PREVIOUS: String = "terminal.find-previous"
@@ -35,28 +39,45 @@ pub const FIND_CLOSE: String = "terminal.find-close"
 pub const PREVIOUS_PROMPT: String = "terminal.previous-prompt"
 pub const NEXT_PROMPT: String = "terminal.next-prompt"
 pub const SELECT_OUTPUT: String = "terminal.select-output"
+pub const SCROLL_PAGE_UP: String = "terminal.scroll-page-up"
+pub const SCROLL_PAGE_DOWN: String = "terminal.scroll-page-down"
+pub const SCROLL_TOP: String = "terminal.scroll-top"
+pub const SCROLL_BOTTOM: String = "terminal.scroll-bottom"
+pub const CLEAR_SCROLLBACK: String = "terminal.clear-scrollback"
 pub const RESET: String = "terminal.reset"
-pub const SETTINGS: String = "terminal.settings"
+pub const RESET_AND_CLEAR: String = "terminal.reset-and-clear"
 pub const NEXT_TAB: String = "tabs.next"
 pub const PREVIOUS_TAB: String = "tabs.previous"
 pub const LAST_TAB: String = "tabs.last-active"
 pub const MOVE_LEFT: String = "tabs.move-left"
 pub const MOVE_RIGHT: String = "tabs.move-right"
+pub const PIN_TAB: String = "tabs.pin"
+pub const CLOSE_OTHER_TABS: String = "tabs.close-others"
+pub const CLOSE_TABS_RIGHT: String = "tabs.close-right"
+pub const GUIDE: String = "help.guide"
+pub const SHORTCUTS: String = "help.shortcuts"
+pub const REPORT: String = "help.report"
 pub const ABOUT: String = "help.about"
 
 /// The points one Zoom In or Zoom Out adds or takes away.
 pub const ZOOM_STEP: f64 = 1.0
 
+/// Where the guide, its shortcut list and the issue tracker live.
+pub const GUIDE_URL: String = "https://danpozmanter.github.io/waftty/guide/"
+pub const SHORTCUTS_URL: String = "https://danpozmanter.github.io/waftty/guide/#shortcuts"
+pub const REPORT_URL: String = "https://github.com/danpozmanter/waftty/issues"
+
 const SIGNAL_PREFIX: String = "terminal.signal:"
 const ENCODING_PREFIX: String = "terminal.encoding:"
 const SHOW_PREFIX: String = "tabs.show:"
+const NUMBER_PREFIX: String = "tabs.number:"
 
 /// The command that sends signal `number`.
 pub fn signal_command(number: i64) -> String {
     f"{SIGNAL_PREFIX}{number}"
 }
 
-/// The command that sets character set `label`.
+/// The command that sets character encoding `label`.
 pub fn encoding_command(label: String) -> String {
     f"{ENCODING_PREFIX}{label}"
 }
@@ -64,6 +85,12 @@ pub fn encoding_command(label: String) -> String {
 /// The command that shows tab `key`.
 pub fn show_command(key: String) -> String {
     f"{SHOW_PREFIX}{key}"
+}
+
+/// The command that shows the tab at position `n` (1 to 8), or the last tab
+/// for 9.
+pub fn number_command(n: i64) -> String {
+    f"{NUMBER_PREFIX}{n}"
 }
 
 fn suffix(id: String, prefix: String) -> Option<String> {
@@ -76,7 +103,8 @@ pub fn signal_of(id: String) -> Option<i64> {
     suffix(id, SIGNAL_PREFIX)?.to_i64()
 }
 
-/// The character set command `id` sets, if it is a Set Encoding command.
+/// The character encoding command `id` sets, if it is a Set Encoding
+/// command.
 pub fn encoding_of(id: String) -> Option<String> {
     suffix(id, ENCODING_PREFIX)
 }
@@ -96,12 +124,23 @@ pub fn shown_tab_of(id: String) -> Option<String> {
     suffix(id, SHOW_PREFIX)
 }
 
+/// The tab position command `id` shows, if it is a tab-by-number command.
+pub fn number_of(id: String) -> Option<i64> {
+    suffix(id, NUMBER_PREFIX)?.to_i64()
+}
+
+// The chord for Linux and Windows, or the one for macOS.
+fn chord(others: String, mac: String) -> String {
+    if gui::input::platform_is_macos() { mac } else { others }
+}
+
 /// The commands window `key` offers, with their state for its active tab.
 pub fn registry(m: Model, key: String) -> Vec<Command> {
     let window = match model::window_index(m, key) {
         Some(w) => m.windows[w]
         None => model::window(key)
     }
+    let mac = gui::input::platform_is_macos()
     let current = window.current()
     let has_tab = current.is_some()
     let pinned = match current { Some(t) => t.pinned, None => false }
@@ -110,41 +149,71 @@ pub fn registry(m: Model, key: String) -> Vec<Command> {
     let searchable = has_tab && !window.find.query.is_empty()
     let encoding = match current { Some(t) => t.encoding, None => "" }
     let link = match current { Some(t) => t.link, None => "" }
+    let mut close_window = Command::new(CLOSE_WINDOW, "Close Window").category("File")
+    if mac { close_window = close_window.key("Cmd+Shift+W") }
+    let mut copy = Command::new(COPY, "Copy").key(chord("Ctrl+Shift+C", "Cmd+C")).category("Edit")
+    let mut paste = Command::new(PASTE, "Paste").key(chord("Ctrl+Shift+V", "Cmd+V")).category("Edit")
+    let mut select_all = Command::new(SELECT_ALL, "Select All").key(chord("Ctrl+Shift+A", "Cmd+A")).category("Edit")
+    // The plain chords remain for text fields, such as the find bar's; the
+    // terminal leaves them to its program.
+    if !mac {
+        copy = copy.key("Ctrl+C")
+        paste = paste.key("Ctrl+V")
+        select_all = select_all.key("Ctrl+A")
+    }
     let mut out = #[
-        Command::new(NEW_TAB, "New Tab").key("Primary+Shift+T").category("File")
-        Command::new(NEW_WINDOW, "New Window").key("Primary+Shift+N").category("File")
-        Command::new(CLOSE_TAB, "Close Tab").key("Primary+Shift+W").category("File").enabled(has_tab && !pinned)
-        Command::new(CLOSE_WINDOW, "Close Window").key("Primary+Shift+Q").category("File")
-        // The plain chords remain for text fields, such as the Find form's.
-        Command::new(COPY, "Copy").key("Primary+Shift+C").key("Primary+C").category("Edit")
-        Command::new(PASTE, "Paste").key("Primary+Shift+V").key("Primary+V").category("Edit")
-        Command::new(SELECT_ALL, "Select All").key("Primary+Shift+A").key("Primary+A").category("Edit")
+        Command::new(NEW_TAB, "New Tab").key(chord("Ctrl+Shift+T", "Cmd+T")).category("File")
+        Command::new(NEW_WINDOW, "New Window").key(chord("Ctrl+Shift+N", "Cmd+N")).category("File")
+        Command::new(CLOSE_TAB, "Close Tab").key(chord("Ctrl+Shift+W", "Cmd+W")).category("File").enabled(has_tab && !pinned)
+        close_window
+        Command::new(QUIT, "Quit").key(chord("Ctrl+Shift+Q", "Cmd+Q")).category("File")
+        copy
+        paste
+        select_all
         Command::new(OPEN_LINK, "Open Link").category("Edit").visible(!link.is_empty())
         Command::new(COPY_LINK, "Copy Link").category("Edit").visible(!link.is_empty())
         Command::new(COPY_EMAIL, "Copy Email Address").category("Edit").visible(email_of(link).is_some())
-        Command::new(FULLSCREEN, "Fullscreen").key("F11").category("View").checked(window.fullscreen)
-        Command::new(ZOOM_IN, "Zoom In").key("Primary+Shift+=").category("View").enabled(model::can_zoom(m.settings, window, ZOOM_STEP))
-        Command::new(ZOOM_OUT, "Zoom Out").key("Primary+Shift+-").category("View").enabled(model::can_zoom(m.settings, window, -ZOOM_STEP))
-        Command::new(NORMAL_SIZE, "Normal Size").key("Primary+Shift+0").category("View").enabled(window.zoom != 0.0)
-        Command::new(FIND, "Find").key("Primary+Shift+F").category("Terminal").enabled(has_tab)
-        Command::new(FIND_NEXT, "Find Next").key("Primary+Shift+G").category("Terminal").enabled(searchable)
-        Command::new(FIND_PREVIOUS, "Find Previous").key("Primary+Shift+H").category("Terminal").enabled(searchable)
+        Command::new(SETTINGS, "Settings…").key(chord("Ctrl+,", "Cmd+,")).category("Edit")
+        Command::new(FULLSCREEN, "Fullscreen").key(chord("F11", "Ctrl+Cmd+F")).category("View").checked(window.fullscreen)
+        Command::new(ZOOM_IN, "Zoom In").key(chord("Ctrl+=", "Cmd+=")).key(chord("Ctrl+Shift+=", "Cmd+Shift+=")).category("View").enabled(model::can_zoom(m.settings, window, ZOOM_STEP))
+        Command::new(ZOOM_OUT, "Zoom Out").key(chord("Ctrl+-", "Cmd+-")).key(chord("Ctrl+Shift+-", "Cmd+Shift+-")).category("View").enabled(model::can_zoom(m.settings, window, -ZOOM_STEP))
+        Command::new(NORMAL_SIZE, "Reset Zoom").key(chord("Ctrl+0", "Cmd+0")).category("View").enabled(window.zoom != 0.0)
+        Command::new(MENU_BAR, "Show Menu Bar").key(chord("Ctrl+Shift+M", "Cmd+Shift+M")).category("View").checked(m.settings.menu_bar)
+        Command::new(RESET_WINDOW_SIZE, "Reset Window Size").category("View").enabled(!window.fullscreen)
+        Command::new(FIND, "Find…").key(chord("Ctrl+Shift+F", "Cmd+F")).category("Terminal").enabled(has_tab)
+        Command::new(FIND_NEXT, "Find Next").key(chord("Ctrl+Shift+G", "Cmd+G")).category("Terminal").enabled(searchable)
+        Command::new(FIND_PREVIOUS, "Find Previous").key(chord("Ctrl+Shift+H", "Cmd+Shift+G")).category("Terminal").enabled(searchable)
         Command::new(FIND_CLOSE, "Close Find").key("Escape").category("Terminal").enabled(window.find.open).visible(window.find.open)
-        Command::new(PREVIOUS_PROMPT, "Previous Prompt").key("Primary+Shift+Up").category("Terminal").enabled(has_tab)
-        Command::new(NEXT_PROMPT, "Next Prompt").key("Primary+Shift+Down").category("Terminal").enabled(has_tab)
-        Command::new(SELECT_OUTPUT, "Select Last Output").category("Terminal").enabled(has_tab)
+        Command::new(PREVIOUS_PROMPT, "Previous Prompt").key(chord("Ctrl+Shift+Up", "Cmd+Up")).category("Terminal").enabled(has_tab)
+        Command::new(NEXT_PROMPT, "Next Prompt").key(chord("Ctrl+Shift+Down", "Cmd+Down")).category("Terminal").enabled(has_tab)
+        Command::new(SELECT_OUTPUT, "Select Last Command Output").key(chord("Ctrl+Shift+O", "Cmd+Shift+O")).category("Terminal").enabled(has_tab)
+        Command::new(SCROLL_PAGE_UP, "Scroll Up a Page").key("Shift+PageUp").category("Terminal").enabled(has_tab)
+        Command::new(SCROLL_PAGE_DOWN, "Scroll Down a Page").key("Shift+PageDown").category("Terminal").enabled(has_tab)
+        Command::new(SCROLL_TOP, "Scroll to Top").key(chord("Ctrl+Shift+Home", "Cmd+Home")).category("Terminal").enabled(has_tab)
+        Command::new(SCROLL_BOTTOM, "Scroll to Bottom").key(chord("Ctrl+Shift+End", "Cmd+End")).category("Terminal").enabled(has_tab)
+        Command::new(CLEAR_SCROLLBACK, "Clear Scrollback").key(chord("Ctrl+Shift+K", "Cmd+K")).category("Terminal").enabled(has_tab)
         Command::new(RESET, "Reset").category("Terminal").enabled(has_tab)
-        Command::new(SETTINGS, "Settings...").category("Terminal")
-        Command::new(PREVIOUS_TAB, "Previous Tab").key("Ctrl+Shift+Tab").category("Tabs").enabled(tabs > 1)
-        Command::new(NEXT_TAB, "Next Tab").key("Ctrl+Tab").category("Tabs").enabled(tabs > 1)
-        Command::new(LAST_TAB, "Last Active Tab").key("Primary+Shift+L").category("Tabs").enabled(window.index_of(window.previous).is_some())
-        Command::new(MOVE_LEFT, "Move Tab Left").key("Primary+Shift+PageUp").category("Tabs").enabled(has_tab && at > 0)
-        Command::new(MOVE_RIGHT, "Move Tab Right").key("Primary+Shift+PageDown").category("Tabs").enabled(has_tab && at + 1 < tabs)
+        Command::new(RESET_AND_CLEAR, "Reset and Clear").key(chord("Ctrl+Shift+R", "Cmd+Option+K")).category("Terminal").enabled(has_tab)
+        Command::new(PREVIOUS_TAB, "Previous Tab").key("Ctrl+Shift+Tab").key(chord("Ctrl+PageUp", "Cmd+Shift+[")).category("Tabs").enabled(tabs > 1)
+        Command::new(NEXT_TAB, "Next Tab").key("Ctrl+Tab").key(chord("Ctrl+PageDown", "Cmd+Shift+]")).category("Tabs").enabled(tabs > 1)
+        Command::new(LAST_TAB, "Switch to Last Tab").key(chord("Ctrl+Shift+L", "Cmd+Shift+L")).category("Tabs").enabled(window.index_of(window.previous).is_some())
+        Command::new(MOVE_LEFT, "Move Tab Left").key(chord("Ctrl+Shift+PageUp", "Cmd+Shift+PageUp")).category("Tabs").enabled(has_tab && at > 0)
+        Command::new(MOVE_RIGHT, "Move Tab Right").key(chord("Ctrl+Shift+PageDown", "Cmd+Shift+PageDown")).category("Tabs").enabled(has_tab && at + 1 < tabs)
+        Command::new(PIN_TAB, "Pin Tab").category("Tabs").enabled(has_tab).checked(pinned)
+        Command::new(CLOSE_OTHER_TABS, "Close Other Tabs").category("Tabs").enabled(tabs > 1)
+        Command::new(CLOSE_TABS_RIGHT, "Close Tabs to the Right").category("Tabs").enabled(has_tab && at + 1 < tabs)
+        Command::new(GUIDE, "waftty Guide").category("Help")
+        Command::new(SHORTCUTS, "Keyboard Shortcuts").category("Help")
+        Command::new(REPORT, "Report a Problem").category("Help")
         Command::new(ABOUT, "About waftty").category("Help")
     ]
+    for n in 1..10 {
+        let label = if n == 9 { "Last Tab" } else { f"Tab {n}" }
+        out.push(Command::new(number_command(n), label).key(chord(f"Alt+{n}", f"Cmd+{n}")).category("Tabs").enabled(tabs >= 1 && (n == 9 || n <= tabs)))
+    }
     let sendable = has_tab && signals::supported()
     for s in signals::table() {
-        out.push(Command::new(signal_command(s.number), f"{s.number} {s.name}").category("Send Signal").enabled(sendable))
+        out.push(Command::new(signal_command(s.number), signals::label(s)).category("Send Signal").enabled(sendable))
     }
     for c in encodings::all() {
         out.push(Command::new(encoding_command(c.label), c.name).category("Set Encoding").enabled(has_tab).checked(c.label == encoding))
@@ -157,11 +226,16 @@ pub fn registry(m: Model, key: String) -> Vec<Command> {
     shortcuts::apply(out, m.shortcuts)
 }
 
-// The Send Signal submenu, one entry per signal.
+// The Send Signal submenu: the signals people send by hand, then the rest.
 fn signal_menu() -> MenuItem {
-    let mut items = #[]
-    for s in signals::table() { items.push(menus::item(signal_command(s.number))) }
-    menus::submenu("Send &Signal", items)
+    let mut common = #[]
+    let mut more = #[]
+    for s in signals::table() {
+        if signals::meaning(s.name).is_empty() { more.push(menus::item(signal_command(s.number))) } else { common.push(menus::item(signal_command(s.number))) }
+    }
+    common.push(MenuItem::Separator)
+    common.push(menus::submenu("&More", more))
+    menus::submenu("Send &Signal", common)
 }
 
 fn zoom_menu() -> MenuItem {
@@ -172,7 +246,10 @@ fn zoom_menu() -> MenuItem {
 pub fn context_menu() -> Vec<MenuItem> {
     #[
         menus::item(OPEN_LINK), menus::item(COPY_LINK), menus::item(COPY_EMAIL), MenuItem::Separator
-        menus::item(COPY), menus::item(PASTE), MenuItem::Separator, signal_menu(), zoom_menu()
+        menus::item(COPY), menus::item(PASTE), menus::item(SELECT_ALL), MenuItem::Separator
+        menus::item(NEW_TAB), menus::item(FIND), menus::item(CLEAR_SCROLLBACK), MenuItem::Separator
+        signal_menu(), zoom_menu(), menus::item(MENU_BAR), MenuItem::Separator
+        menus::item(SETTINGS)
     ]
 }
 
@@ -185,7 +262,8 @@ pub fn menu_bar(m: Model, key: String) -> gui::Widget {
     }
     let mut tab_items = #[
         menus::item(PREVIOUS_TAB), menus::item(NEXT_TAB), menus::item(LAST_TAB), MenuItem::Separator
-        menus::item(MOVE_LEFT), menus::item(MOVE_RIGHT), MenuItem::Separator
+        menus::item(MOVE_LEFT), menus::item(MOVE_RIGHT), menus::item(PIN_TAB), MenuItem::Separator
+        menus::item(CLOSE_OTHER_TABS), menus::item(CLOSE_TABS_RIGHT), MenuItem::Separator
     ]
     if let Some(w) = model::window_index(m, key) {
         for t in m.windows[w].tabs { tab_items.push(menus::radio(show_command(t.key), "")) }
@@ -193,19 +271,22 @@ pub fn menu_bar(m: Model, key: String) -> gui::Widget {
     gui::Widget::joined_menu_bar("menu", #[
         Menu::new("&File", #[
             menus::item(NEW_TAB), menus::item(NEW_WINDOW), MenuItem::Separator
-            menus::item(CLOSE_TAB), menus::item(CLOSE_WINDOW)
+            menus::item(CLOSE_TAB), menus::item(CLOSE_WINDOW), MenuItem::Separator
+            menus::item(QUIT)
         ])
-        Menu::new("&Edit", #[menus::item(COPY), menus::item(PASTE), MenuItem::Separator, menus::item(SELECT_ALL)])
-        Menu::new("&View", #[menus::item(FULLSCREEN), MenuItem::Separator, zoom_menu()])
+        Menu::new("&Edit", #[
+            menus::item(COPY), menus::item(PASTE), MenuItem::Separator, menus::item(SELECT_ALL), MenuItem::Separator
+            menus::item(SETTINGS)
+        ])
+        Menu::new("&View", #[menus::item(FULLSCREEN), menus::item(MENU_BAR), MenuItem::Separator, zoom_menu(), menus::item(RESET_WINDOW_SIZE)])
         Menu::new("&Terminal", #[
             menus::item(FIND), menus::item(FIND_NEXT), menus::item(FIND_PREVIOUS), MenuItem::Separator
             menus::item(PREVIOUS_PROMPT), menus::item(NEXT_PROMPT), menus::item(SELECT_OUTPUT), MenuItem::Separator
-            menus::item(RESET), signal_menu(), menus::submenu("Set &Encoding", encoding_items)
-            MenuItem::Separator
-            menus::item(SETTINGS)
+            menus::item(SCROLL_TOP), menus::item(SCROLL_BOTTOM), menus::item(CLEAR_SCROLLBACK), MenuItem::Separator
+            menus::item(RESET), menus::item(RESET_AND_CLEAR), signal_menu(), menus::submenu("Set &Encoding", encoding_items)
         ])
         Menu::new("T&abs", tab_items)
-        Menu::new("&Help", #[menus::item(ABOUT)])
+        Menu::new("&Help", #[menus::item(GUIDE), menus::item(SHORTCUTS), menus::item(REPORT), MenuItem::Separator, menus::item(ABOUT)])
     ])
 }
 
@@ -225,6 +306,8 @@ mod tests {
         assert_eq(super::encoding_of(super::RESET), None)
         assert_eq(super::shown_tab_of(super::show_command("tab-3")), Some("tab-3"))
         assert_eq(super::shown_tab_of(super::NEXT_TAB), None)
+        assert_eq(super::number_of(super::number_command(4)), Some(4))
+        assert_eq(super::number_of(super::NEXT_TAB), None)
     }
 
     fn shown(m: Model, id: String) -> bool {
@@ -234,7 +317,7 @@ mod tests {
     #[test]
     fn the_link_entries_show_only_over_a_link_and_the_email_entry_over_an_address() {
         let mut m = model::new(Settings::default())
-        m.windows[0].tabs.push(model::Tab { key: "tab-1", terminal: Terminal { id: 0 }, title: "", encoding: "", pinned: false, link: "", attention: false })
+        m.windows[0].tabs.push(model::Tab { key: "tab-1", terminal: Terminal { id: 0 }, title: "", name: "", encoding: "", pinned: false, link: "", attention: false })
         m.windows[0].active = "tab-1"
         assert(!shown(m, super::OPEN_LINK) && !shown(m, super::COPY_LINK) && !shown(m, super::COPY_EMAIL))
         m.windows[0].tabs[0].link = "https://example.org/"
@@ -250,5 +333,16 @@ mod tests {
         assert_eq(super::email_of("mailto:me@example.org?subject=hi"), Some("me@example.org"))
         assert_eq(super::email_of("mailto:"), None)
         assert_eq(super::email_of("https://example.org/"), None)
+    }
+
+    #[test]
+    fn every_default_chord_is_one_a_terminal_can_give_up() {
+        let registry = super::registry(model::new(Settings::default()), "main")
+        let mut chosen: Map<String, Vec<String>> = Map::new()
+        for c in registry {
+            let chords = c.shortcuts.map(shortcuts::spelled).filter(|chord| chord != "Ctrl+C" && chord != "Ctrl+V" && chord != "Ctrl+A")
+            if !chords.is_empty() { chosen[c.id] = chords }
+        }
+        assert_eq(shortcuts::problems(chosen, registry), #[])
     }
 }

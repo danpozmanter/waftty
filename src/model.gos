@@ -3,11 +3,13 @@
 // operation queues the effects that keep titles and focus in step. Closing
 // what still runs a program's job asks first.
 
-use std::errors
+use std::{errors, fs, path}
+use std::encoding::json
 
 use gui
 use gui::Effect
 use gui::dialogs::request
+use gui::services
 use gui::terminal::{Options, Span, Terminal}
 use gui::widgets::find::FindBar
 
@@ -17,9 +19,6 @@ use schemes
 use settings
 use settings::Settings
 
-const WINDOW_WIDTH: i64 = 760
-const WINDOW_HEIGHT: i64 = 520
-
 /// One tab: a terminal and what the window says about it.
 #[derive(PartialEq)]
 pub struct Tab {
@@ -27,6 +26,9 @@ pub struct Tab {
     pub terminal: Terminal
     /// The title the program set; empty until it sets one.
     pub title: String
+    /// The name of the program the tab runs, which names it until the
+    /// program sets a title.
+    pub name: String
     /// The character set the tab's program reads and writes.
     pub encoding: String
     /// Pinned tabs sit first and show no close button.
@@ -47,7 +49,7 @@ impl Tab {
 
     /// What the tab strip, the window title and the Tabs menu call the tab.
     pub fn label(&self) -> String {
-        if self.title.is_empty() { "Terminal" } else { self.title }
+        if !self.title.is_empty() { self.title } else if !self.name.is_empty() { self.name } else { "Terminal" }
     }
 
     /// Whether a job other than the shell runs in the tab, which closing
@@ -57,6 +59,14 @@ impl Tab {
             Ok(shown) => shown.busy
             Err(_) => false
         }
+    }
+
+    /// The program that closing the tab would end, named where the system
+    /// names it, or None when only the shell runs.
+    pub fn running(&self) -> Option<String> {
+        let shown = self.terminal.snapshot().ok()?
+        if !shown.busy { return None }
+        Some(if shown.job.is_empty() { "A program" } else { shown.job })
     }
 }
 
@@ -130,6 +140,17 @@ pub struct Model {
     pub fonts: Option<Vec<String>>
     /// The window waiting for the font list to open Settings, or "".
     pub settings_window: String
+    /// A paste held for the user to confirm: the tab and the text.
+    pub held_paste: Option<(String, String)>
+    /// The scheme a Settings window shows in place of the saved one, after
+    /// an import or an edit made while it was open; "" for none.
+    pub offered_scheme: String
+    /// Set once every window is closing, so the session is saved whole.
+    pub quitting: bool
+    /// The family an empty font setting shows, read once at start.
+    pub desktop_font: String
+    /// The scheme Edit Colors is editing.
+    pub editing_scheme: String
 }
 
 /// A model with one window, "main", and no tabs yet.
@@ -143,6 +164,11 @@ pub fn new(s: Settings) -> Model {
         shortcuts: Map::new()
         fonts: None
         settings_window: ""
+        held_paste: None
+        offered_scheme: ""
+        quitting: false
+        desktop_font: ""
+        editing_scheme: ""
     }
 }
 
@@ -195,9 +221,25 @@ pub fn open_tab(m: &mut Model, w: i64, command: gui::terminal::Command) -> Resul
     }
     let key = f"tab-{m.next}"
     m.next += 1
-    m.windows[w].tabs.push(Tab { key: key, terminal: terminal, title: "", encoding: s.encoding, pinned: false, link: "", attention: false })
+    m.windows[w].tabs.push(Tab { key: key, terminal: terminal, title: "", name: program_name(command.program), encoding: s.encoding, pinned: false, link: "", attention: false })
     activate(m, w, key)
     Ok(())
+}
+
+/// The name a program's path gives it: "zsh" for /bin/zsh, "pwsh" for
+/// C:\Program Files\PowerShell\7\pwsh.exe.
+pub fn program_name(program: String) -> String {
+    let base = path::file_name(program.replace("\\", "/")).unwrap_or(program)
+    if base.to_lowercase().ends_with(".exe") { base.substring(0, base.byte_len() - 4) } else { base }
+}
+
+/// The size in interface units of a window showing `columns` by `rows`
+/// characters at `points`, with the menu bar and padding around them.
+pub fn window_size(s: Settings, points: f64) -> (i64, i64) {
+    let px = points * 96.0 / 72.0
+    let width = (s.columns as f64 * px * 0.6).ceil() as i64 + 2 * s.padding + if s.scrollbar == "always" { 10 } else { 0 }
+    let height = (s.rows as f64 * px * 1.25 * s.line_spacing).ceil() as i64 + 2 * s.padding + if s.menu_bar { 30 } else { 0 }
+    (width.max(360), height.max(220))
 }
 
 /// Opens a window with one tab running `command`.
@@ -206,7 +248,8 @@ pub fn open_window(m: &mut Model, command: gui::terminal::Command) -> Result<(),
     m.next += 1
     m.windows.push(window(key))
     let w = m.windows.len() - 1
-    gui::perform(Effect::OpenWindow { key: key, title: info::NAME, width: WINDOW_WIDTH, height: WINDOW_HEIGHT })
+    let width, height = window_size(m.settings, m.settings.font_size)
+    gui::perform(Effect::OpenWindow { key: key, title: info::NAME, width: width, height: height })
     if let Err(why) = open_tab(m, w, command) {
         let _ = m.windows.remove(w)
         gui::perform(Effect::CloseWindow(key))
@@ -323,6 +366,7 @@ pub fn close_tab(m: &mut Model, w: i64, t: i64) {
 /// Closes window `w` and every program in it; closing the last window
 /// quits.
 pub fn close_window(m: &mut Model, w: i64) {
+    if m.windows.len() == 1 && !m.quitting { save_session(*m) }
     let window = m.windows[w]
     for tab in window.tabs { tab.terminal.close() }
     let _ = m.windows.remove(w)
@@ -333,39 +377,126 @@ pub fn close_window(m: &mut Model, w: i64) {
     }
 }
 
-/// Closes tab `key`, asking first when a job runs in it.
+// The programs closing `tabs` would end, when the settings ask first.
+fn would_end(m: Model, tabs: Vec<Tab>) -> Vec<String> {
+    if !m.settings.confirm_close { return #[] }
+    let mut out = #[]
+    for t in tabs {
+        if let Some(job) = t.running() && !out.contains(job) { out.push(job) }
+    }
+    out
+}
+
+// "vim is still running", or the programs named together.
+fn still_running(jobs: Vec<String>) -> String {
+    let named = if jobs.len() == 1 { jobs[0] } else if jobs.len() == 2 { f"{jobs[0]} and {jobs[1]}" } else { f"{jobs[0]}, {jobs[1]} and {jobs.len() - 2} more" }
+    f"{named} {if jobs.len() == 1 { "is" } else { "are" }} still running"
+}
+
+/// Closes tab `key`, asking first when a program runs in it.
 pub fn request_close_tab(m: &mut Model, key: String) {
     let Some(loc) = tab_location(*m, key) else { return }
     let w, t = loc
-    if m.windows[w].tabs[t].busy() {
-        gui::perform(Effect::OpenDialogIn(m.windows[w].key, request::confirm(f"close-tab:{key}", "Close this tab?", "A program is still running in this tab. Closing the tab ends it.", "Close Tab", true)))
-    } else {
+    let jobs = would_end(*m, #[m.windows[w].tabs[t]])
+    if jobs.is_empty() {
         close_tab(m, w, t)
+    } else {
+        gui::perform(Effect::OpenDialogIn(m.windows[w].key, request::confirm(f"close-tab:{key}", "Close this tab?", f"{still_running(jobs)}. Closing the tab ends it.", "Close Tab", true)))
     }
 }
 
-/// Closes window `w`, asking first when a job runs in any of its tabs.
+/// Closes window `w`, asking first when a program runs in any of its tabs.
 pub fn request_close_window(m: &mut Model, w: i64) {
     let window = m.windows[w]
-    if window.tabs.any(|t| t.busy()) {
-        gui::perform(Effect::OpenDialogIn(window.key, request::confirm(f"close-window:{window.key}", "Close this window?", "A program is still running in one of its tabs. Closing the window ends it.", "Close Window", true)))
-    } else {
+    let jobs = would_end(*m, window.tabs)
+    if jobs.is_empty() {
         close_window(m, w)
+    } else {
+        gui::perform(Effect::OpenDialogIn(window.key, request::confirm(f"close-window:{window.key}", "Close this window?", f"{still_running(jobs)}. Closing the window ends them.", "Close Window", true)))
     }
 }
 
-/// Quits, asking first when a job runs in any tab.
+/// Quits, asking first when a program runs in any tab.
 pub fn request_quit(m: &mut Model) {
-    let busy = m.windows.iter().position(|w| w.tabs.any(|t| t.busy()))
-    match busy {
-        Some(w) => gui::perform(Effect::OpenDialogIn(m.windows[w].key, request::confirm("close-all", "Quit waftty?", "A program is still running. Quitting ends it.", "Quit", true)))
-        None => close_all(m)
+    let mut tabs = #[]
+    for w in m.windows { for t in w.tabs { tabs.push(t) } }
+    let jobs = would_end(*m, tabs)
+    if jobs.is_empty() {
+        close_all(m)
+    } else {
+        let w = m.windows.iter().position(|w| w.focused).unwrap_or(0)
+        gui::perform(Effect::OpenDialogIn(m.windows[w].key, request::confirm("close-all", "Quit waftty?", f"{still_running(jobs)}. Quitting ends them.", "Quit", true)))
     }
 }
 
 /// Closes every window and quits.
 pub fn close_all(m: &mut Model) {
+    save_session(*m)
+    m.quitting = true
     while !m.windows.is_empty() { close_window(m, m.windows.len() - 1) }
+}
+
+/// Closes the tabs of window `w` that `which` picks from their indexes,
+/// leaving pinned tabs, asking first when a program runs in them.
+pub fn request_close_tabs(m: &mut Model, w: i64, which: Fn(i64) -> bool) {
+    let mut keys = #[]
+    let mut i = 0
+    while i < m.windows[w].tabs.len() {
+        if which(i) && !m.windows[w].tabs[i].pinned { keys.push(m.windows[w].tabs[i].key) }
+        i += 1
+    }
+    let tabs = m.windows[w].tabs.filter(|t| keys.contains(t.key))
+    let jobs = would_end(*m, tabs)
+    if jobs.is_empty() {
+        close_tabs(m, keys)
+    } else {
+        gui::perform(Effect::OpenDialogIn(m.windows[w].key, request::confirm(f"close-tabs:{keys.join(",")}", "Close these tabs?", f"{still_running(jobs)}. Closing the tabs ends them.", "Close Tabs", true)))
+    }
+}
+
+/// Closes the tabs `keys` name.
+pub fn close_tabs(m: &mut Model, keys: Vec<String>) {
+    for key in keys {
+        if let Some(loc) = tab_location(*m, key) {
+            let w, t = loc
+            close_tab(m, w, t)
+        }
+    }
+}
+
+/// One window of a saved session: the folder each of its tabs was in.
+#[derive(Default, PartialEq)]
+pub struct SavedWindow {
+    pub folders: Vec<String>
+}
+
+/// The windows open at the last quit, for settings that reopen them.
+#[derive(Default, PartialEq)]
+pub struct Session {
+    pub windows: Vec<SavedWindow>
+}
+
+fn session_file() -> String {
+    path::join(services::config_dir(info::APP_ID), "session.json")
+}
+
+// Saves the windows of `m` and their tabs' folders when the settings
+// reopen them; otherwise forgets any saved session.
+fn save_session(m: Model) {
+    if !m.settings.restore {
+        let _ = fs::remove_file(session_file())
+        return
+    }
+    let saved = Session { windows: m.windows.map(|w| SavedWindow { folders: w.tabs.map(|t| t.terminal.cwd().unwrap_or("")) }) }
+    let _ = fs::create_dir_all(services::config_dir(info::APP_ID))
+    let _ = fs::write(session_file(), json::encode(saved).bytes())
+}
+
+/// The session saved at the last quit, if any.
+pub fn saved_session() -> Option<Session> {
+    let text = fs::read_to_string(session_file()).ok()?
+    let saved = json::decode::<Session>(text).ok()?
+    if saved.windows.is_empty() { None } else { Some(saved) }
 }
 
 /// Shows `why` in window `window` as an error titled `title`.
@@ -376,6 +507,12 @@ pub fn report(window: String, title: String, why: errors::Error) {
 /// The program a new tab runs under the current settings.
 pub fn shell(m: Model) -> gui::terminal::Command {
     settings::command(m.settings)
+}
+
+/// The font window terminals show: the family the settings name, else the
+/// desktop's monospace font, else the bundled one.
+pub fn font(m: Model) -> String {
+    if m.settings.font.is_empty() { m.desktop_font } else { m.settings.font }
 }
 
 /// The program a tab opened from window `w` runs: in the directory of the
@@ -397,7 +534,11 @@ pub fn scheme(m: Model) -> schemes::Entry {
 
 #[cfg(test)]
 mod tests {
+    use std::encoding::json
+
     use settings::Settings
+
+    use super::{SavedWindow, Session}
 
     #[test]
     fn zoom_stops_at_the_font_sizes_settings_offers_and_normal_size_undoes_it() {
@@ -413,5 +554,26 @@ mod tests {
         m.settings.font_size = 6.0
         super::zoom(&mut m, 0, -1.0)
         assert_eq(super::font_size(m, 0), 6.0)
+    }
+
+    #[test]
+    fn a_tab_is_named_for_its_program_until_the_program_titles_it() {
+        assert_eq(super::program_name("/bin/zsh"), "zsh")
+        assert_eq(super::program_name("C:\\Program Files\\PowerShell\\7\\pwsh.exe"), "pwsh")
+        assert_eq(super::program_name("fish"), "fish")
+    }
+
+    #[test]
+    fn a_saved_session_reads_back_as_its_windows_and_folders() {
+        let saved = Session { windows: #[SavedWindow { folders: #["/tmp", ""] }, SavedWindow { folders: #["/home"] }] }
+        let Ok(back) = json::decode::<Session>(json::encode(saved)) else { panic("the session did not read back") }
+        assert_eq(back, saved)
+    }
+
+    #[test]
+    fn a_close_prompt_names_what_it_would_end() {
+        assert_eq(super::still_running(#["vim"]), "vim is still running")
+        assert_eq(super::still_running(#["vim", "ssh"]), "vim and ssh are still running")
+        assert_eq(super::still_running(#["vim", "ssh", "top", "less"]), "vim, ssh and 2 more are still running")
     }
 }
