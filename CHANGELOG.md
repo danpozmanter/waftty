@@ -1,9 +1,12 @@
 # Changelog
 
+## 0.2.2 - macOS installer fix
+
+- The macOS installer links the `waftty` command into `/opt/homebrew/bin` only when Homebrew is installed, instead of creating that folder.
+
 ## 0.2.1 - macOS installer and Settings shortcut
 
 - The macOS package installs with `install.command`, which runs in Terminal when double-clicked.
-- The macOS installer links the `waftty` command into `/opt/homebrew/bin` only when Homebrew is installed, instead of creating that folder.
 - Saving Settings keeps the Settings shortcut (Ctrl+, or Cmd+,) instead of reporting "Cmd+" as a chord waftty does not read. If 0.2.0 reported it, reset the Settings shortcut on the Shortcuts page.
 
 ## 0.2.0 - Settings, shortcuts, and defaults
