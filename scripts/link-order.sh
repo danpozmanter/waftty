@@ -1,59 +1,149 @@
 #!/usr/bin/env bash
-# Writes the link order scripts/package.sh hands the linker (as
-# GOS_SYMBOL_ORDER): first the functions a session keeps running once its
-# first frame is shown (the output profile), hottest first; then, between
-# the engine's startup markers, the ones only startup or an occasional
-# feature (the journey profile) runs. The engine releases that second run
-# once the window is up, and a feature used later reads its pages back.
+# Writes the link order scripts/package.sh hands the linker: first the
+# functions a session keeps running once its first frame is shown (the session
+# profile), hottest first; then, between the engine's startup markers, the
+# ones only startup or an occasional feature (the journey profile) runs. The
+# engine releases that second run once the window is up, and a feature used
+# later reads its pages back.
 #
 # Usage: scripts/link-order.sh [OUTPUT]   (default build-data/link-order.txt)
 #
-# Symbol names depend on the toolchain, the target and where each library
-# was built from, so the order holds only for a build made the same way as
-# this one; the release workflow writes it in the job that packages.
+# The order names functions by scripts/symbol-key.awk's keys, which hold
+# across builds of the same sources, so one profile serves local and release
+# builds; package.sh matches them to the names of the build it links. Rerun it
+# when the code a session runs changes.
 #
-# Needs valgrind, Xephyr and the Gossamer toolchain. The profile is the
-# scripted journey (--fixture), which runs offscreen, and a stretch of
-# output on X11.
+# The session profile is a real one: run it from an X11 desktop session with
+# no waftty open, since a running waftty takes the launch. The window it opens
+# talks to the desktop's portal and window manager as any session does, and
+# python3-xlib drives it the way a user does.
+# The journey profile is the scripted journey (--fixture), which runs
+# offscreen on a bus of its own. Valgrind's slowdown moves work that starts
+# asynchronously (portal replies, background jobs) to before the first frame,
+# so the session then runs natively under gdb, and whatever runs there after
+# the first frame joins the session part. Needs valgrind, gdb, python3-xlib
+# and the Gossamer toolchain.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 output="${1:-$root/build-data/link-order.txt}"
 die() { echo "error: $*" >&2; exit 1; }
-for tool in valgrind Xephyr gos nm dbus-run-session; do
+for tool in valgrind gdb gos nm dbus-run-session dbus-send python3; do
     command -v "$tool" >/dev/null 2>&1 || die "$tool is not on the PATH"
 done
 
-work="$(mktemp -d)"
-xephyr=""
-cleanup() {
-    [ -z "$xephyr" ] || kill "$xephyr" 2>/dev/null || true
-    rm -rf "$work"
-}
-trap cleanup EXIT
+[ -n "${DISPLAY:-}" ] || die "the session profile needs an X11 desktop session"
+dbus-send --session --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus \
+    org.freedesktop.DBus.NameHasOwner string:dev.gossamer.waftty 2>/dev/null |
+    grep -q "boolean false" || die "close waftty first (or no session bus is reachable)"
 
-# valgrind runs code for a CPU every machine has.
+python3 -c "import Xlib.ext.xtest" 2>/dev/null || die "python3-xlib is not installed"
+
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+
+# The build package.sh makes: code for a CPU every machine has (which valgrind
+# also runs), in the release build environment.
+. "$root/scripts/build-env.sh"
 (cd "$root" && GOS_LLVM_MCPU=x86-64-v2 gos build --release . --out-dir "$work/build" >&2)
 binary="$work/build/waftty"
 
-display=70
-while [ -e "/tmp/.X$display-lock" ] || [ -e "/tmp/.X11-unix/X$display" ]; do
-    display=$((display + 1))
-done
-Xephyr ":$display" -screen 1400x900 >/dev/null 2>&1 &
-xephyr=$!
-until [ -S "/tmp/.X11-unix/X$display" ]; do
-    kill -0 "$xephyr" 2>/dev/null || die "Xephyr did not start"
-    sleep 0.1
-done
+# What a user does to a session between bursts of output: resize it, move
+# the pointer through it, scroll with the wheel, click it, and switch to
+# another window and back.
+cat > "$work/interact.py" <<'EOF'
+import sys, time
+from Xlib import X, display, protocol
+from Xlib.ext import xtest
 
-cat > "$work/output.sh" <<'EOF'
+d = display.Display()
+root = d.screen().root
+NET_WM_PID = d.intern_atom("_NET_WM_PID")
+NET_ACTIVE = d.intern_atom("_NET_ACTIVE_WINDOW")
+NET_CLIENTS = d.intern_atom("_NET_CLIENT_LIST")
+
+def clients():
+    prop = root.get_full_property(NET_CLIENTS, X.AnyPropertyType)
+    return [d.create_resource_object("window", w) for w in (prop.value if prop else [])]
+
+def pid_of(w):
+    prop = w.get_full_property(NET_WM_PID, X.AnyPropertyType)
+    return prop.value[0] if prop else None
+
+def activate(w):
+    event = protocol.event.ClientMessage(window=w, client_type=NET_ACTIVE,
+                                         data=(32, [2, X.CurrentTime, 0, 0, 0]))
+    root.send_event(event, event_mask=X.SubstructureRedirectMask | X.SubstructureNotifyMask)
+    d.flush()
+
+def pace():
+    d.sync()
+    time.sleep(0.5)
+
+ours = [w for w in clients() if pid_of(w) == int(sys.argv[1])]
+if not ours:
+    sys.exit(0)
+win = ours[0]
+win.configure(width=900, height=600)
+pace()
+geometry = win.get_geometry()
+for i in range(1, 6):
+    win.warp_pointer(geometry.width * i // 6, geometry.height * i // 6)
+    pace()
+for button in (4, 4, 4, 5, 5, 5):
+    xtest.fake_input(d, X.ButtonPress, button)
+    xtest.fake_input(d, X.ButtonRelease, button)
+    pace()
+xtest.fake_input(d, X.ButtonPress, 1)
+xtest.fake_input(d, X.ButtonRelease, 1)
+pace()
+root.warp_pointer(0, 0)
+pace()
+others = [w for w in clients() if w.id != win.id]
+if others:
+    activate(others[0])
+    pace()
+    activate(win)
+    pace()
+EOF
+cat > "$work/output.sh" <<EOF
 #!/bin/sh
 seq 100000
 ls -la /usr/bin | head -200
+python3 "$work/interact.py" "\$PPID"
+# A session spends most of its time idle: the cursor blinks, and work started
+# with the window lands.
+sleep 30
 exit
 EOF
 chmod +x "$work/output.sh"
+
+# Settings as a session that has saved some keeps them: an installed font
+# (one waftty does not bundle), values of its own and a color scheme of the
+# user's. With "default" the folder stays empty, as on a first launch. Each
+# run starts from a fresh copy.
+font="$(fc-list ':spacing=mono:fontformat=TrueType' family 2>/dev/null | cut -d, -f1 |
+    grep -viE 'dejavu|ibm plex' | sort -u | head -n 1 || true)"
+seed_config() {
+    local dir="$1/dev.gossamer.waftty"
+    mkdir -p "$dir"
+    [ "${2:-}" != default ] || return 0
+    printf '{"values":{"font":"%s","font_size":"11","scheme":"user:profile","scrollback":"2000"},"version":2}\n' \
+        "$font" > "$dir/settings.json"
+    cat > "$dir/scheme-profile.toml" <<'EOF'
+name = "Profile"
+appearance = "dark"
+foreground = "#d8d8d8"
+background = "#202428"
+cursor = "#d8d8d8"
+selection = "#3d6e99"
+selection_text = "#ffffff"
+ansi = [
+  "#000000", "#cc0000", "#4e9a06", "#c4a000", "#3465a4", "#75507b", "#06989a", "#d3d7cf",
+  "#555753", "#ef2929", "#8ae234", "#fce94f", "#729fcf", "#ad7fa8", "#34e2e2", "#eeeeec",
+]
+EOF
+}
 
 # Each function an executed instruction lies in, by the instructions' own
 # cost, hottest first. Instructions are mapped to functions here. Where
@@ -76,19 +166,23 @@ base=$(valgrind --tool=none --trace-symtab=yes --trace-symtab-patt="*/$(basename
 [ -n "$base" ] || die "valgrind did not report where it loads $binary"
 split_at=$(printf '0x%016x' $((base + 0x$(address gui_engine_startup_complete))))
 
-# A bus of its own keeps a running waftty from taking the profiled launch.
 # Callgrind writes what ran before the first frame to <out>.1, and the rest
 # of the session to <out> when the program exits.
-profile() {
-    DISPLAY=":$display" XDG_CONFIG_HOME="$work/config" SDL_VIDEO_DRIVER="$1" dbus-run-session -- \
+callgrind() {
+    local out="$1"
+    shift
+    seed_config "$out.config"
+    XDG_CONFIG_HOME="$out.config" "$@" \
         valgrind --tool=callgrind --dump-instr=yes --dump-line=no \
         --dump-before=gui_engine_startup_complete --dump-before="$split_at" \
-        --callgrind-out-file="$2" -q \
-        "$binary" "${@:3}" \
-        >"$2.log" 2>&1
+        --callgrind-out-file="$out" -q \
+        "$binary" "${profile_args[@]}" \
+        >"$out.log" 2>&1
 }
-profile offscreen "$work/journey.out" --fixture
-profile x11 "$work/output.out" -e "$work/output.sh"
+profile_args=(--fixture)
+callgrind "$work/journey.out" env SDL_VIDEO_DRIVER=offscreen dbus-run-session --
+profile_args=(-e "$work/output.sh")
+callgrind "$work/output.out" env
 for out in journey output; do
     [ -f "$work/$out.out.1" ] && [ -f "$work/$out.out" ] || {
         tail -n 40 "$work/$out.out.log" >&2
@@ -98,7 +192,7 @@ done
 
 mkdir -p "$(dirname "$output")"
 python3 - "$base" "$work/defined" "$binary" "$work"/output.out "$work"/journey.out.1 "$work"/output.out.1 \
-    "$work"/journey.out > "$output" <<'EOF'
+    "$work"/journey.out > "$work/names" <<'EOF'
 import bisect, os, re, sys
 LOAD_BASE = int(sys.argv[1], 16)
 symbols = []
@@ -228,4 +322,84 @@ for name in hottest(features):
         print(name)
 print("gui_engine_startup_code_end")
 EOF
+# The session natively. Breakpoints slow what they watch, so the late runs
+# arm them only once the first frame is shown, leaving startup at native
+# speed: every function outside the session part that runs after it is
+# recorded. Which work lands after the first frame depends on the settings (a
+# saved font is looked up while the first frame is laid out), so they run with
+# saved settings and with none. The unseen run watches from the start for
+# functions no profile saw at all.
+cat > "$work/native.py" <<'EOF'
+import gdb, subprocess
+binary, out_file, start, exclude_files = NATIVE_ARGS
+exclude = {line.strip() for path in exclude_files for line in open(path)}
+names = {}
+for line in subprocess.check_output(["nm", "--defined-only", binary], text=True).splitlines():
+    parts = line.split()
+    if len(parts) == 3 and parts[1] in "tTwW":
+        names.setdefault(int(parts[0], 16), []).append(parts[2])
+watched = [a for a, ns in names.items()
+           if not any(n in exclude or n.startswith("gui_engine_startup_code_") for n in ns)]
+marker = next(a for a, ns in names.items() if "gui_engine_startup_code_begin" in ns)
+hits = []
+
+class Call(gdb.Breakpoint):
+    def stop(self):
+        hits.extend(names[self.at])
+        self.enabled = False
+        return False
+
+class Arm(gdb.Breakpoint):
+    def stop(self):
+        base = int(gdb.parse_and_eval("(long)&gui_engine_startup_code_begin")) - marker
+        for a in watched:
+            Call(f"*{a + base:#x}", internal=True).at = a
+        self.enabled = False
+        return False
+
+Arm(start, internal=True)
+
+def report(_event):
+    with open(out_file, "w") as out:
+        out.writelines(f"{n}\n" for n in hits)
+
+gdb.events.exited.connect(report)
+EOF
+native() {
+    local out="$1" start="$2" settings="$3"
+    shift 3
+    local excludes
+    excludes=$(printf "'%s'," "$@")
+    seed_config "$out.config" "$settings"
+    XDG_CONFIG_HOME="$out.config" gdb -q -batch -ex "set pagination off" \
+        -ex "python NATIVE_ARGS = ('$binary', '$out', '$start', [$excludes])" \
+        -ex "source $work/native.py" -ex run --args "$binary" -e "$work/output.sh" \
+        >"$out.log" 2>&1
+    [ -f "$out" ] || { tail -n 40 "$out.log" >&2; die "the native session did not finish"; }
+}
+awk '/^gui_engine_startup_code_begin$/ { exit } { print }' "$work/names" > "$work/session"
+native "$work/late.saved" gui_engine_startup_complete saved "$work/session"
+native "$work/late.default" gui_engine_startup_complete default "$work/session"
+cat "$work/late.saved" "$work/late.default" > "$work/late"
+awk '/^gui_engine_startup_code_/ { next } { print }' "$work/names" > "$work/profiled"
+native "$work/unseen" main saved "$work/profiled" "$work/late"
+
+# Functions called after the first frame join the session part; the startup
+# part keeps the rest, with those only the native run saw.
+python3 - "$work/names" "$work/late" "$work/unseen" > "$work/ordered" <<'EOF'
+import sys
+names = [l.strip() for l in open(sys.argv[1])]
+cut = names.index("gui_engine_startup_code_begin")
+session, startup = names[:cut], names[cut + 1:-1]
+late = [l.strip() for l in open(sys.argv[2])]
+unseen = [l.strip() for l in open(sys.argv[3])]
+moved = set(late)
+seen = set()
+for name in session + late + ["gui_engine_startup_code_begin"] + \
+        [n for n in startup if n not in moved] + unseen + ["gui_engine_startup_code_end"]:
+    if name not in seen:
+        seen.add(name)
+        print(name)
+EOF
+awk -f "$root/scripts/symbol-key.awk" "$work/ordered" | awk '!seen[$1]++ { print $1 }' > "$output"
 echo "wrote $(wc -l < "$output") functions to $output"

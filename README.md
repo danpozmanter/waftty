@@ -21,7 +21,7 @@ gos build --release
 ./install.sh --system      # Linux: build and install to /usr/local
 ```
 
-Building requires Gossamer 0.75.13 or newer and a Rust toolchain.
+Building requires Gossamer 0.75.13 or newer and Rust 1.95.0 through rustup.
 
 Release packages are built for Linux x86_64 (glibc 2.39 or newer, as on
 Ubuntu 24.04) as a .deb, an .rpm, an AppImage and a tarball; for Windows

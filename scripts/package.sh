@@ -82,23 +82,28 @@ trap 'rm -rf "$stage"' EXIT
 if [ -z "${GOS_LLVM_MCPU:-}" ]; then
     if [ "$arch" = x86_64 ]; then export GOS_LLVM_MCPU=x86-64-v2; else export GOS_LLVM_MCPU=generic; fi
 fi
-# The functions a session runs, laid out together so they fill few pages
-# (scripts/link-order.sh writes the list).
-if [ -f "$root/build-data/link-order.txt" ] && [ -z "${GOS_SYMBOL_ORDER:-}" ]; then
-    export GOS_SYMBOL_ORDER="$root/build-data/link-order.txt"
-fi
+. "$root/scripts/build-env.sh"
 (cd "$root" && gos fetch >/dev/null && gos build --release . --out-dir "$stage/build" >&2)
 binary="$stage/build/$exe"
 [ "$platform" = windows ] && binary="$binary.exe"
 [ -f "$binary" ] || die "the build did not produce $binary"
-# The linker skips names it does not find, so an order written for another
-# build would pass unnoticed.
-if [ -n "${GOS_SYMBOL_ORDER:-}" ] && [ "$platform" = linux ]; then
-    need nm
-    missing=$(nm --defined-only "$binary" | awk '{ print $3 }' | sort -u |
-        comm -13 - <(sort -u "$GOS_SYMBOL_ORDER") | wc -l)
-    [ "$missing" -eq 0 ] ||
-        die "$missing functions in $GOS_SYMBOL_ORDER are not in this build; rerun scripts/link-order.sh"
+# The functions a session runs, laid out together so they fill few pages.
+# build-data/link-order.txt names them by key (scripts/link-order.sh writes
+# it); this build's names for those keys make the order its relink follows.
+# Orders are profiled on Linux, where the engine releases startup code.
+order="$root/build-data/link-order.txt"
+if [ "$platform" = linux ] && [ -f "$order" ]; then
+    need nm awk
+    nm --defined-only "$binary" | awk '$2 ~ /^[tTwW]$/ { print $3 }' |
+        awk -f "$root/scripts/symbol-key.awk" > "$stage/symbols"
+    awk 'NR == FNR { names[$1] = names[$1] $2 "\n"; next }
+         $1 in names { printf "%s", names[$1]; delete names[$1]; found++ }
+         END { printf "link order: %d of %d functions in this build\n", found, FNR > "/dev/stderr" }' \
+        "$stage/symbols" "$order" > "$stage/link-order.txt"
+    grep -qx gui_engine_startup_code_end "$stage/link-order.txt" ||
+        die "$order does not match this build; rerun scripts/link-order.sh"
+    (cd "$root" && GOS_SYMBOL_ORDER="$stage/link-order.txt" \
+        gos build --release . --out-dir "$stage/build" >&2)
 fi
 if [ "$platform" = linux ] && ldd "$binary" | grep -q "not found"; then
     die "unresolved native libraries: $(ldd "$binary" | grep "not found")"

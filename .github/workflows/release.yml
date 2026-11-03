@@ -87,7 +87,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build pkg-config llvm-18 desktop-file-utils \
-            dpkg-dev rpm valgrind xvfb xserver-xephyr dbus \
+            dpkg-dev rpm \
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
             libxss-dev libxfixes-dev libxtst-dev libxkbcommon-dev libwayland-dev \
             wayland-protocols libegl-dev libgl-dev libdecor-0-dev
@@ -129,14 +129,6 @@ jobs:
         run: |
           sh goose-libs/gui-gos/tools/fetch.sh
           (cd waftty && gos fetch)
-
-      # Symbol names differ between builds made in different places, so the
-      # link order is profiled from this job's own build.
-      - name: Profile the link order (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          xvfb-run -a bash waftty/scripts/link-order.sh "$RUNNER_TEMP/link-order.txt"
-          echo "GOS_SYMBOL_ORDER=$RUNNER_TEMP/link-order.txt" >> "$GITHUB_ENV"
 
       - name: Build and package
         run: bash waftty/scripts/package.sh --installers dist

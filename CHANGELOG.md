@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.3 - Smaller memory use on Linux
+
+- On Linux, waftty keeps about 5 MB less of its code in memory while it runs: 3.3 MB at idle instead of 8.2 MB.
+- Building from source with `install.sh` lays out the code the same way the release packages do.
+
 ## 0.2.2 - macOS installer fix
 
 - The macOS installer links the `waftty` command into `/opt/homebrew/bin` only when Homebrew is installed, instead of creating that folder.

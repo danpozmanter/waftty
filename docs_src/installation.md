@@ -106,8 +106,9 @@ packages, make the folder yourself:
 ## Building from Source
 
 waftty needs [Gossamer](https://github.com/gossamer-lang/gossamer) 0.75.13 or
-newer, a Rust toolchain, and LLVM for native builds. The GUI libraries are
-expected beside the checkout at `../goose-libs`.
+newer, Rust 1.95.0 through rustup (`rustup toolchain install 1.95.0`), and
+LLVM for native builds. The GUI libraries are expected beside the checkout at
+`../goose-libs`.
 
 ```sh
 git clone https://github.com/danpozmanter/waftty
