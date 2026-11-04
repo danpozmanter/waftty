@@ -15,6 +15,8 @@ use gui::widgets::find::FindBar
 
 use encodings
 use info
+use panes
+use panes::Layout
 use schemes
 use settings
 use settings::Settings
@@ -44,6 +46,9 @@ pub struct Tab {
     pub fixed_title: String
     /// The tab stays open once its program exits, showing its last screen.
     pub hold: bool
+    /// For a pane split off a tab, the key of the tab the strip shows it
+    /// under; empty for a tab of its own.
+    pub group: String
 }
 
 impl Tab {
@@ -91,6 +96,11 @@ pub struct Window {
     pub focused: bool
     /// The find bar under the window's terminal.
     pub find: FindBar
+    /// How each split tab, by key, divides between its panes; a tab with
+    /// one pane has none.
+    pub layouts: Map<String, Layout>
+    /// The pane each split tab, by key, last had focused.
+    pub pane_focus: Map<String, String>
 }
 
 impl Window {
@@ -117,11 +127,42 @@ impl Window {
     pub fn strip_id(&self) -> String {
         f"tabs:{self.key}"
     }
+
+    /// The tabs as the strip lists them, the panes split off them left out.
+    pub fn strip(&self) -> Vec<Tab> {
+        self.tabs.filter(|t| t.group.is_empty())
+    }
+
+    /// The key of the strip tab pane `key` belongs to.
+    pub fn leader_of(&self, key: String) -> String {
+        match self.index_of(key) {
+            Some(at) if !self.tabs[at].group.is_empty() => self.tabs[at].group
+            _ => key
+        }
+    }
+
+    /// The strip index of the tab pane `key` belongs to.
+    pub fn strip_index_of(&self, key: String) -> Option<i64> {
+        let leader = self.leader_of(key)
+        self.strip().iter().position(|t| t.key == leader)
+    }
+
+    /// The keys of strip tab `leader` and the panes split off it.
+    pub fn members(&self, leader: String) -> Vec<String> {
+        self.tabs.filter(|t| t.key == leader || t.group == leader).map(|t| t.key)
+    }
+
+    /// The pane strip tab `leader` shows focused: the one the user was in.
+    pub fn shown(&self, leader: String) -> Option<Tab> {
+        let key = self.pane_focus.get(leader).unwrap_or(leader)
+        let at = self.index_of(key).or(self.index_of(leader))?
+        Some(self.tabs[at])
+    }
 }
 
 /// A window `key` with no tabs yet.
 pub fn window(key: String) -> Window {
-    Window { key: key, tabs: #[], active: "", previous: "", fullscreen: false, zoom: 0.0, focused: true, find: FindBar::new(f"find-{key}") }
+    Window { key: key, tabs: #[], active: "", previous: "", fullscreen: false, zoom: 0.0, focused: true, find: FindBar::new(f"find-{key}"), layouts: Map::new(), pane_focus: Map::new() }
 }
 
 /// The match the last search selected, and the tab it is in.
@@ -162,6 +203,12 @@ pub struct Model {
     /// Variables every tab's program gets, as the desktop set those waftty
     /// changed for itself.
     pub program_env: Vec<(String, String)>
+    /// The window that asked for a check still running, or "".
+    pub checking_window: String
+    /// Whether the main window is a drop-down (`--drop-down`), and whether
+    /// its shortcut has hidden it.
+    pub drop_down: bool
+    pub drop_down_hidden: bool
 }
 
 /// A model with one window, "main", and no tabs yet.
@@ -182,6 +229,9 @@ pub fn new(s: Settings) -> Model {
         editing_scheme: ""
         saving: None
         program_env: #[]
+        checking_window: ""
+        drop_down: false
+        drop_down_hidden: false
     }
 }
 
@@ -189,6 +239,10 @@ pub fn new(s: Settings) -> Model {
 pub fn window_index(m: Model, key: String) -> Option<i64> {
     m.windows.iter().position(|w| w.key == key)
 }
+
+/// The workspace every window's tab strip shares, so a tab can move between
+/// them.
+pub const TAB_WORKSPACE: String = "waftty-tabs"
 
 /// The window a tab strip id names.
 pub fn strip_window(strip: String) -> String {
@@ -221,6 +275,32 @@ pub fn tab_location(m: Model, key: String) -> Option<(i64, i64)> {
 
 /// Opens a tab running `command` at the end of window `w` and shows it.
 pub fn open_tab(m: &mut Model, w: i64, command: gui::terminal::Command) -> Result<(), errors::Error> {
+    let tab = start(m, command, "")?
+    m.windows[w].tabs.push(tab)
+    activate(m, w, tab.key)
+    Ok(())
+}
+
+/// Splits the pane window `w` shows, giving `command` a pane to its right
+/// (`across`) or below it, and focuses the new pane.
+pub fn open_pane(m: &mut Model, w: i64, command: gui::terminal::Command, across: bool) -> Result<(), errors::Error> {
+    let target = m.windows[w].active
+    let leader = m.windows[w].leader_of(target)
+    if m.windows[w].index_of(target).is_none() { return Ok(()) }
+    let tab = start(m, command, leader)?
+    let members = m.windows[w].members(leader)
+    let last = m.windows[w].index_of(members[members.len() - 1]).unwrap_or(m.windows[w].tabs.len() - 1)
+    let _ = m.windows[w].tabs.insert(last + 1, tab)
+    let layout = m.windows[w].layouts.get(leader).unwrap_or(Layout::Pane(leader))
+    m.windows[w].layouts[leader] = panes::split(layout, target, tab.key, across)
+    focus_pane(m, w, tab.key)
+    gui::perform(Effect::FocusIn(m.windows[w].key, tab.view_id()))
+    Ok(())
+}
+
+// A terminal running `command` with the settings' options, as a tab of
+// `group` ("" for a tab of its own).
+fn start(m: &mut Model, command: gui::terminal::Command, group: String) -> Result<Tab, errors::Error> {
     let s = m.settings
     let terminal = Terminal::open(Options { scrollback: s.scrollback, ..Options::default() })?
     let started = if s.encoding == encodings::DEFAULT { Ok(()) } else { terminal.set_encoding(s.encoding) }
@@ -235,9 +315,7 @@ pub fn open_tab(m: &mut Model, w: i64, command: gui::terminal::Command) -> Resul
     }
     let key = f"tab-{m.next}"
     m.next += 1
-    m.windows[w].tabs.push(Tab { key: key, terminal: terminal, title: "", name: program_name(command.program), encoding: s.encoding, pinned: false, link: "", attention: false, fixed_title: "", hold: false })
-    activate(m, w, key)
-    Ok(())
+    Ok(Tab { key: key, terminal: terminal, title: "", name: program_name(command.program), encoding: s.encoding, pinned: false, link: "", attention: false, fixed_title: "", hold: false, group: group })
 }
 
 /// The name a program's path gives it: "zsh" for /bin/zsh, "pwsh" for
@@ -256,10 +334,18 @@ pub fn window_size(s: Settings, points: f64) -> (i64, i64) {
     (width.max(360), height.max(220))
 }
 
+/// The key for another window: the lowest numbered one no open window has.
+/// The desktop remembers each key's size and place, so reusing keys keeps
+/// that memory to as many windows as were ever open at once.
+pub fn free_window_key(m: Model) -> String {
+    let mut n = 1
+    while m.windows.any(|w| w.key == f"window-{n}") { n += 1 }
+    f"window-{n}"
+}
+
 /// Opens a window with one tab running `command`.
 pub fn open_window(m: &mut Model, command: gui::terminal::Command) -> Result<(), errors::Error> {
-    let key = f"window-{m.next}"
-    m.next += 1
+    let key = free_window_key(*m)
     m.windows.push(window(key))
     let w = m.windows.len() - 1
     let width, height = window_size(m.settings, m.settings.font_size)
@@ -272,16 +358,46 @@ pub fn open_window(m: &mut Model, command: gui::terminal::Command) -> Result<(),
     Ok(())
 }
 
-/// Shows tab `key` of window `w`, remembering the one it replaces.
+/// Shows tab `key` of window `w`, at the pane it last had focused,
+/// remembering the one it replaces.
 pub fn activate(m: &mut Model, w: i64, key: String) {
+    let pane = match m.windows[w].shown(m.windows[w].leader_of(key)) {
+        Some(t) if m.windows[w].leader_of(key) == key => t.key
+        _ => key
+    }
+    let Some(at) = m.windows[w].index_of(pane) else { return }
+    focus_pane(m, w, pane)
+    gui::perform(Effect::FocusIn(m.windows[w].key, m.windows[w].tabs[at].view_id()))
+}
+
+/// Makes pane `key` of window `w` the one its commands act on, as when it
+/// takes keyboard focus, remembering the pane it replaces.
+pub fn focus_pane(m: &mut Model, w: i64, key: String) {
     let Some(at) = m.windows[w].index_of(key) else { return }
     if m.windows[w].active != key {
         m.windows[w].previous = m.windows[w].active
         m.windows[w].active = key
     }
+    let leader = m.windows[w].leader_of(key)
+    if m.windows[w].layouts.contains_key(leader) { m.windows[w].pane_focus[leader] = key }
     m.windows[w].tabs[at].attention = false
     retitle(m, w)
+}
+
+/// Focuses the pane `step` places from the focused one in its tab.
+pub fn step_pane(m: &mut Model, w: i64, step: i64) {
+    let active = m.windows[w].active
+    let Some(layout) = m.windows[w].layouts.get(m.windows[w].leader_of(active)) else { return }
+    let next = panes::step_from(layout, active, step)
+    let Some(at) = m.windows[w].index_of(next) else { return }
+    focus_pane(m, w, next)
     gui::perform(Effect::FocusIn(m.windows[w].key, m.windows[w].tabs[at].view_id()))
+}
+
+/// Gives the split at `path` of strip tab `leader` in window `w` the share
+/// `ratio`.
+pub fn resize_split(m: &mut Model, w: i64, leader: String, path: String, ratio: f64) {
+    if let Some(layout) = m.windows[w].layouts.get(leader) { m.windows[w].layouts[leader] = panes::resize(layout, path, ratio) }
 }
 
 /// Brings window `w`'s title up to date with the tab it shows.
@@ -291,10 +407,11 @@ pub fn retitle(m: &mut Model, w: i64) {
 
 /// Shows the tab `step` places from the active one, wrapping around.
 pub fn cycle(m: &mut Model, w: i64, step: i64) {
-    let n = m.windows[w].tabs.len()
-    let Some(at) = m.windows[w].index_of(m.windows[w].active) else { return }
+    let strip = m.windows[w].strip()
+    let n = strip.len()
+    let Some(at) = m.windows[w].strip_index_of(m.windows[w].active) else { return }
     if n < 2 { return }
-    activate(m, w, m.windows[w].tabs[(at + step).rem_euclid(n)].key)
+    activate(m, w, strip[(at + step).rem_euclid(n)].key)
 }
 
 /// Shows the tab that was active before the current one.
@@ -332,33 +449,116 @@ pub fn toggle_fullscreen(m: &mut Model, w: i64) {
     gui::perform(Effect::SetFullscreen(m.windows[w].key, m.windows[w].fullscreen))
 }
 
-/// Moves tab `key` of window `w` to index `to`; pinned tabs stay ahead of
-/// the others.
+/// Moves tab `key` of window `w`, with its panes, to strip index `to`;
+/// pinned tabs stay ahead of the others.
 pub fn move_tab(m: &mut Model, w: i64, key: String, to: i64) {
-    let Some(from) = m.windows[w].index_of(key) else { return }
-    let tabs = m.windows[w].tabs
-    if to < 0 || to >= tabs.len() || to == from || tabs[from].pinned != tabs[to].pinned { return }
-    let tab = tabs[from]
-    let _ = m.windows[w].tabs.remove(from)
-    let _ = m.windows[w].tabs.insert(to, tab)
+    let mut strip = m.windows[w].strip()
+    let Some(from) = strip.iter().position(|t| t.key == key) else { return }
+    if to < 0 || to >= strip.len() || to == from || strip[from].pinned != strip[to].pinned { return }
+    let tab = strip[from]
+    let _ = strip.remove(from)
+    let _ = strip.insert(to, tab)
+    reorder(m, w, strip.map(|t| t.key))
+}
+
+/// Moves strip tab `key` of window `from`, with its panes, into window `to`
+/// at strip index `at`, where it is shown; pinned tabs stay ahead of the
+/// others, and a window it leaves empty closes.
+pub fn transfer_tab(m: &mut Model, from: i64, key: String, to: i64, at: i64) {
+    if from == to { return move_tab(m, from, key, at) }
+    let source = m.windows[from]
+    let leader = source.leader_of(key)
+    let members = source.members(leader)
+    if members.is_empty() { return }
+    let moving = source.tabs.filter(|t| members.contains(t.key))
+    m.windows[from].tabs = source.tabs.filter(|t| !members.contains(t.key))
+    if let Some(layout) = source.layouts.get(leader) {
+        let _ = m.windows[from].layouts.remove(leader)
+        m.windows[to].layouts[leader] = layout
+    }
+    if let Some(pane) = source.pane_focus.get(leader) {
+        let _ = m.windows[from].pane_focus.remove(leader)
+        m.windows[to].pane_focus[leader] = pane
+    }
+    let mut leaders = m.windows[to].strip().map(|t| t.key)
+    let pinned = m.windows[to].strip().filter(|t| t.pinned).len()
+    let place = if moving[0].pinned { at.clamp(0, pinned) } else { at.clamp(pinned, leaders.len()) }
+    let _ = leaders.insert(place, leader)
+    for tab in moving { m.windows[to].tabs.push(tab) }
+    reorder(m, to, leaders)
+    let target = m.windows[to].key
+    activate(m, to, leader)
+    let Some(from) = window_index(*m, source.key) else { return }
+    if m.windows[from].tabs.is_empty() {
+        close_window(m, from)
+    } else {
+        if members.contains(m.windows[from].previous) { m.windows[from].previous = "" }
+        if members.contains(m.windows[from].active) {
+            let previous = m.windows[from].previous
+            let strip = m.windows[from].strip()
+            let next = if previous.is_empty() { strip[0.max(source.strip_index_of(leader).unwrap_or(0) - 1).min(strip.len() - 1)].key } else { previous }
+            m.windows[from].active = ""
+            activate(m, from, next)
+            m.windows[from].previous = ""
+        }
+    }
+    gui::perform(Effect::SetWindowVisible(target, true))
+}
+
+/// Moves strip tab `key` of window `from`, with its panes, into a window
+/// of its own, placed at desktop point `at` when given. The only tab of a
+/// window takes the window there instead.
+pub fn detach_tab(m: &mut Model, from: i64, key: String, at: Option<(i64, i64)>) {
+    if m.windows[from].strip().len() < 2 {
+        if let Some((x, y)) = at { gui::perform(Effect::SetWindowPosition(m.windows[from].key, x, y)) }
+        return
+    }
+    let fresh = free_window_key(*m)
+    m.windows.push(window(fresh))
+    let to = m.windows.len() - 1
+    m.windows[to].zoom = m.windows[from].zoom
+    let width, height = window_size(m.settings, font_size(*m, to))
+    gui::perform(Effect::OpenWindow { key: fresh, title: info::NAME, width: width, height: height })
+    if let Some((x, y)) = at { gui::perform(Effect::SetWindowPosition(fresh, x, y)) }
+    transfer_tab(m, from, key, to, 0)
 }
 
 /// Pins or unpins tab `key` of window `w`, keeping pinned tabs first in the
 /// order they were pinned.
 pub fn pin(m: &mut Model, w: i64, key: String, pinned: bool) {
-    let Some(from) = m.windows[w].index_of(key) else { return }
-    let mut tab = m.windows[w].tabs[from]
-    if tab.pinned == pinned { return }
-    tab.pinned = pinned
-    let _ = m.windows[w].tabs.remove(from)
-    let at = m.windows[w].tabs.iter().position(|t| !t.pinned).unwrap_or(m.windows[w].tabs.len())
-    let _ = m.windows[w].tabs.insert(at, tab)
+    let Some(at) = m.windows[w].index_of(key) else { return }
+    if m.windows[w].tabs[at].pinned == pinned { return }
+    m.windows[w].tabs[at].pinned = pinned
+    let mut strip = m.windows[w].strip()
+    let Some(from) = strip.iter().position(|t| t.key == key) else { return }
+    let tab = strip[from]
+    let _ = strip.remove(from)
+    let to = strip.iter().position(|t| !t.pinned).unwrap_or(strip.len())
+    let _ = strip.insert(to, tab)
+    reorder(m, w, strip.map(|t| t.key))
+}
+
+// Lays window `w`'s tabs out in the strip order `leaders`, each followed by
+// the panes split off it.
+fn reorder(m: &mut Model, w: i64, leaders: Vec<String>) {
+    let window = m.windows[w]
+    let mut tabs = #[]
+    for leader in leaders {
+        for key in window.members(leader) {
+            if let Some(at) = window.index_of(key) { tabs.push(window.tabs[at]) }
+        }
+    }
+    m.windows[w].tabs = tabs
 }
 
 /// Closes tab `t` of window `w` and its program; a window left without
 /// tabs closes too.
 pub fn close_tab(m: &mut Model, w: i64, t: i64) {
     let tab = m.windows[w].tabs[t]
+    let leader = m.windows[w].leader_of(tab.key)
+    if let Some(layout) = m.windows[w].layouts.get(leader) {
+        return close_pane(m, w, t, leader, layout)
+    }
     tab.terminal.close()
     let _ = m.windows[w].tabs.remove(t)
     if m.windows[w].tabs.is_empty() {
@@ -372,6 +572,38 @@ pub fn close_tab(m: &mut Model, w: i64, t: i64) {
         m.windows[w].active = ""
         activate(m, w, next)
         m.windows[w].previous = ""
+    } else {
+        retitle(m, w)
+    }
+}
+
+// Closes pane `t` of split tab `leader`, its sibling taking its space. A
+// leader that closes hands the tab, its pin and its place to the first pane
+// left.
+fn close_pane(m: &mut Model, w: i64, t: i64, leader: String, layout: Layout) {
+    let tab = m.windows[w].tabs[t]
+    tab.terminal.close()
+    let _ = m.windows[w].tabs.remove(t)
+    let rest = panes::remove(layout, tab.key).unwrap_or(Layout::Pane(leader))
+    let order = panes::panes(rest)
+    let head = if tab.key == leader { order[0] } else { leader }
+    let _ = m.windows[w].layouts.remove(leader)
+    let _ = m.windows[w].pane_focus.remove(leader)
+    let mut i = 0
+    while i < m.windows[w].tabs.len() {
+        let k = m.windows[w].tabs[i].key
+        if order.contains(k) {
+            m.windows[w].tabs[i].group = if k == head || order.len() == 1 { "" } else { head }
+            if k == head && tab.key == leader { m.windows[w].tabs[i].pinned = tab.pinned }
+        }
+        i += 1
+    }
+    if order.len() > 1 { m.windows[w].layouts[head] = rest }
+    if m.windows[w].previous == tab.key { m.windows[w].previous = "" }
+    if m.windows[w].active == tab.key {
+        let next = order[0]
+        m.windows[w].active = ""
+        activate(m, w, next)
     } else {
         retitle(m, w)
     }
@@ -402,20 +634,45 @@ fn would_end(m: Model, tabs: Vec<Tab>) -> Vec<String> {
 }
 
 // "vim is still running", or the programs named together.
+// The button that closes over running programs, ending them; its E answers
+// from the keyboard.
+const EXIT_ANYWAY: String = "Exit Anyway"
+
+// The title of a question about closing over running programs.
+fn running_title(jobs: Vec<String>) -> String {
+    if jobs.len() == 1 { "A program is still running" } else { "Programs are still running" }
+}
+
 fn still_running(jobs: Vec<String>) -> String {
     let named = if jobs.len() == 1 { jobs[0] } else if jobs.len() == 2 { f"{jobs[0]} and {jobs[1]}" } else { f"{jobs[0]}, {jobs[1]} and {jobs.len() - 2} more" }
     f"{named} {if jobs.len() == 1 { "is" } else { "are" }} still running"
 }
 
-/// Closes tab `key`, asking first when a program runs in it.
+/// Closes the tab holding pane `key`, with all its panes, asking first when
+/// a program runs in them.
 pub fn request_close_tab(m: &mut Model, key: String) {
+    let Some(loc) = tab_location(*m, key) else { return }
+    let w, _ = loc
+    let keys = m.windows[w].members(m.windows[w].leader_of(key))
+    let jobs = would_end(*m, m.windows[w].tabs.filter(|t| keys.contains(t.key)))
+    // A tab of one pane is confirmed by its key alone, as `close-tab:` reads it.
+    let id = if keys.len() == 1 { f"close-tab:{keys[0]}" } else { f"close-tabs:{keys.join(",")}" }
+    if jobs.is_empty() {
+        close_tabs(m, keys)
+    } else {
+        gui::perform(Effect::OpenDialogIn(m.windows[w].key, request::confirm(id, running_title(jobs), f"{still_running(jobs)}. Closing the tab ends it.", EXIT_ANYWAY, true)))
+    }
+}
+
+/// Closes pane `key` alone, asking first when a program runs in it.
+pub fn request_close_pane(m: &mut Model, key: String) {
     let Some(loc) = tab_location(*m, key) else { return }
     let w, t = loc
     let jobs = would_end(*m, #[m.windows[w].tabs[t]])
     if jobs.is_empty() {
         close_tab(m, w, t)
     } else {
-        gui::perform(Effect::OpenDialogIn(m.windows[w].key, request::confirm(f"close-tab:{key}", "Close this tab?", f"{still_running(jobs)}. Closing the tab ends it.", "Close Tab", true)))
+        gui::perform(Effect::OpenDialogIn(m.windows[w].key, request::confirm(f"close-tab:{key}", running_title(jobs), f"{still_running(jobs)}. Closing the pane ends it.", EXIT_ANYWAY, true)))
     }
 }
 
@@ -426,7 +683,7 @@ pub fn request_close_window(m: &mut Model, w: i64) {
     if jobs.is_empty() {
         close_window(m, w)
     } else {
-        gui::perform(Effect::OpenDialogIn(window.key, request::confirm(f"close-window:{window.key}", "Close this window?", f"{still_running(jobs)}. Closing the window ends them.", "Close Window", true)))
+        gui::perform(Effect::OpenDialogIn(window.key, request::confirm(f"close-window:{window.key}", running_title(jobs), f"{still_running(jobs)}. Closing the window ends {if jobs.len() == 1 { "it" } else { "them" }}.", EXIT_ANYWAY, true)))
     }
 }
 
@@ -439,7 +696,7 @@ pub fn request_quit(m: &mut Model) {
         close_all(m)
     } else {
         let w = m.windows.iter().position(|w| w.focused).unwrap_or(0)
-        gui::perform(Effect::OpenDialogIn(m.windows[w].key, request::confirm("close-all", "Quit waftty?", f"{still_running(jobs)}. Quitting ends them.", "Quit", true)))
+        gui::perform(Effect::OpenDialogIn(m.windows[w].key, request::confirm("close-all", running_title(jobs), f"{still_running(jobs)}. Quitting waftty ends {if jobs.len() == 1 { "it" } else { "them" }}.", EXIT_ANYWAY, true)))
     }
 }
 
@@ -450,13 +707,17 @@ pub fn close_all(m: &mut Model) {
     while !m.windows.is_empty() { close_window(m, m.windows.len() - 1) }
 }
 
-/// Closes the tabs of window `w` that `which` picks from their indexes,
-/// leaving pinned tabs, asking first when a program runs in them.
+/// Closes the tabs of window `w` that `which` picks from their strip
+/// indexes, with their panes, leaving pinned tabs, asking first when a
+/// program runs in them.
 pub fn request_close_tabs(m: &mut Model, w: i64, which: Fn(i64) -> bool) {
+    let strip = m.windows[w].strip()
     let mut keys = #[]
     let mut i = 0
-    while i < m.windows[w].tabs.len() {
-        if which(i) && !m.windows[w].tabs[i].pinned { keys.push(m.windows[w].tabs[i].key) }
+    while i < strip.len() {
+        if which(i) && !strip[i].pinned {
+            for key in m.windows[w].members(strip[i].key) { keys.push(key) }
+        }
         i += 1
     }
     let tabs = m.windows[w].tabs.filter(|t| keys.contains(t.key))
@@ -464,7 +725,7 @@ pub fn request_close_tabs(m: &mut Model, w: i64, which: Fn(i64) -> bool) {
     if jobs.is_empty() {
         close_tabs(m, keys)
     } else {
-        gui::perform(Effect::OpenDialogIn(m.windows[w].key, request::confirm(f"close-tabs:{keys.join(",")}", "Close these tabs?", f"{still_running(jobs)}. Closing the tabs ends them.", "Close Tabs", true)))
+        gui::perform(Effect::OpenDialogIn(m.windows[w].key, request::confirm(f"close-tabs:{keys.join(",")}", running_title(jobs), f"{still_running(jobs)}. Closing the tabs ends {if jobs.len() == 1 { "it" } else { "them" }}.", EXIT_ANYWAY, true)))
     }
 }
 
@@ -501,7 +762,7 @@ fn save_session(m: Model) {
         let _ = fs::remove_file(session_file())
         return
     }
-    let saved = Session { windows: m.windows.map(|w| SavedWindow { folders: w.tabs.map(|t| t.terminal.cwd().unwrap_or("")) }) }
+    let saved = Session { windows: m.windows.map(|w| SavedWindow { folders: w.strip().map(|t| t.terminal.cwd().unwrap_or("")) }) }
     let _ = fs::create_dir_all(services::config_dir(info::APP_ID))
     let _ = fs::write(session_file(), json::encode(saved).bytes())
 }
@@ -570,6 +831,17 @@ mod tests {
     use settings::Settings
 
     use super::{SavedWindow, Session}
+
+    #[test]
+    fn another_window_takes_the_lowest_number_no_open_window_has() {
+        let mut m = super::new(Settings::default())
+        assert_eq(super::free_window_key(m), "window-1")
+        m.windows.push(super::window("window-1"))
+        m.windows.push(super::window("window-3"))
+        assert_eq(super::free_window_key(m), "window-2")
+        m.windows.push(super::window("window-2"))
+        assert_eq(super::free_window_key(m), "window-4")
+    }
 
     #[test]
     fn zoom_stops_at_the_font_sizes_settings_offers_and_normal_size_undoes_it() {

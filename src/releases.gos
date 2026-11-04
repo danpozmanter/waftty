@@ -1,0 +1,113 @@
+// Check for Updates: the session's worker asks GitHub for the latest release
+// and answers with `UiMsg::Worked(OWNER, ..)`, which `answer` reads.
+
+use std::encoding::json
+
+use gui
+use gui::Effect
+use gui::services::work::{Operation, Outcome, Work}
+
+use info
+
+/// The work owner a check's answer arrives under.
+pub const OWNER: String = "releases"
+
+/// Where GitHub describes the newest published release.
+pub const LATEST_URL: String = "https://api.github.com/repos/danpozmanter/waftty/releases/latest"
+
+const DEADLINE_MS: i64 = 10_000
+
+/// The answer to one check.
+#[derive(Debug, PartialEq)]
+pub enum Release {
+    /// A newer release, by version, and the page it downloads from.
+    Newer { version: String, page: String }
+    /// The running version is the latest.
+    Current
+    /// The check failed, and why.
+    Failed(String)
+}
+
+/// Asks the session's worker for the latest release.
+pub fn check() {
+    // GitHub's API refuses requests without a User-Agent.
+    let headers = #[("User-Agent", f"{info::NAME}/{info::VERSION}"), ("Accept", "application/vnd.github+json")]
+    let mut work = Work::new(OWNER, 1, 0, Operation::Fetch(LATEST_URL, headers))
+    work.timeout_ms = DEADLINE_MS
+    gui::perform(Effect::Work(work))
+}
+
+/// What the worker's `outcome` says about the latest release.
+pub fn answer(outcome: Outcome) -> Release {
+    match outcome {
+        Outcome::Fetched(200, body) => judge(body, info::VERSION)
+        Outcome::Fetched(status, _) => Release::Failed(f"GitHub answered {status}.")
+        Outcome::Failed(why) => Release::Failed(f"GitHub couldn't be reached: {why}")
+        _ => Release::Failed("The check was cancelled.")
+    }
+}
+
+/// How the release GitHub describes in `body` compares with `current`.
+pub fn judge(body: String, current: String) -> Release {
+    let Ok(doc) = json::parse(body) else { return Release::Failed("GitHub's answer couldn't be read.") }
+    let Some(tag) = doc.get("tag_name").and_then(|t| t.as_str()) else { return Release::Failed("GitHub's answer names no release.") }
+    let version = tag.trim_start_matches("v")
+    if !newer(version, current) { return Release::Current }
+    let page = doc.get("html_url").and_then(|u| u.as_str()).unwrap_or(f"https://github.com/danpozmanter/waftty/releases/tag/{tag}")
+    Release::Newer { version: version, page: page }
+}
+
+/// Whether version `candidate` comes after `current`, part by part.
+pub fn newer(candidate: String, current: String) -> bool {
+    parts(candidate) > parts(current)
+}
+
+// The leading digits of each dot-separated part; "1.2.3-rc1" is [1, 2, 3].
+fn parts(version: String) -> Vec<i64> {
+    version.split(".").map(|part| {
+        let mut n = 0
+        for c in part {
+            let Some(d) = c.to_digit(10) else { break }
+            n = n * 10 + d as i64
+        }
+        n
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Release
+
+    #[test]
+    fn a_later_part_is_newer_whatever_its_width() {
+        assert(super::newer("0.3.10", "0.3.9"))
+        assert(super::newer("1.0.0", "0.9.9"))
+        assert(!super::newer("0.3.1", "0.3.1"))
+        assert(!super::newer("0.2.9", "0.3.0"))
+        assert(super::newer("0.3.2-rc1", "0.3.1"))
+    }
+
+    #[test]
+    fn a_newer_tag_offers_its_release_page() {
+        let body = "{\"tag_name\": \"v0.4.0\", \"html_url\": \"https://github.com/danpozmanter/waftty/releases/tag/v0.4.0\"}"
+        assert_eq(super::judge(body, "0.3.1"), Release::Newer { version: "0.4.0", page: "https://github.com/danpozmanter/waftty/releases/tag/v0.4.0" })
+    }
+
+    #[test]
+    fn the_same_or_an_older_tag_is_current() {
+        assert_eq(super::judge("{\"tag_name\": \"v0.3.1\"}", "0.3.1"), Release::Current)
+        assert_eq(super::judge("{\"tag_name\": \"v0.3.0\"}", "0.3.1"), Release::Current)
+    }
+
+    #[test]
+    fn a_status_other_than_ok_or_a_failed_fetch_is_a_failed_check() {
+        assert_eq(super::answer(super::Outcome::Fetched(404, "")), Release::Failed("GitHub answered 404."))
+        assert_eq(super::answer(super::Outcome::Failed("no route")), Release::Failed("GitHub couldn't be reached: no route"))
+    }
+
+    #[test]
+    fn an_answer_without_a_tag_fails() {
+        assert_eq(super::judge("{\"message\": \"Not Found\"}", "0.3.1"), Release::Failed("GitHub's answer names no release."))
+        assert_eq(super::judge("not json", "0.3.1"), Release::Failed("GitHub's answer couldn't be read."))
+    }
+}

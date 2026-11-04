@@ -14,15 +14,19 @@ use gui::terminal::Event
 use windowing
 
 use commands
+use drop_down
 use info
 use model
 use model::Model
 use prompts
+use releases
+use releases::Release
 use schemes
 use search
 use search::Step
 use settings
 use shortcuts
+use view
 
 /// The model after `msg`.
 pub fn update(m: Model, msg: UiMsg) -> Model {
@@ -42,16 +46,32 @@ pub fn update(m: Model, msg: UiMsg) -> Model {
             }
         }
         UiMsg::TabAction(strip, key, action) => tab_action(&mut n, model::strip_window(strip), key, action)
+        UiMsg::TabMove(strip, key, target, at) => {
+            if let Some(from) = model::window_index(n, model::strip_window(strip)) &&
+                let Some(to) = model::window_index(n, model::strip_window(target)) {
+                model::transfer_tab(&mut n, from, key, to, at)
+            }
+        }
+        UiMsg::TabDetach(strip, key, x, y) => {
+            if let Some(from) = model::window_index(n, model::strip_window(strip)) { model::detach_tab(&mut n, from, key, Some((x, y))) }
+        }
         UiMsg::CloseRequested(window) => {
             if let Some(w) = model::window_index(n, window) { model::request_close_window(&mut n, w) }
         }
         UiMsg::WindowFocus(window, focused) => {
             if let Some(w) = model::window_index(n, window) {
                 n.windows[w].focused = focused
+                if focused && n.windows[w].key == "main" { n.drop_down_hidden = false }
                 if focused && let Some(t) = n.windows[w].index_of(n.windows[w].active) { n.windows[w].tabs[t].attention = false }
             }
         }
         UiMsg::QuitRequested => model::request_quit(&mut n)
+        UiMsg::Split(id, ratio) => {
+            if let Some(found) = view::split_of(id) {
+                let window, leader, path = found
+                if let Some(w) = model::window_index(n, window) { model::resize_split(&mut n, w, leader, path, ratio) }
+            }
+        }
         UiMsg::FontsLoaded(owner, records) => {
             if owner == "settings" {
                 let mut families: Vec<String> = #[]
@@ -67,6 +87,12 @@ pub fn update(m: Model, msg: UiMsg) -> Model {
         }
         UiMsg::DialogPreview(id, Outcome::Action(action)) if id == "settings" => settings_action(&mut n, action)
         UiMsg::Dialog(id, outcome) | UiMsg::DialogApplied(id, outcome) => dialog(&mut n, id, outcome)
+        UiMsg::Worked(owner, _, _, outcome) if owner == releases::OWNER => release_checked(&mut n, releases::answer(outcome))
+        UiMsg::Hotkey(id) if id == drop_down::HOTKEY && n.drop_down => drop_down::toggle(&mut n)
+        UiMsg::DockResized(window, width, height) if n.drop_down && window == "main" => drop_down::resized(&mut n, width, height)
+        UiMsg::Task(id, gui::TaskOutcome::Failed(why)) if id == drop_down::HOTKEY => {
+            model::report(n.windows[0].key, "Couldn't set the drop-down shortcut", errors::new(f"{why}. Choose another in Settings > Drop-Down."))
+        }
         _ => ()
     }
     n
@@ -127,7 +153,26 @@ fn dialog(m: &mut Model, id: String, outcome: Outcome) {
         if let Some(w) = model::window_index(*m, id.substring(13, id.byte_len())) { model::close_window(m, w) }
     } else if accepted && id == "close-all" {
         model::close_all(m)
+    } else if accepted && id.starts_with(UPDATE_DIALOG) {
+        gui::perform(Effect::OpenUrl(id.substring(UPDATE_DIALOG.byte_len(), id.byte_len())))
     }
+}
+
+// The confirmation that offers a newer release; its id carries the page.
+const UPDATE_DIALOG: String = "update:"
+
+// Shows the answer to Check for Updates in the window that asked, or the
+// first window when that one has closed.
+fn release_checked(m: &mut Model, release: Release) {
+    let asked = m.checking_window
+    m.checking_window = ""
+    let window = if model::window_index(*m, asked).is_some() { asked } else if !m.windows.is_empty() { m.windows[0].key } else { return }
+    let shown = match release {
+        Release::Newer { version, page } => request::confirm(f"{UPDATE_DIALOG}{page}", "Update Available", f"waftty {version} is available. This is waftty {info::VERSION}.", "Download", false)
+        Release::Current => request::info("update", "No Update Available", f"waftty {info::VERSION} is the latest version.")
+        Release::Failed(why) => request::error("update", "Couldn't Check for Updates", why, why, false)
+    }
+    gui::perform(Effect::OpenDialogIn(window, shown))
 }
 
 // Runs command `id` in window `window`.
@@ -143,7 +188,7 @@ fn command(m: &mut Model, window: String, id: String) {
         return model::activate(m, w, key)
     }
     if let Some(n) = commands::number_of(id) {
-        let tabs = m.windows[w].tabs
+        let tabs = m.windows[w].strip()
         if tabs.is_empty() { return }
         let at = if n == 9 { tabs.len() - 1 } else { n - 1 }
         if at < tabs.len() { model::activate(m, w, tabs[at].key) }
@@ -278,25 +323,40 @@ fn command(m: &mut Model, window: String, id: String) {
         commands::PREVIOUS_TAB => model::cycle(m, w, -1)
         commands::LAST_TAB => model::last_active(m, w)
         commands::MOVE_LEFT | commands::MOVE_RIGHT => {
-            let key = m.windows[w].active
-            if let Some(at) = m.windows[w].index_of(key) {
+            let key = m.windows[w].leader_of(m.windows[w].active)
+            if let Some(at) = m.windows[w].strip_index_of(key) {
                 model::move_tab(m, w, key, at + if id == commands::MOVE_LEFT { -1 } else { 1 })
                 model::retitle(m, w)
             }
         }
         commands::PIN_TAB => {
-            if let Some(t) = tab { model::pin(m, w, t.key, !t.pinned) }
+            let leader = m.windows[w].leader_of(m.windows[w].active)
+            if let Some(at) = m.windows[w].index_of(leader) { model::pin(m, w, leader, !m.windows[w].tabs[at].pinned) }
         }
         commands::CLOSE_OTHER_TABS => {
-            let active = m.windows[w].index_of(m.windows[w].active).unwrap_or(-1)
+            let active = m.windows[w].strip_index_of(m.windows[w].active).unwrap_or(-1)
             model::request_close_tabs(m, w, |i| i != active)
         }
         commands::CLOSE_TABS_RIGHT => {
-            let active = m.windows[w].index_of(m.windows[w].active).unwrap_or(-1)
+            let active = m.windows[w].strip_index_of(m.windows[w].active).unwrap_or(-1)
             model::request_close_tabs(m, w, |i| active >= 0 && i > active)
         }
+        commands::SPLIT_RIGHT | commands::SPLIT_DOWN => {
+            if let Err(why) = model::open_pane(m, w, model::shell_here(*m, w), id == commands::SPLIT_RIGHT) { model::report(window, "Couldn't split the tab", why) }
+        }
+        commands::CLOSE_PANE => {
+            if let Some(t) = tab { model::request_close_pane(m, t.key) }
+        }
+        commands::NEXT_PANE => model::step_pane(m, w, 1)
+        commands::PREVIOUS_PANE => model::step_pane(m, w, -1)
         commands::GUIDE => gui::perform(Effect::OpenUrl(commands::GUIDE_URL))
         commands::SHORTCUTS => gui::perform(Effect::OpenUrl(commands::SHORTCUTS_URL))
+        commands::CHECK_UPDATES => {
+            if m.checking_window.is_empty() {
+                m.checking_window = window
+                releases::check()
+            }
+        }
         commands::ABOUT => gui::perform(Effect::OpenDialogIn(window, about()))
         _ => ()
     }
@@ -357,12 +417,13 @@ fn save_scheme(m: &mut Model, e: schemes::Entry) {
 // A tab strip request for tab `key` of window `window`.
 fn tab_action(m: &mut Model, window: String, key: String, action: String) {
     let Some(w) = model::window_index(*m, window) else { return }
-    let at = m.windows[w].index_of(key).unwrap_or(-1)
+    let at = m.windows[w].strip_index_of(key).unwrap_or(-1)
     match action {
         "close" => model::request_close_tab(m, key)
         "close-others" => model::request_close_tabs(m, w, |i| i != at)
         "close-right" => model::request_close_tabs(m, w, |i| at >= 0 && i > at)
         "pin" | "unpin" => model::pin(m, w, key, action == "pin")
+        "detach" => model::detach_tab(m, w, key, None)
         "move-left" | "move-right" => {
             if at >= 0 { model::move_tab(m, w, key, at + if action == "move-left" { -1 } else { 1 }) }
         }
@@ -430,6 +491,9 @@ fn terminal_event(m: &mut Model, id: i64, event: Event) {
         Event::Refused(why) => model::report(window, "The terminal couldn't do that", errors::new(why))
         Event::LinkPointed(uri) => m.windows[w].tabs[t].link = uri
         Event::LinkActivated(uri) => gui::perform(Effect::OpenUrl(uri))
+        Event::Focused => {
+            if m.windows[w].active != m.windows[w].tabs[t].key { model::focus_pane(m, w, m.windows[w].tabs[t].key) }
+        }
     }
 }
 
@@ -447,7 +511,8 @@ fn hold_paste(m: &mut Model, w: i64, t: i64, text: String) {
 // Whether tab `t` of window `w` is in front of the user: shown in a window
 // with focus.
 fn in_front(m: Model, w: i64, t: i64) -> bool {
-    m.windows[w].focused && m.windows[w].active == m.windows[w].tabs[t].key
+    let win = m.windows[w]
+    win.focused && win.leader_of(win.active) == win.leader_of(win.tabs[t].key)
 }
 
 // Marks tab `t` of window `w`, whose program asks for the user, and the
@@ -496,6 +561,7 @@ fn apply_settings(m: &mut Model, values: Map<String, String>) {
 // Takes settings `chosen`, puts their window theme in place and saves them.
 fn store_settings(m: &mut Model, chosen: settings::Settings) {
     if chosen == m.settings { return }
+    if m.drop_down { drop_down::settings_changed(m.settings, chosen) }
     m.settings = chosen
     gui::perform(schemes::theme_effect(model::scheme(*m)))
     gui::perform(Effect::SetTransparent(chosen.opacity < 100))

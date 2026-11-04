@@ -1,7 +1,7 @@
 [project]
 id = "dev.gossamer/waftty"
-version = "0.3.0"
-gossamer-version = "^v0.75.17"
+version = "0.4.0"
+gossamer-version = "^v0.76.0"
 # A GUI application: Windows opens no console window beside it.
 windows-subsystem = "windows"
 authors = ["Dan Pozmanter"]

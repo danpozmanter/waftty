@@ -146,6 +146,9 @@ win = ours()
 while win is None:
     d.next_event()
     win = ours()
+# The window manager can name the window active before it moves the input
+# focus there, so the wait for focus hears the window's own focus changes.
+win.change_attributes(event_mask=X.FocusChangeMask)
 activate(win)
 pace()
 type_line("ls -la --color=always /usr/bin | head -200")

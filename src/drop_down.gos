@@ -1,0 +1,64 @@
+// Drop-down mode (`--drop-down`): the main window hangs from the top of its
+// display above every other window, and a global shortcut shows and hides it.
+
+use gui
+use gui::Effect
+
+use model
+use model::Model
+use settings
+use settings::Settings
+
+/// The id the show-and-hide shortcut is registered under.
+pub const HOTKEY: String = "drop-down"
+
+/// Puts the main window in place and asks for the shortcut.
+pub fn start(s: Settings) {
+    gui::perform(Effect::SetAlwaysOnTop("main", true))
+    place(s)
+    bind(s)
+}
+
+/// Sizes the main window along the top of its display.
+pub fn place(s: Settings) {
+    gui::perform(Effect::DockTop("main", s.drop_down_width as f64 / 100.0, s.drop_down_height as f64 / 100.0))
+}
+
+/// Registers the show-and-hide shortcut, replacing any registered before.
+pub fn bind(s: Settings) {
+    gui::perform(Effect::RegisterHotkey { id: HOTKEY, shortcut: s.drop_down_key, description: "Show or hide waftty" })
+}
+
+/// The shortcut was pressed: a hidden window drops down, an unfocused one
+/// takes focus, and a focused one goes away.
+pub fn toggle(m: &mut Model) {
+    let Some(w) = model::window_index(*m, "main") else { return }
+    if m.drop_down_hidden || !m.windows[w].focused {
+        m.drop_down_hidden = false
+        // The window system places a window as it maps, so it is docked once shown.
+        gui::perform(Effect::SetWindowVisible("main", true))
+        place(m.settings)
+    } else {
+        m.drop_down_hidden = true
+        gui::perform(Effect::SetWindowVisible("main", false))
+    }
+}
+
+/// The user resized the drop-down window to `width` by `height` fractions of
+/// its display: the drop-down settings keep that size for next time.
+pub fn resized(m: &mut Model, width: f64, height: f64) {
+    let mut chosen = m.settings
+    chosen.drop_down_width = (width * 100.0).round() as i64
+    chosen.drop_down_height = (height * 100.0).round() as i64
+    chosen.drop_down_width = chosen.drop_down_width.clamp(20, 100)
+    chosen.drop_down_height = chosen.drop_down_height.clamp(10, 100)
+    if chosen == m.settings { return }
+    m.settings = chosen
+    if let Err(why) = settings::save(chosen) { model::report(m.windows[0].key, "Couldn't save the drop-down size", why) }
+}
+
+/// Applies changed settings to a drop-down window.
+pub fn settings_changed(before: Settings, after: Settings) {
+    if after.drop_down_key != before.drop_down_key { bind(after) }
+    if after.drop_down_width != before.drop_down_width || after.drop_down_height != before.drop_down_height { place(after) }
+}

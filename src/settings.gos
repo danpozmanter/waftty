@@ -9,6 +9,7 @@ use gui
 use gui::Command
 use gui::dialogs::request
 use gui::dialogs::request::{PreferenceField, PreferenceKind, PreferencePage}
+use gui::input::Shortcut
 use gui::services
 use gui::terminal::{ViewOptions, WORD_CHARS}
 use windowing
@@ -71,6 +72,8 @@ pub struct Settings {
     pub line_spacing: f64
     /// When the scrollbar shows: "always", "scrolling" or "never".
     pub scrollbar: String
+    /// Which edge the scrollbar lies along: "right" or "left".
+    pub scrollbar_side: String
     pub menu_bar: bool
     /// When the tab bar shows: "always", "several" (with two tabs or more)
     /// or "never".
@@ -101,14 +104,20 @@ pub struct Settings {
     /// Whether keys pass through the desktop's input method: "auto" (when
     /// it has more than keyboard layouts set up), "on" or "off".
     pub input_method: String
+    /// The global shortcut that shows and hides a drop-down window.
+    pub drop_down_key: String
+    /// A drop-down window's width and height, in percent of the display.
+    pub drop_down_width: i64
+    pub drop_down_height: i64
 }
 
 impl Default for Settings {
     fn default() -> Settings {
         Settings {
             shell: "", directory: "", new_tabs: "current", encoding: encodings::DEFAULT, restore: false, columns: 90, rows: 28, remember_size: true, confirm_close: true
-            font: "", font_size: 10.0, font_weight: 400, ligatures: true, scheme: schemes::SYSTEM, cursor: "block", cursor_blink: true, bold_bright: false, legible: true, padding: 4, opacity: 100, line_spacing: 1.0, scrollbar: "scrolling", menu_bar: true, tab_bar: "several"
-            scrollback: 1_000, scroll_on_output: false, scroll_on_keystroke: true, word_chars: WORD_CHARS, copy_on_select: false, confirm_paste: true, bell: "none", notifications: true, clipboard_write: true, editor: "", option_as_meta: false, input_method: "auto"
+            font: "", font_size: 10.0, font_weight: 400, ligatures: true, scheme: schemes::SYSTEM, cursor: "block", cursor_blink: true, bold_bright: false, legible: true, padding: 4, opacity: 100, line_spacing: 1.0, scrollbar: "always", scrollbar_side: "right", menu_bar: true, tab_bar: "several"
+            scrollback: 1_000, scroll_on_output: false, scroll_on_keystroke: true, word_chars: WORD_CHARS, copy_on_select: false, confirm_paste: false, bell: "none", notifications: true, clipboard_write: true, editor: "", option_as_meta: false, input_method: "auto"
+            drop_down_key: "F12", drop_down_width: 100, drop_down_height: 50
         }
     }
 }
@@ -187,11 +196,12 @@ fn values(s: Settings) -> Vec<(String, String)> {
         ("restore", flag(s.restore)), ("columns", f"{s.columns}"), ("rows", f"{s.rows}"), ("remember_size", flag(s.remember_size)), ("confirm_close", flag(s.confirm_close))
         ("font", s.font), ("font_size", f"{s.font_size}"), ("font_weight", f"{s.font_weight}"), ("ligatures", flag(s.ligatures)), ("scheme", s.scheme), ("cursor", s.cursor)
         ("cursor_blink", flag(s.cursor_blink)), ("bold_bright", flag(s.bold_bright)), ("legible", flag(s.legible))
-        ("padding", f"{s.padding}"), ("opacity", f"{s.opacity}"), ("line_spacing", f"{s.line_spacing}"), ("scrollbar", s.scrollbar), ("menu_bar", flag(s.menu_bar)), ("tab_bar", s.tab_bar)
+        ("padding", f"{s.padding}"), ("opacity", f"{s.opacity}"), ("line_spacing", f"{s.line_spacing}"), ("scrollbar", s.scrollbar), ("scrollbar_side", s.scrollbar_side), ("menu_bar", flag(s.menu_bar)), ("tab_bar", s.tab_bar)
         ("scrollback", f"{s.scrollback}"), ("scroll_on_output", flag(s.scroll_on_output)), ("scroll_on_keystroke", flag(s.scroll_on_keystroke))
         ("word_chars", s.word_chars), ("copy_on_select", flag(s.copy_on_select)), ("confirm_paste", flag(s.confirm_paste))
         ("bell", s.bell), ("notifications", flag(s.notifications)), ("clipboard_write", flag(s.clipboard_write))
         ("editor", s.editor), ("option_as_meta", flag(s.option_as_meta)), ("input_method", s.input_method)
+        ("drop_down_key", s.drop_down_key), ("drop_down_width", f"{s.drop_down_width}"), ("drop_down_height", f"{s.drop_down_height}")
     ]
 }
 
@@ -241,6 +251,7 @@ pub fn with_values(s: Settings, values: Map<String, String>) -> Settings {
     if let Some(v) = values.get("opacity").and_then(|v| number_in(v, 20, 100)) { out.opacity = v }
     if let Some(v) = values.get("line_spacing") && let Some(f) = v.to_f64() && f >= 0.8 && f <= 3.0 { out.line_spacing = f }
     if let Some(v) = one_of(values, "scrollbar", ["always", "scrolling", "never"]) { out.scrollbar = v }
+    if let Some(v) = one_of(values, "scrollbar_side", ["right", "left"]) { out.scrollbar_side = v }
     if let Some(v) = values.get("menu_bar").and_then(flag_of) { out.menu_bar = v }
     if let Some(v) = one_of(values, "tab_bar", ["always", "several", "never"]) { out.tab_bar = v }
     // A longer history saved by an earlier version keeps the longest there is.
@@ -256,14 +267,25 @@ pub fn with_values(s: Settings, values: Map<String, String>) -> Settings {
     if let Some(v) = text("editor") { out.editor = v }
     if let Some(v) = values.get("option_as_meta").and_then(flag_of) { out.option_as_meta = v }
     if let Some(v) = one_of(values, "input_method", input_method::CHOICES) { out.input_method = v }
+    if let Some(v) = text("drop_down_key") && is_hotkey(v) { out.drop_down_key = v }
+    if let Some(v) = values.get("drop_down_width").and_then(|v| number_in(v, 20, 100)) { out.drop_down_width = v }
+    if let Some(v) = values.get("drop_down_height").and_then(|v| number_in(v, 10, 100)) { out.drop_down_height = v }
     out
+}
+
+/// Whether `chord` is one key with modifiers, as a global shortcut takes.
+pub fn is_hotkey(chord: String) -> bool {
+    match Shortcut::parse(chord) {
+        Some(parsed) => !parsed.is_chord()
+        None => false
+    }
 }
 
 /// How a terminal view draws and behaves under `s`.
 pub fn view_options(s: Settings) -> ViewOptions {
     ViewOptions {
         cursor: s.cursor, blink: s.cursor_blink, bold_bright: s.bold_bright, legible: s.legible, padding: s.padding
-        scrollbar: s.scrollbar, scroll_on_output: s.scroll_on_output, scroll_on_keystroke: s.scroll_on_keystroke
+        scrollbar: s.scrollbar, scrollbar_side: s.scrollbar_side, scroll_on_output: s.scroll_on_output, scroll_on_keystroke: s.scroll_on_keystroke
         word_chars: s.word_chars, option_as_meta: s.option_as_meta, copy_on_select: s.copy_on_select
         confirm_paste: s.confirm_paste, flash_bell: s.bell == "flash", opacity: s.opacity as f64 / 100.0, line_height: s.line_spacing, font_weight: s.font_weight, ligatures: s.ligatures
     }
@@ -292,7 +314,8 @@ pub fn dialog(s: Settings, fonts: Vec<String>, offered: Vec<schemes::Entry>, reg
     if !s.font.is_empty() && !families.any(|f| f.0 == s.font) { families.push((s.font, s.font)) }
     let weights = WEIGHTS.to_vec()
     let cursors = #[("block", "Block"), ("bar", "Bar"), ("underline", "Underline")]
-    let scrollbars = #[("scrolling", "While scrolling back"), ("always", "Always"), ("never", "Never")]
+    let scrollbars = #[("always", "Always"), ("scrolling", "While scrolling back"), ("never", "Never")]
+    let sides = #[("right", "Right"), ("left", "Left")]
     let tab_bars = #[("several", "With two tabs or more"), ("always", "Always"), ("never", "Never")]
     let bells = #[("none", "Mark the tab"), ("flash", "Flash the screen"), ("sound", "Play a sound")]
     let mut behavior = #[
@@ -333,6 +356,7 @@ pub fn dialog(s: Settings, fonts: Vec<String>, offered: Vec<schemes::Entry>, reg
         field("padding", "Padding", PreferenceKind::Integer(0, 32), f"{s.padding}", f"{d.padding}", "Space around the text.")
         field("opacity", "Background opacity", PreferenceKind::Integer(20, 100), f"{s.opacity}", f"{d.opacity}", "In percent. Below 100 needs a desktop that blends windows.")
         field("scrollbar", "Scrollbar", PreferenceKind::Choice(scrollbars), s.scrollbar, d.scrollbar, "")
+        field("scrollbar_side", "Scrollbar side", PreferenceKind::Choice(sides), s.scrollbar_side, d.scrollbar_side, "")
         field("tab_bar", "Tab bar", PreferenceKind::Choice(tab_bars), s.tab_bar, d.tab_bar, "")
     ]
     for f in menu_bar_field(s, d) { appearance.push(f) }
@@ -350,6 +374,11 @@ pub fn dialog(s: Settings, fonts: Vec<String>, offered: Vec<schemes::Entry>, reg
         ] }
         PreferencePage { key: "appearance", title: "Appearance", fields: appearance }
         PreferencePage { key: "behavior", title: "Behavior", fields: behavior }
+        PreferencePage { key: "drop-down", title: "Drop-Down", fields: #[
+            field("drop_down_key", "Show and hide shortcut", PreferenceKind::Text, s.drop_down_key, d.drop_down_key, "A key with any modifiers, such as F12 or Ctrl+`. It works in any application while waftty runs with --drop-down.")
+            field("drop_down_width", "Width", PreferenceKind::Integer(20, 100), f"{s.drop_down_width}", f"{d.drop_down_width}", "In percent of the display.")
+            field("drop_down_height", "Height", PreferenceKind::Integer(10, 100), f"{s.drop_down_height}", f"{d.drop_down_height}", "In percent of the display.")
+        ] }
         PreferencePage { key: "shortcuts", title: "Shortcuts", fields: shortcut_fields(registry, chosen) }
     ])
 }

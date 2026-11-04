@@ -6,6 +6,7 @@ use gui
 use gui::terminal::Command
 
 use commands
+use drop_down
 use icon
 use info
 use model
@@ -24,6 +25,8 @@ pub struct FirstTab {
     pub title: String
     /// Keeps the tab open once its program exits.
     pub hold: bool
+    /// Opens the window as a drop-down (`--drop-down`).
+    pub drop_down: bool
 }
 
 fn init(s: Settings, first: Command, first_tab: FirstTab, restore: bool, program_env: Vec<(String, String)>) -> Model {
@@ -40,6 +43,10 @@ fn init(s: Settings, first: Command, first_tab: FirstTab, restore: bool, program
     }
     m.windows[0].tabs[0].fixed_title = first_tab.title
     m.windows[0].tabs[0].hold = first_tab.hold
+    if first_tab.drop_down {
+        m.drop_down = true
+        drop_down::start(s)
+    }
     if restore { reopen(&mut m) }
     let mut problems = scheme_problems
     match shortcuts::load() {
@@ -76,7 +83,7 @@ fn reopen(m: &mut Model) {
 /// `restore`, the windows and tabs saved at the last quit open after it.
 pub fn app(s: Settings, first: Command, first_tab: FirstTab, restore: bool, program_env: Vec<(String, String)>) -> gui::App<Model> {
     let width, height = model::window_size(s, s.font_size)
-    gui::application(info::NAME, info::APP_ID, || init(s, first, first_tab, restore, program_env), update::update, view::main)
+    let built = gui::application(info::NAME, info::APP_ID, || init(s, first, first_tab, restore, program_env), update::update, view::main)
         .size(width, height)
         .transparent(s.opacity < 100)
         .remember_size(s.remember_size)
@@ -85,4 +92,7 @@ pub fn app(s: Settings, first: Command, first_tab: FirstTab, restore: bool, prog
         .windows(view::window)
         .ask_before_close()
         .icon(icon::waftty(128))
+    // A second `--drop-down` launch hands over to the running drop-down,
+    // which already holds the shortcut.
+    if first_tab.drop_down { built.frameless().remember_size(false).single_instance(#[]) } else { built }
 }

@@ -65,6 +65,11 @@ fn unusable(chord: String) -> String {
     if letter && ctrl && !alt && !shift && !meta {
         return f"\"{chord}\" is a Ctrl key programs need; add Shift"
     }
+    // The terminal gives Ctrl+Alt with a letter to its program, as Meta and
+    // the letter's control code.
+    if letter && ctrl && alt && !meta {
+        return f"\"{chord}\" is a Ctrl+Alt key programs read; use Ctrl+Shift"
+    }
     if letter && alt && !ctrl && !meta {
         return f"\"{chord}\" is an Alt key programs read as Meta; add Ctrl"
     }
@@ -208,6 +213,15 @@ mod tests {
         let applied = super::apply(registry, chosen)
         assert_eq(applied[0].shortcuts.len(), 1)
         assert_eq(applied[1].shortcuts.len(), 0)
+    }
+
+    #[test]
+    fn a_ctrl_alt_letter_is_reported_as_the_programs() {
+        let registry = #[Command::new("terminal.close-pane", "Close Pane")]
+        let found = super::problems({ "terminal.close-pane": #["Ctrl+Alt+W"] }, registry)
+        assert_eq(found.len(), 1, f"{found}")
+        assert(found[0].contains("Ctrl+Alt key programs read"))
+        assert_eq(super::problems({ "terminal.close-pane": #["Ctrl+Alt+Left"] }, registry), #[])
     }
 
     #[test]

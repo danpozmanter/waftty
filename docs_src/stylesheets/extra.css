@@ -223,6 +223,40 @@
   color: var(--md-typeset-a-color);
 }
 
+/* The home page's features: cards in a grid, one column on narrow screens. */
+.features {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0 2rem;
+}
+
+.md-typeset .feature {
+  padding: 1.1rem 1.25rem;
+  border: 1px solid var(--sky-200);
+  border-radius: 0.75rem;
+  background: var(--sky-50);
+}
+
+[data-md-color-scheme="slate"] .md-typeset .feature {
+  border-color: #1d3a55;
+  background: var(--md-code-bg-color);
+}
+
+.md-typeset .feature h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+  color: var(--md-typeset-a-color);
+}
+
+.md-typeset .feature h3 .headerlink {
+  display: none;
+}
+
+.md-typeset .feature p {
+  margin: 0;
+}
+
 /* Hide sidebars on desktop only; mobile needs them for the menu. */
 @media screen and (min-width: 76.25em) {
   .md-sidebar {

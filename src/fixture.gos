@@ -153,6 +153,45 @@ pub fn journey() -> Result<(), errors::Error> {
     await_text(&mut s, 0, "[selected 1/2]")?
     println("tabs: the strip shows two tabs; Ctrl+Shift+T opened one, Ctrl+Shift+L went back, Ctrl+Shift+PageDown/PageUp moved it, the Tabs menu showed each")
 
+    shortcut(&mut s, commands::SPLIT_RIGHT)?
+    s.flush()?
+    require(s.focused() == "term-tab-3", f"Split Right focused {s.focused()}")?
+    await_text(&mut s, 0, "splitter")?
+    require(s.semantics(0).dump().contains("[selected 1/2]"), "a split tab stopped being one tab in the strip")?
+    shortcut(&mut s, commands::NEXT_PANE)?
+    s.flush()?
+    require(s.focused() == "term-tab-1", f"Next Pane focused {s.focused()}")?
+    shortcut(&mut s, commands::PREVIOUS_PANE)?
+    s.flush()?
+    require(s.focused() == "term-tab-3", f"Previous Pane focused {s.focused()}")?
+    shortcut(&mut s, commands::CLOSE_PANE)?
+    s.flush()?
+    require(s.focused() == "term-tab-1", f"Close Pane left focus at {s.focused()}")?
+    require(!s.semantics(0).dump().contains("splitter"), "the closed pane's divider stayed")?
+    println("panes: Split Right divided the tab into two panes under one strip tab, Next and Previous Pane moved between them, Close Pane gave the space back")
+
+    s.emit(gui::UiMsg::TabAction("tabs:main", "tab-2", "detach"))
+    s.flush()?
+    require(s.window_count() == 2, f"Move Tab to New Window left {s.window_count()} windows")?
+    require(!s.semantics(0).dump().contains("tablist"), "the window a tab left still shows two tabs")?
+    await_text(&mut s, 1, "$ ")?
+    s.emit(gui::UiMsg::TabMove("tabs:window-1", "tab-2", "tabs:main", 1))
+    s.flush()?
+    require(s.window_count() == 1, f"a tab dropped on another window's strip left {s.window_count()} windows")?
+    await_text(&mut s, 0, "[selected 2/2]")?
+    s.emit(gui::UiMsg::TabDetach("tabs:main", "tab-2", 40, 40))
+    s.flush()?
+    require(s.window_count() == 2, f"a tab dragged out of the window left {s.window_count()} windows")?
+    s.emit(gui::UiMsg::TabMove("tabs:window-1", "tab-2", "tabs:main", 1))
+    s.flush()?
+    require(s.window_count() == 1, f"the tab dragged back left {s.window_count()} windows")?
+    await_text(&mut s, 0, "[selected 2/2]")?
+    s.run_command(0, commands::show_command("tab-1"))
+    s.flush()?
+    await_text(&mut s, 0, "[selected 1/2]")?
+    require(s.focused() == "term-tab-1", f"showing the first tab again focused {s.focused()}")?
+    println("tab windows: Move Tab to New Window gave a tab a window of its own, a drop on another window's strip took it there and closed the empty window, and a drag out of the window detached it")
+
     enter(&mut s, "echo needle-one; echo needle-two")?
     await_text(&mut s, 0, "\nneedle-two")?
     shortcut(&mut s, commands::FIND)?
@@ -234,7 +273,7 @@ pub fn journey() -> Result<(), errors::Error> {
     await_text(&mut s, 0, "\nmoved")?
     shortcut(&mut s, commands::NEW_TAB)?
     await_text(&mut s, 0, "[selected 3/3]")?
-    enter(&mut s, "ls")?
+    enter(&mut s, "ls -1")?
     await_text(&mut s, 0, "\ngate")?
     enter(&mut s, "exit")?
     await_text(&mut s, 0, "[selected 1/2]")?
@@ -304,7 +343,7 @@ pub fn journey() -> Result<(), errors::Error> {
 
     s.press(Key::F10, Mods { shift: true, ..Mods::default() })?
     s.flush()?
-    require(s.popup_owners().any(|p| p.0 == "terminal-menu:main"), f"Shift+F10 opened {s.popup_owners()}")?
+    require(s.popup_owners().any(|p| p.0.starts_with("terminal-menu:main:")), f"Shift+F10 opened {s.popup_owners()}")?
     let menu = s.semantics(0).dump()
     for entry in #["Copy", "Paste", "Send Signal", "Zoom"] {
         require(menu.contains(f"menuitem \"{entry}\""), f"the terminal's menu lacks {entry}:\n{menu}")?
@@ -339,7 +378,7 @@ pub fn journey() -> Result<(), errors::Error> {
     let menu_over = |s: &mut gui::Session, x: i64, y: i64| -> Result<String, errors::Error> {
         s.right_click_at(x, y)?
         s.flush()?
-        require(s.popup_owners().any(|p| p.0 == "terminal-menu:main"), f"a right click opened {s.popup_owners()}")?
+        require(s.popup_owners().any(|p| p.0.starts_with("terminal-menu:main:")), f"a right click opened {s.popup_owners()}")?
         let shown = s.semantics(0).dump()
         s.press(Key::Escape, Mods::default())?
         s.flush()?

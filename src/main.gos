@@ -24,6 +24,10 @@ usage: waftty [options] [-e program [args...]]
   --working-directory DIR  start the first tab in DIR
   --title TITLE            name the first tab TITLE, whatever its program sets
   --hold                   keep the first tab open after its program exits
+  --drop-down              open as a drop-down terminal that hangs from the
+                           top of the screen; its shortcut (F12 unless
+                           Settings > Drop-Down names another) shows and
+                           hides it from any application
   --shell-integration SHELL
                            print the integration script for SHELL (bash, zsh,
                            fish or powershell)
@@ -40,6 +44,7 @@ struct Launch {
     directory: String
     title: String
     hold: bool
+    drop_down: bool
 }
 
 // What the command line asks for.
@@ -78,6 +83,7 @@ fn invocation(args: Vec<String>) -> Result<Invocation, String> {
             "--working-directory" => launch.directory = value()?
             "--title" => launch.title = value()?
             "--hold" => launch.hold = true
+            "--drop-down" => launch.drop_down = true
             "-e" => {
                 let rest = args.skip(i + 1)
                 if rest.is_empty() { return Err("-e needs a program to run") }
@@ -133,7 +139,7 @@ fn main() -> Result<(), errors::Error> {
     }
     // A session comes back when the command line asked for no program and no
     // folder; its first window's first tab opens in its folder.
-    let restore = launch.program.is_none() && launch.directory.is_empty() && s.restore
+    let restore = launch.program.is_none() && launch.directory.is_empty() && s.restore && !launch.drop_down
     let mut first = match launch.program {
         Some(c) => Command { cwd: settings::start_folder(s), ..c }
         None => settings::command(s)
@@ -145,7 +151,7 @@ fn main() -> Result<(), errors::Error> {
     }
     // The input method is chosen as the window system starts, so before it.
     let program_env = input_method::prepare(s.input_method)
-    application::app(s, first, FirstTab { title: launch.title, hold: launch.hold }, restore, program_env).run()
+    application::app(s, first, FirstTab { title: launch.title, hold: launch.hold, drop_down: launch.drop_down }, restore, program_env).run()
 }
 
 // `dir` from the folder waftty started in, which a relative path is read from.
@@ -189,9 +195,16 @@ mod tests {
         assert_eq(launch.directory, "/tmp/p")
         assert_eq(launch.title, "review")
         assert(launch.hold)
+        assert(!launch.drop_down)
         let Some(c) = launch.program else { panic("-e did not name a program") }
         assert_eq(c.args, #["--title", "x"])
         assert_eq(parse(["--title"]), Err("--title needs a value"))
+    }
+
+    #[test]
+    fn drop_down_opens_the_first_window_as_a_drop_down() {
+        let Ok(Invocation::Open(launch)) = parse(["--drop-down"]) else { panic("--drop-down did not open a window") }
+        assert(launch.drop_down)
     }
 
     #[test]

@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.4.0 - Split panes, drop-down mode, and Check for Updates
+
+- Building needs Gossamer 0.76.0 or later.
+- A paste of several lines no longer asks first unless **Ask before pasting several lines** is on in Settings.
+- Tabs split into panes: **Terminal > Split Right** (Ctrl+Shift+D) and **Split Down** (Ctrl+Shift+B) open a shell beside or below the focused pane, in its folder. Drag a divider to resize; **Next Pane** and **Previous Pane** (Ctrl+Shift+] and Ctrl+Shift+[) move between them, a click focuses one, and **Close Pane** (Ctrl+Shift+J) closes it. Close Tab closes the tab with all its panes.
+- `waftty --drop-down` opens a drop-down terminal that hangs from the top of the screen above other windows. Its shortcut, F12 unless **Settings > Drop-Down** names another, shows and hides it from any application; the same page sets its width and height. On Wayland the desktop's portal takes the shortcut and may ask to confirm it. A shortcut another application holds is reported.
+- Tabs move between windows: drag one out of its window, or choose **Move Tab to New Window** from its menu, to give it a window of its own; drop it on another window's tab strip to move it there. A split tab moves with its panes, and a window left without tabs closes.
+- Every dialog button answers a letter, underlined in its label: **E** for **Exit Anyway**, **C** for **Cancel**. Left and Right move between the buttons and Enter presses the focused one, so Left and Enter close over a running program.
+- Closing a tab, pane or window over a running program, or quitting, asks under a title that says a program is still running, with **Exit Anyway** beside Cancel.
+- Windows reuse their numbers, so waftty remembers the size and place of as many windows as were open at once, rather than of every window ever opened.
+- The drop-down window shows no menu bar; its right-click menu reaches Settings, Check for Updates, About and Quit. It starts at half the display's height and keeps the size you resize it to, separately from the size of waftty's other windows.
+- **Help > Check for Updates** asks GitHub for the latest release and offers its download page when it is newer.
+- The scrollbar shows by default, and **Settings > Appearance > Scrollbar side** puts it on the left or the right.
+- With a color scheme of its own, the menu bar and the tab strip take the scheme's colors: the active tab matches the terminal and the bars a shade of it, instead of a near-black bar that matched neither the terminal nor the dialogs.
+- Delete deletes forward in programs that turn on the kitty keyboard protocol, which received a Backspace.
+- A right click opens the terminal's menu and leaves it open even where the menu opens under the pointer, rather than choosing the item under it.
+- Settings reports a Ctrl+Alt shortcut with a letter, which the terminal gives to its program, instead of keeping one that never runs.
+- The macOS installer links the `waftty` command into `/usr/local/bin` only.
+
 ## 0.3.0 - Copy mode, link hints, resource usage, and speed
 
 - Copy mode (**Terminal > Copy Mode**, Ctrl+Shift+X) selects and copies with the keyboard, anywhere in the screen and the scrollback.

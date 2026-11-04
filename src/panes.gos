@@ -1,0 +1,120 @@
+// How a tab divides between its panes: a tree whose leaves are pane keys
+// and whose branches split their space side by side or one above the other.
+
+/// A tab's panes.
+#[derive(Debug, PartialEq)]
+pub enum Layout {
+    /// One pane, by its key.
+    Pane(String)
+    /// Two parts sharing the space: side by side when `across`, else one
+    /// above the other; `ratio` is the first part's share.
+    Split { across: bool, ratio: f64, first: Layout, second: Layout }
+}
+
+/// `layout` with pane `target` divided between itself and `added`, which
+/// takes the right or lower half.
+pub fn split(layout: Layout, target: String, added: String, across: bool) -> Layout {
+    match layout {
+        Layout::Pane(key) => {
+            if key == target {
+                Layout::Split { across: across, ratio: 0.5, first: Layout::Pane(key), second: Layout::Pane(added) }
+            } else {
+                Layout::Pane(key)
+            }
+        }
+        Layout::Split { across: a, ratio, first, second } => Layout::Split { across: a, ratio: ratio, first: split(first, target, added, across), second: split(second, target, added, across) }
+    }
+}
+
+/// `layout` without pane `key`, its sibling taking the space; None when
+/// `key` was the only pane.
+pub fn remove(layout: Layout, key: String) -> Option<Layout> {
+    match layout {
+        Layout::Pane(k) => if k == key { None } else { Some(Layout::Pane(k)) }
+        Layout::Split { across, ratio, first, second } => match (remove(first, key), remove(second, key)) {
+            (Some(a), Some(b)) => Some(Layout::Split { across: across, ratio: ratio, first: a, second: b })
+            (Some(a), None) => Some(a)
+            (None, Some(b)) => Some(b)
+            (None, None) => None
+        }
+    }
+}
+
+/// The pane keys of `layout`, left to right and top to bottom.
+pub fn panes(layout: Layout) -> Vec<String> {
+    match layout {
+        Layout::Pane(key) => #[key]
+        Layout::Split { first, second, .. } => {
+            let mut out = panes(first)
+            for key in panes(second) { out.push(key) }
+            out
+        }
+    }
+}
+
+/// `layout` with the split at `path` ("" for the root, then "a" or "b" per
+/// step into the first or second part) giving its first part `ratio`.
+pub fn resize(layout: Layout, path: String, ratio: f64) -> Layout {
+    match layout {
+        Layout::Pane(key) => Layout::Pane(key)
+        Layout::Split { across, ratio: old, first, second } => {
+            if path.is_empty() {
+                return Layout::Split { across: across, ratio: ratio.clamp(0.05, 0.95), first: first, second: second }
+            }
+            let rest = path.substring(1, path.byte_len())
+            if path.starts_with("a") {
+                Layout::Split { across: across, ratio: old, first: resize(first, rest, ratio), second: second }
+            } else {
+                Layout::Split { across: across, ratio: old, first: first, second: resize(second, rest, ratio) }
+            }
+        }
+    }
+}
+
+/// The pane `step` places after `key` in reading order, wrapping around.
+pub fn step_from(layout: Layout, key: String, step: i64) -> String {
+    let order = panes(layout)
+    match order.iter().position(|k| k == key) {
+        Some(at) => order[(at + step).rem_euclid(order.len())]
+        None => key
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Layout
+
+    fn pane(key: String) -> Layout { Layout::Pane(key) }
+
+    #[test]
+    fn a_split_divides_its_target_and_leaves_other_panes_alone() {
+        let one = super::split(pane("a"), "a", "b", true)
+        assert_eq(one, Layout::Split { across: true, ratio: 0.5, first: pane("a"), second: pane("b") })
+        let two = super::split(one, "b", "c", false)
+        assert_eq(super::panes(two), #["a", "b", "c"])
+        assert_eq(super::split(pane("a"), "z", "b", true), pane("a"))
+    }
+
+    #[test]
+    fn removing_a_pane_gives_its_space_to_its_sibling() {
+        let tree = super::split(super::split(pane("a"), "a", "b", true), "b", "c", false)
+        assert_eq(super::remove(tree, "b"), Some(Layout::Split { across: true, ratio: 0.5, first: pane("a"), second: pane("c") }))
+        assert_eq(super::remove(pane("a"), "a"), None)
+    }
+
+    #[test]
+    fn a_resize_reaches_the_split_its_path_names() {
+        let tree = super::split(super::split(pane("a"), "a", "b", true), "b", "c", false)
+        let resized = super::resize(tree, "b", 0.3)
+        let Layout::Split { second, .. } = resized else { panic("the root stopped splitting") }
+        let Layout::Split { ratio, .. } = second else { panic("the right part stopped splitting") }
+        assert_eq(ratio, 0.3)
+    }
+
+    #[test]
+    fn stepping_wraps_through_the_panes_in_reading_order() {
+        let tree = super::split(super::split(pane("a"), "a", "b", true), "b", "c", false)
+        assert_eq(super::step_from(tree, "c", 1), "a")
+        assert_eq(super::step_from(tree, "a", -1), "c")
+    }
+}

@@ -1,7 +1,7 @@
 """RAM, CPU, throughput, latency and startup of terminals on a live X11 desktop.
 
     uv run bench.py inputs                      # writes the test inputs
-    uv run bench.py run [--terminals waftty,xfce4-terminal,...] [--waftty PATH]
+    uv run bench.py run [--terminals waftty,waftty-drop-down,guake,...] [--waftty PATH]
     uv run report.py                            # charts and RESULTS.md
 
 Each terminal runs on its defaults from a configuration folder of its own,
@@ -12,13 +12,15 @@ inputs and each run's configuration folders stay in ~/.cache/waftty-bench.
 """
 
 import argparse
+import ctypes
+import errno
+import itertools
 import json
 import os
 import random
 import select
 import shutil
 import signal
-import statistics
 import subprocess
 import tempfile
 import time
@@ -42,13 +44,41 @@ A = d.intern_atom
 root.change_attributes(event_mask=X.PropertyChangeMask)
 
 
+# The drop-down form of a terminal, which hangs from the top of the screen
+# and stays above other windows, as Guake always does.
+DROP_DOWN = "-drop-down"
+
+
+def program(term):
+    """The executable a benchmark entry runs."""
+    base = term.removesuffix(DROP_DOWN)
+    return WAFTTY if base == "waftty" else base
+
+
+def share_of_screen():
+    """The window size as whole percentages of the screen, the unit drop-down
+    terminals size themselves in."""
+    sw, sh = d.screen().width_in_pixels, d.screen().height_in_pixels
+    return round(100 * W / sw), round(100 * H / sh)
+
+
 def config_home(term):
     home = tempfile.mkdtemp(dir=OUT / "run", prefix=f"cfg-{term}-")
-    if term == "waftty":
+    base, drop_down = term.removesuffix(DROP_DOWN), term.endswith(DROP_DOWN)
+    if base == "waftty":
+        values = {"scrollback": str(SCROLLBACK)}
+        if drop_down:
+            wide, tall = share_of_screen()
+            # A chord nothing else holds, so the run takes its shortcut quietly.
+            values.update(drop_down_key="Ctrl+Alt+Shift+F8", drop_down_width=str(wide),
+                          drop_down_height=str(tall))
+            # The drop-down is a single instance named on the session bus; a
+            # bus of its own keeps the run from handing off to one already open.
+            private_bus(home, services=False)
         os.makedirs(f"{home}/dev.gossamer.waftty")
         with open(f"{home}/dev.gossamer.waftty/settings.json", "w") as f:
-            f.write('{"values":{"scrollback":"%d"},"version":2}\n' % SCROLLBACK)
-    elif term == "xfce4-terminal":
+            json.dump({"values": values, "version": 2}, f)
+    elif base == "xfce4-terminal":
         xml = f"{home}/xfce4/xfconf/xfce-perchannel-xml"
         os.makedirs(xml)
         with open(f"{xml}/xfce4-terminal.xml", "w") as f:
@@ -56,29 +86,63 @@ def config_home(term):
                     '<channel name="xfce4-terminal" version="1.0">'
                     f'<property name="scrolling-lines" type="uint" value="{SCROLLBACK}"/>'
                     "</channel>\n")
-        # The bus listens in the benchmark's folder, so the services it
-        # starts, which outlive it, carry that folder in their address.
-        with open(f"{home}/bus.conf", "w") as f:
-            f.write('<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"'
-                    ' "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">\n'
-                    f"<busconfig><type>session</type><keep_umask/><listen>unix:dir={home}</listen>"
-                    "<auth>EXTERNAL</auth><standard_session_servicedirs/>"
-                    '<policy context="default"><allow send_destination="*" eavesdrop="true"/>'
-                    '<allow eavesdrop="true"/><allow own="*"/></policy></busconfig>\n')
+        private_bus(home, services=True)
+    elif term == "guake":
+        # Guake reads GSettings, here from a key file in the run's folder; its
+        # show-hide key is left unbound, so it takes no global shortcut.
+        sw, sh = d.screen().width_in_pixels, d.screen().height_in_pixels
+        os.makedirs(f"{home}/glib-2.0/settings")
+        with open(f"{home}/glib-2.0/settings/keyfile", "w") as f:
+            f.write("[org/guake/general]\n"
+                    f"history-size={SCROLLBACK}\ninfinite-history=false\n"
+                    "use-popup=false\nuse-trayicon=false\nprompt-on-quit=false\n"
+                    "default-shell='/bin/sh'\nuse-login-shell=false\n"
+                    "restore-tabs-startup=false\nload-guake-yml=false\n"
+                    f"window-width={round(100 * W / sw)}\nwindow-height={round(100 * H / sh)}\n"
+                    "[org/guake/keybindings/global]\nshow-hide=''\n")
+        # Nothing on its bus starts desktop services, which Guake would wait
+        # for at startup.
+        private_bus(home, services=False)
     return home
+
+
+def private_bus(home, services):
+    """A session bus config for a terminal that runs as a single instance, so
+    the run starts its own rather than handing off to one already running;
+    with `services`, the bus starts the desktop's session services on demand."""
+    # The bus listens in the benchmark's folder, so the services it
+    # starts, which outlive it, carry that folder in their address.
+    with open(f"{home}/bus.conf", "w") as f:
+        f.write('<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"'
+                ' "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">\n'
+                f"<busconfig><type>session</type><keep_umask/><listen>unix:dir={home}</listen>"
+                "<auth>EXTERNAL</auth>"
+                f"{'<standard_session_servicedirs/>' if services else ''}"
+                '<policy context="default"><allow send_destination="*" eavesdrop="true"/>'
+                '<allow eavesdrop="true"/><allow own="*"/></policy></busconfig>\n')
 
 
 TERMS = {
     "waftty": lambda cmd, home: [WAFTTY, "-e", "sh", "-c", cmd],
+    "waftty-drop-down": lambda cmd, home: ["dbus-run-session", f"--config-file={home}/bus.conf", "--",
+                                           WAFTTY, "--drop-down", "-e", "sh", "-c", cmd],
     # xfconf reads the scrollback from the benchmark's folder on a bus of its own.
     "xfce4-terminal": lambda cmd, home: ["dbus-run-session", f"--config-file={home}/bus.conf", "--",
                                          "xfce4-terminal", "--disable-server",
                                          "-x", "sh", "-c", cmd],
+    # Guake types the command into its shell, which runs it.
+    "guake": lambda cmd, home: ["dbus-run-session", f"--config-file={home}/bus.conf", "--",
+                                "guake", "--show", "-e", cmd],
     "alacritty": lambda cmd, home: ["alacritty", "-o", f"scrolling.history={SCROLLBACK}",
                               "-e", "sh", "-c", cmd],
     "ghostty": lambda cmd, home: ["ghostty", "--config-default-files=false",
                             "--gtk-single-instance=false",
                             f"--scrollback-limit-lines={SCROLLBACK}", "-e", "sh", "-c", cmd],
+    # kitty paces frames by its own sync_to_monitor rather than the driver's
+    # vblank setting, so without a monitor it is turned off the same way.
+    "kitty": lambda cmd, home: ["kitty", "--config=NONE", "-o", f"scrollback_lines={SCROLLBACK}",
+                                *([] if monitor_connected() else ["-o", "sync_to_monitor=no"]),
+                                "sh", "-c", cmd],
     "wezterm": lambda cmd, home: ["wezterm", "-n", "--config", f"scrollback_lines={SCROLLBACK}", "start",
                             "--always-new-process", "--", "sh", "-c", cmd],
 }
@@ -89,6 +153,21 @@ HELPERS = {"sh", "bash", "cat", "head", "sleep", "python3", "dbus-daemon", "dbus
            "xfconfd", "gvfsd"}
 
 
+_libc = ctypes.CDLL(None, use_errno=True)
+SYS_PIDFD_OPEN = 434
+
+
+def pidfd_open(pid):
+    """A descriptor that turns readable when process `pid` exits."""
+    fd = _libc.syscall(SYS_PIDFD_OPEN, pid, 0)
+    if fd < 0:
+        err = ctypes.get_errno()
+        if err == errno.ESRCH:
+            raise ProcessLookupError(pid)
+        raise OSError(err, os.strerror(err))
+    return fd
+
+
 class Died(Exception):
     pass
 
@@ -97,7 +176,7 @@ def family(pid):
     pids = {pid}
     try:
         for t in os.listdir(f"/proc/{pid}/task"):
-            for c in open(f"/proc/{pid}/task/{t}/children").read().split():
+            for c in Path(f"/proc/{pid}/task/{t}/children").read_text().split():
                 pids |= family(int(c))
     except FileNotFoundError:
         pass
@@ -108,7 +187,7 @@ def terminal_pids(pid):
     out = []
     for p in family(pid):
         try:
-            if open(f"/proc/{p}/comm").read().strip() not in HELPERS:
+            if Path(f"/proc/{p}/comm").read_text().strip() not in HELPERS:
                 out.append(p)
         except FileNotFoundError:
             pass
@@ -200,23 +279,39 @@ def granted(w):
     return bw + (W - bw) // iw * iw, bh + (H - bh) // ih * ih
 
 
+def ask_size(w, want):
+    # Asked of the window manager as a tool would (EWMH source 2), which it
+    # honours for drop-down windows that ignore a client's configure request.
+    flags = (2 << 12) | (1 << 10) | (1 << 11)
+    ev = protocol.event.ClientMessage(window=w, client_type=A("_NET_MOVERESIZE_WINDOW"),
+                                      data=(32, [flags, 0, 0, want[0], want[1]]))
+    root.send_event(ev, event_mask=X.SubstructureRedirectMask | X.SubstructureNotifyMask)
+    d.sync()
+
+
 def resize(p, w):
     w.change_attributes(event_mask=X.StructureNotifyMask)
     want = granted(w)
-    w.configure(width=want[0], height=want[1])
-    d.sync()
+    ask_size(w, want)
     while (w.get_geometry().width, w.get_geometry().height) != want:
-        next_event(p)
+        e = next_event(p)
+        # A drop-down terminal places itself as it maps, which can land after
+        # this size; the size is asked again each time the window settles
+        # elsewhere.
+        if e.type == X.ConfigureNotify and e.window == w and (e.width, e.height) != want:
+            ask_size(w, want)
 
 
 def monitor_connected():
-    out = subprocess.run(["xrandr", "--listactivemonitors"], capture_output=True, text=True).stdout
+    out = subprocess.run(["xrandr", "--listactivemonitors"], capture_output=True, text=True, check=False).stdout
     return not out.startswith("Monitors: 0")
 
 
 def launch(term, cmd):
     home = config_home(term)
     env = dict(os.environ, XDG_CONFIG_HOME=home)
+    if term == "guake":
+        env["GSETTINGS_BACKEND"] = "keyfile"
     # Without a monitor there is no vblank: a GL terminal synced to it would
     # pace itself at the driver's 1 Hz fallback.
     if not monitor_connected():
@@ -250,12 +345,19 @@ class Run:
         return os.read(self.done_fd, 4096).decode()
 
     def stop(self):
+        # Each process signalled is waited for: an interactive shell ignores
+        # SIGTERM and leaves only once its terminal closes the pty.
+        exits = []
         for pid in family(self.p.pid):
             try:
+                exits.append(pidfd_open(pid))
                 os.kill(pid, 15)
             except ProcessLookupError:
                 pass
         self.p.wait()
+        for fd in exits:
+            select.select([fd], [], [])
+            os.close(fd)
         os.close(self.go_fd)
         os.close(self.done_fd)
 
@@ -264,7 +366,7 @@ def memory(pid):
     pss = uss = rss = 0
     for p in terminal_pids(pid):
         try:
-            for line in open(f"/proc/{p}/smaps_rollup"):
+            for line in Path(f"/proc/{p}/smaps_rollup").read_text().splitlines():
                 k, _, v = line.partition(":")
                 if k == "Pss":
                     pss += int(v.split()[0])
@@ -277,12 +379,49 @@ def memory(pid):
     return pss / 1024, uss / 1024, rss / 1024
 
 
+def process_name(pid):
+    """A process as people know it: its program, or the script an interpreter runs."""
+    argv = [os.path.basename(a.decode(errors="replace"))
+            for a in Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0") if a]
+    if not argv:
+        return Path(f"/proc/{pid}/comm").read_text().strip()
+    if argv[0].startswith("python") and len(argv) > 1:
+        return argv[1]
+    return argv[0]
+
+
+def memory_sources(pid):
+    """Where the memory figure comes from: PSS per process counted and per
+    process left out, by name, and the counted PSS split into private data
+    (heap, scrollback), code and libraries mapped from files, and shared memory."""
+    counted, left_out = {}, {}
+    kinds = {"anon": 0.0, "file": 0.0, "shmem": 0.0}
+    for p in sorted(family(pid)):
+        try:
+            comm = Path(f"/proc/{p}/comm").read_text().strip()
+            name = process_name(p)
+            fields = {}
+            for line in Path(f"/proc/{p}/smaps_rollup").read_text().splitlines():
+                k, _, v = line.partition(":")
+                if v.strip().endswith("kB"):
+                    fields[k] = int(v.split()[0]) / 1024
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        into = left_out if comm in HELPERS else counted
+        into[name] = into.get(name, 0.0) + fields.get("Pss", 0.0)
+        if comm not in HELPERS:
+            kinds["anon"] += fields.get("Pss_Anon", 0.0)
+            kinds["file"] += fields.get("Pss_File", 0.0)
+            kinds["shmem"] += fields.get("Pss_Shmem", 0.0)
+    return {"processes": counted, "left_out": left_out, "kinds": kinds}
+
+
 def cpu_seconds(pid):
     tick = os.sysconf("SC_CLK_TCK")
     total = 0
     for p in terminal_pids(pid):
         try:
-            fields = open(f"/proc/{p}/stat").read().rsplit(")", 1)[1].split()
+            fields = Path(f"/proc/{p}/stat").read_text().rsplit(")", 1)[1].split()
             total += int(fields[11]) + int(fields[12])
         except (FileNotFoundError, ProcessLookupError):
             pass
@@ -294,7 +433,7 @@ def gpu_mib(pid):
         return 0
     pids = family(pid)
     total = 0
-    for line in subprocess.run(["nvidia-smi"], capture_output=True, text=True).stdout.splitlines():
+    for line in subprocess.run(["nvidia-smi"], capture_output=True, text=True, check=False).stdout.splitlines():
         parts = line.split()
         if (len(parts) > 6 and parts[4].isdigit() and int(parts[4]) in pids
                 and parts[-2].endswith("MiB")):
@@ -335,10 +474,12 @@ def ram(term, files):
     run.signal()
     cpu = cpu_seconds(run.p.pid) - before
     pss, uss, rss = settled_memory(run.p.pid)
+    sources = memory_sources(run.p.pid)
     vram = gpu_mib(run.p.pid)
     xserver = xserver_mib(run.p.pid)
     run.stop()
-    return {"pss": pss, "uss": uss, "rss": rss, "vram": vram, "xserver": xserver, "cpu": cpu}
+    return {"pss": pss, "uss": uss, "rss": rss, "vram": vram, "xserver": xserver, "cpu": cpu,
+            **sources}
 
 
 def idle_cpu(term, seconds=10):
@@ -490,15 +631,15 @@ def streaming(term, seconds=4, samples=25):
     t0 = time.perf_counter()
     while time.perf_counter() - t0 < 1 + seconds:
         e = next_event(run.p)
-        if e.type == d.extension_event.DamageNotify and e.damage == raw:
-            if time.perf_counter() - t0 >= 1:
-                stamps.append(e.timestamp)
+        if (e.type == d.extension_event.DamageNotify and e.damage == raw
+                and time.perf_counter() - t0 >= 1):
+            stamps.append(e.timestamp)
     d.damage_destroy(raw)
     frames = []
     for k, t in enumerate(stamps):
         if k == 0 or t - stamps[k - 1] > FRAME_SPREAD_MS:
             frames.append(t)
-    gaps = [b - a for a, b in zip(frames, frames[1:])]
+    gaps = [b - a for a, b in itertools.pairwise(frames)]
     box = (0, 0, 160, 80)
     keys = [d.keysym_to_keycode(ord(c)) for c in "ab"]
     lat = []
@@ -561,7 +702,7 @@ def leftovers():
     found = []
     for pid in filter(str.isdigit, os.listdir("/proc")):
         try:
-            environ = open(f"/proc/{pid}/environ", "rb").read()
+            environ = Path(f"/proc/{pid}/environ").read_bytes()
             if any(mark in environ for mark in marks):
                 found.append(int(pid))
         except (FileNotFoundError, PermissionError, ProcessLookupError):
@@ -600,10 +741,20 @@ def measure(terms, runs, out, only):
     results = json.loads(out.read_text()) if out.exists() else {}
 
     def label_of(term):
-        return LABEL if term == "waftty" else term
+        base = term.removesuffix(DROP_DOWN)
+        name = LABEL if base == "waftty" else base
+        return f"{name} drop-down" if term.endswith(DROP_DOWN) else name
+
+    # A measure this run takes replaces that terminal's earlier samples of it;
+    # the ones it does not take (--only, --terminals) are kept.
+    taken = set()
 
     def put(term, key, value):
-        results.setdefault(label_of(term), {}).setdefault(key, []).append(value)
+        samples = results.setdefault(label_of(term), {})
+        if (label_of(term), key) not in taken:
+            taken.add((label_of(term), key))
+            samples[key] = []
+        samples[key].append(value)
         out.write_text(json.dumps(results, indent=1))
 
     def each(key, fn):
@@ -620,7 +771,7 @@ def measure(terms, runs, out, only):
             each("ram_heavy", lambda t: ram(t, ["plain", "sgr"]))
         if wanted("throughput"):
             for name in INPUTS:
-                each(f"tp_{name}", lambda t: throughput(t, name))
+                each(f"tp_{name}", lambda t, name=name: throughput(t, name))
     if wanted("cpu"):
         each("cpu_idle", idle_cpu)
         for _ in range(runs):
@@ -644,9 +795,9 @@ def measure(terms, runs, out, only):
 def versions(terms):
     out = {}
     for term in terms:
-        exe = WAFTTY if term == "waftty" else term
+        exe = program(term)
         try:
-            v = subprocess.run([exe, "--version"], capture_output=True, text=True).stdout
+            v = subprocess.run([exe, "--version"], capture_output=True, text=True, check=False).stdout
             out[term] = v.strip().splitlines()[0] if v.strip() else ""
         except OSError:
             out[term] = ""
@@ -657,7 +808,8 @@ def main():
     global SCROLLBACK, WAFTTY, LABEL
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("command", choices=["inputs", "run"])
-    ap.add_argument("--terminals", default="waftty,xfce4-terminal,alacritty,ghostty,wezterm")
+    ap.add_argument("--terminals", default="waftty,waftty-drop-down,xfce4-terminal,guake,alacritty,"
+                    "kitty,ghostty,wezterm")
     ap.add_argument("--waftty", default="waftty", help="waftty executable to measure")
     ap.add_argument("--label", default="waftty", help="the name waftty's results go under")
     ap.add_argument("--runs", type=int, default=3, help="repetitions of RAM and throughput")
@@ -675,7 +827,10 @@ def main():
         write_inputs()
     (OUT / "run").mkdir(parents=True, exist_ok=True)
     terms = [t for t in a.terminals.split(",") if t]
-    missing = [t for t in terms if not shutil.which(WAFTTY if t == "waftty" else t)]
+    unknown = [t for t in terms if t not in TERMS]
+    if unknown:
+        raise SystemExit(f"unknown terminals: {', '.join(unknown)}; choose from {', '.join(TERMS)}")
+    missing = [t for t in terms if not shutil.which(program(t))]
     if missing:
         raise SystemExit(f"not installed: {', '.join(missing)}")
     # A terminal left from an interrupted run would take this run's windows:

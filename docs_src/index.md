@@ -31,6 +31,60 @@ description: waftty is a tabbed terminal emulator for Linux, macOS and Windows. 
 
 </div>
 
+## Features
+
+<div class="features" markdown>
+
+<div class="feature" markdown>
+
+### Featherweight
+
+Extremely low memory and CPU overhead. waftty stays out of your way, leaving resources for your applications.
+
+</div>
+
+<div class="feature" markdown>
+
+### Fast and Responsive
+
+Smooth terminal output and responsive typing, even when commands produce large amounts of text.
+
+</div>
+
+<div class="feature" markdown>
+
+### Image Support
+
+Display images directly in your terminal with support for modern graphics protocols like kitty.
+
+</div>
+
+<div class="feature" markdown>
+
+### Keyboard-First Navigation
+
+Copy text with Vim-style keyboard navigation, jump directly to links and file paths, and search your scrollback without reaching for the mouse.
+
+</div>
+
+<div class="feature" markdown>
+
+### Shell-Aware and Agent-Ready
+
+Jump between command prompts, select command output, and receive notifications from background tasks and coding agents such as Claude Code and Codex.
+
+</div>
+
+<div class="feature" markdown>
+
+### Modern Terminal Features
+
+Font ligatures, the kitty keyboard protocol, clickable code paths, customizable shortcuts, and themes.
+
+</div>
+
+</div>
+
 ## Built With
 
 waftty is written in [Gossamer](https://github.com/gossamer-lang/gossamer) on the

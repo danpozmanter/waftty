@@ -60,8 +60,14 @@ pub const MOVE_RIGHT: String = "tabs.move-right"
 pub const PIN_TAB: String = "tabs.pin"
 pub const CLOSE_OTHER_TABS: String = "tabs.close-others"
 pub const CLOSE_TABS_RIGHT: String = "tabs.close-right"
+pub const SPLIT_RIGHT: String = "terminal.split-right"
+pub const SPLIT_DOWN: String = "terminal.split-down"
+pub const CLOSE_PANE: String = "terminal.close-pane"
+pub const NEXT_PANE: String = "terminal.next-pane"
+pub const PREVIOUS_PANE: String = "terminal.previous-pane"
 pub const GUIDE: String = "help.guide"
 pub const SHORTCUTS: String = "help.shortcuts"
+pub const CHECK_UPDATES: String = "help.check-updates"
 pub const ABOUT: String = "help.about"
 
 /// The points one Zoom In or Zoom Out adds or takes away.
@@ -149,9 +155,12 @@ pub fn registry(m: Model, key: String) -> Vec<Command> {
     let mac = gui::input::platform_is_macos()
     let current = window.current()
     let has_tab = current.is_some()
-    let pinned = match current { Some(t) => t.pinned, None => false }
-    let at = window.index_of(window.active).unwrap_or(0)
-    let tabs = window.tabs.len()
+    let strip = window.strip()
+    let leader = window.leader_of(window.active)
+    let pinned = strip.any(|t| t.key == leader && t.pinned)
+    let at = window.strip_index_of(window.active).unwrap_or(0)
+    let tabs = strip.len()
+    let split = window.layouts.contains_key(leader)
     let searchable = has_tab && !window.find.query.is_empty()
     let encoding = match current { Some(t) => t.encoding, None => "" }
     let link = match current { Some(t) => t.link, None => "" }
@@ -189,7 +198,7 @@ pub fn registry(m: Model, key: String) -> Vec<Command> {
         Command::new(ZOOM_IN, "Zoom In").key(chord("Ctrl+=", "Cmd+=")).key(chord("Ctrl+Shift+=", "Cmd+Shift+=")).category("View").enabled(model::can_zoom(m.settings, window, ZOOM_STEP))
         Command::new(ZOOM_OUT, "Zoom Out").key(chord("Ctrl+-", "Cmd+-")).key(chord("Ctrl+Shift+-", "Cmd+Shift+-")).category("View").enabled(model::can_zoom(m.settings, window, -ZOOM_STEP))
         Command::new(NORMAL_SIZE, "Reset Zoom").key(chord("Ctrl+0", "Cmd+0")).category("View").enabled(window.zoom != 0.0)
-        Command::new(MENU_BAR, "Show Menu Bar").key(chord("Ctrl+Shift+M", "Cmd+Shift+M")).category("View").checked(m.settings.menu_bar)
+        Command::new(MENU_BAR, "Show Menu Bar").key(chord("Ctrl+Shift+M", "Cmd+Shift+M")).category("View").checked(m.settings.menu_bar).enabled(!m.drop_down)
         Command::new(RESET_WINDOW_SIZE, "Reset Window Size").category("View").enabled(!window.fullscreen)
         Command::new(FIND, "Find…").key(chord("Ctrl+Shift+F", "Cmd+F")).category("Terminal").enabled(has_tab)
         Command::new(FIND_NEXT, "Find Next").key(chord("Ctrl+Shift+G", "Cmd+G")).category("Terminal").enabled(searchable)
@@ -205,6 +214,11 @@ pub fn registry(m: Model, key: String) -> Vec<Command> {
         Command::new(SCROLL_BOTTOM, "Scroll to Bottom").key(chord("Ctrl+Shift+End", "Cmd+End")).category("Terminal").enabled(has_tab)
         Command::new(CLEAR_SCROLLBACK, "Clear Scrollback").key(chord("Ctrl+Shift+K", "Cmd+K")).category("Terminal").enabled(has_tab)
         Command::new(RESET, "Reset").category("Terminal").enabled(has_tab)
+        Command::new(SPLIT_RIGHT, "Split Right").key(chord("Ctrl+Shift+D", "Cmd+D")).category("Terminal").enabled(has_tab)
+        Command::new(SPLIT_DOWN, "Split Down").key(chord("Ctrl+Shift+B", "Cmd+Shift+D")).category("Terminal").enabled(has_tab)
+        Command::new(NEXT_PANE, "Next Pane").key(chord("Ctrl+Shift+]", "Cmd+]")).category("Terminal").enabled(split)
+        Command::new(PREVIOUS_PANE, "Previous Pane").key(chord("Ctrl+Shift+[", "Cmd+[")).category("Terminal").enabled(split)
+        Command::new(CLOSE_PANE, "Close Pane").key(chord("Ctrl+Shift+J", "Cmd+Option+W")).category("Terminal").enabled(split)
         Command::new(RESET_AND_CLEAR, "Reset and Clear").key(chord("Ctrl+Shift+R", "Cmd+Option+K")).category("Terminal").enabled(has_tab)
         Command::new(PREVIOUS_TAB, "Previous Tab").key("Ctrl+Shift+Tab").key(chord("Ctrl+PageUp", "Cmd+Shift+[")).category("Tabs").enabled(tabs > 1)
         Command::new(NEXT_TAB, "Next Tab").key("Ctrl+Tab").key(chord("Ctrl+PageDown", "Cmd+Shift+]")).category("Tabs").enabled(tabs > 1)
@@ -216,6 +230,7 @@ pub fn registry(m: Model, key: String) -> Vec<Command> {
         Command::new(CLOSE_TABS_RIGHT, "Close Tabs to the Right").category("Tabs").enabled(has_tab && at + 1 < tabs)
         Command::new(GUIDE, "waftty Guide").category("Help")
         Command::new(SHORTCUTS, "Keyboard Shortcuts").category("Help")
+        Command::new(CHECK_UPDATES, "Check for Updates").category("Help").enabled(m.checking_window.is_empty())
         Command::new(ABOUT, "About waftty").category("Help")
     ]
     for n in 1..10 {
@@ -230,9 +245,9 @@ pub fn registry(m: Model, key: String) -> Vec<Command> {
         out.push(Command::new(encoding_command(c.label), c.name).category("Set Encoding").enabled(has_tab).checked(c.label == encoding))
     }
     let mut n = 0
-    for t in window.tabs {
+    for t in strip {
         n += 1
-        out.push(Command::new(show_command(t.key), f"{n}  {t.label()}").category("Tabs").checked(t.key == window.active))
+        out.push(Command::new(show_command(t.key), f"{n}  {t.label()}").category("Tabs").checked(t.key == leader))
     }
     shortcuts::apply(out, m.shortcuts)
 }
@@ -254,14 +269,22 @@ fn zoom_menu() -> MenuItem {
 }
 
 /// What a right click on a terminal offers.
-pub fn context_menu() -> Vec<MenuItem> {
-    #[
+pub fn context_menu(drop_down: bool) -> Vec<MenuItem> {
+    let mut items = #[
         menus::item(OPEN_LINK), menus::item(COPY_LINK), menus::item(COPY_EMAIL), MenuItem::Separator
         menus::item(COPY), menus::item(PASTE), menus::item(SELECT_ALL), MenuItem::Separator
-        menus::item(NEW_TAB), menus::item(FIND), menus::item(CLEAR_SCROLLBACK), MenuItem::Separator
-        signal_menu(), zoom_menu(), menus::item(MENU_BAR), MenuItem::Separator
-        menus::item(SETTINGS)
+        menus::item(NEW_TAB), menus::item(SPLIT_RIGHT), menus::item(SPLIT_DOWN), menus::item(CLOSE_PANE), MenuItem::Separator
+        menus::item(FIND), menus::item(CLEAR_SCROLLBACK), MenuItem::Separator
+        signal_menu(), zoom_menu()
     ]
+    // A drop-down window has no menu bar, so its menu reaches what the bar
+    // would: About, updates and Quit.
+    if drop_down {
+        items.extend(#[MenuItem::Separator, menus::item(SETTINGS), menus::item(CHECK_UPDATES), menus::item(ABOUT), MenuItem::Separator, menus::item(QUIT)])
+    } else {
+        items.extend(#[menus::item(MENU_BAR), MenuItem::Separator, menus::item(SETTINGS)])
+    }
+    items
 }
 
 /// The menu bar of window `key`; its Tabs menu lists the window's tabs.
@@ -277,7 +300,7 @@ pub fn menu_bar(m: Model, key: String) -> gui::Widget {
         menus::item(CLOSE_OTHER_TABS), menus::item(CLOSE_TABS_RIGHT), MenuItem::Separator
     ]
     if let Some(w) = model::window_index(m, key) {
-        for t in m.windows[w].tabs { tab_items.push(menus::radio(show_command(t.key), "")) }
+        for t in m.windows[w].strip() { tab_items.push(menus::radio(show_command(t.key), "")) }
     }
     gui::Widget::joined_menu_bar("menu", #[
         Menu::new("&File", #[
@@ -296,11 +319,12 @@ pub fn menu_bar(m: Model, key: String) -> gui::Widget {
             menus::item(FIND), menus::item(FIND_NEXT), menus::item(FIND_PREVIOUS), MenuItem::Separator
             menus::item(PREVIOUS_PROMPT), menus::item(NEXT_PROMPT), menus::item(SELECT_OUTPUT), MenuItem::Separator
             menus::item(COPY_MODE), MenuItem::Separator
+            menus::item(SPLIT_RIGHT), menus::item(SPLIT_DOWN), menus::item(NEXT_PANE), menus::item(PREVIOUS_PANE), menus::item(CLOSE_PANE), MenuItem::Separator
             menus::item(SCROLL_TOP), menus::item(SCROLL_BOTTOM), menus::item(CLEAR_SCROLLBACK), MenuItem::Separator
             menus::item(RESET), menus::item(RESET_AND_CLEAR), signal_menu(), menus::submenu("Set &Encoding", encoding_items)
         ])
         Menu::new("T&abs", tab_items)
-        Menu::new("&Help", #[menus::item(GUIDE), menus::item(SHORTCUTS), MenuItem::Separator, menus::item(ABOUT)])
+        Menu::new("&Help", #[menus::item(GUIDE), menus::item(SHORTCUTS), MenuItem::Separator, menus::item(CHECK_UPDATES), menus::item(ABOUT)])
     ])
 }
 
@@ -331,7 +355,7 @@ mod tests {
     #[test]
     fn the_link_entries_show_only_over_a_link_and_the_email_entry_over_an_address() {
         let mut m = model::new(Settings::default())
-        m.windows[0].tabs.push(model::Tab { key: "tab-1", terminal: Terminal { id: 0 }, title: "", name: "", encoding: "", pinned: false, link: "", attention: false, fixed_title: "", hold: false })
+        m.windows[0].tabs.push(model::Tab { key: "tab-1", terminal: Terminal { id: 0 }, title: "", name: "", encoding: "", pinned: false, link: "", attention: false, fixed_title: "", hold: false, group: "" })
         m.windows[0].active = "tab-1"
         assert(!shown(m, super::OPEN_LINK) && !shown(m, super::COPY_LINK) && !shown(m, super::COPY_EMAIL))
         m.windows[0].tabs[0].link = "https://example.org/"

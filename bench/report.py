@@ -17,7 +17,7 @@ MB = 20 * 1024 * 1024 / 1e6  # each input is 20 MiB
 SURFACE, INK, MUTED, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e6e5e1"
 # Validated categorical order (CVD pass); value labels and tables give relief
 # for the third color's contrast warning.
-PALETTE = ["#2a78d6", "#eb6834", "#1baf7a"]
+PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4"]
 plt.rcParams.update({
     "font.family": "DejaVu Sans", "font.size": 10, "text.color": INK,
     "axes.edgecolor": GRID, "axes.labelcolor": MUTED, "xtick.color": MUTED, "ytick.color": INK,
@@ -53,12 +53,44 @@ def hbars(out, order, name, title, unit, series, fmt, note=None, extra=None, end
     for side in ("top", "right", "left"):
         ax.spines[side].set_visible(False)
     ax.tick_params(axis="y", length=0)
-    ax.set_title(title, loc="left", fontsize=12, color=INK, pad=12)
+    ax.set_title(title, loc="left", fontsize=12, color=INK, pad=30 if n > 1 else 12)
     if n > 1:
-        ax.legend(frameon=False, loc="lower right", fontsize=9)
+        # Above the plot, where no bar can run under it.
+        ax.legend(frameon=False, loc="lower left", bbox_to_anchor=(0, 1.0), ncol=n, fontsize=9,
+                  handlelength=1.2, borderaxespad=0.2)
     if note:
         fig.text(0.01, 0.01, note, fontsize=8, color=MUTED)
     fig.tight_layout(rect=(0, 0.03 if note else 0, 1, 1))
+    fig.savefig(out / f"{name}.png", dpi=150)
+    plt.close(fig)
+
+
+def stacked(out, order, name, title, unit, parts, fmt, note):
+    """One horizontal bar per terminal split into `parts`, (label, values) in
+    palette order, with each bar's total at its end."""
+    fig, ax = plt.subplots(figsize=(9, 0.55 * len(order) + 2.0))
+    starts = [0.0] * len(order)
+    for i, (label, vals) in enumerate(parts):
+        # A surface-colored edge leaves a 2px gap between touching segments.
+        ax.barh(range(len(order)), vals, left=starts, height=0.62, color=PALETTE[i], label=label,
+                edgecolor=SURFACE, linewidth=2, zorder=2)
+        starts = [a + b for a, b in zip(starts, vals)]
+    top = max(starts) or 1
+    for k, total in enumerate(starts):
+        ax.text(total + top * 0.012, k, fmt(total), va="center", fontsize=9, color=INK)
+    ax.set_yticks(range(len(order)), order)
+    ax.invert_yaxis()
+    ax.set_xlim(0, top * 1.12)
+    ax.set_xlabel(unit)
+    ax.grid(axis="x", color=GRID, linewidth=0.8, zorder=0)
+    for side in ("top", "right", "left"):
+        ax.spines[side].set_visible(False)
+    ax.tick_params(axis="y", length=0)
+    ax.set_title(title, loc="left", fontsize=12, color=INK, pad=30)
+    ax.legend(frameon=False, loc="lower left", bbox_to_anchor=(0, 1.0), ncol=len(parts), fontsize=8,
+              handlelength=1.2, columnspacing=1.2, borderaxespad=0.2)
+    fig.text(0.01, 0.01, note, fontsize=8, color=MUTED)
+    fig.tight_layout(rect=(0, 0.03, 1, 1))
     fig.savefig(out / f"{name}.png", dpi=150)
     plt.close(fig)
 
@@ -101,18 +133,42 @@ def main():
     order = list(res)
     a.out.mkdir(parents=True, exist_ok=True)
 
+    # Memory is one run's own figure, the low median, so it matches the split
+    # below for any number of runs.
     def mem(t, phase, key="pss"):
-        return med(r[key] for r in res[t][f"ram_{phase}"])
+        return statistics.median_low(r[key] for r in res[t][f"ram_{phase}"])
 
     def mbps(t, name):
         return MB / (med(res[t][f"tp_{name}"]) / 1000)
 
-    hbars(a.out, order, "ram", "Memory (PSS), idle and after 40 MB of output",
-          "MB (lower is better)",
+    hbars(a.out, order, "ram", "Memory (PSS), idle and after 40 MiB of output",
+          "MiB (lower is better)",
           [("Idle", [mem(t, "idle") for t in order]),
-           ("Heavy: 20 MB plain + 20 MB colored text", [mem(t, "heavy") for t in order])],
+           ("Heavy: 20 MiB plain + 20 MiB colored text", [mem(t, "heavy") for t in order])],
           lambda v: f"{v:.1f}",
           note="Median of launches; terminal processes only (shell excluded).")
+
+    # Under load, where each terminal's memory sits. Older results lack the split.
+    split = [t for t in order if all("kinds" in r for r in res[t]["ram_heavy"])]
+
+    # The split is of one run, the one whose PSS is the median, so its parts add
+    # up to that run's total; medians taken part by part need not.
+    def heavy(t, pick):
+        runs = sorted(res[t]["ram_heavy"], key=lambda r: r["pss"])
+        return pick(runs[(len(runs) - 1) // 2])
+
+    sources = [("Private data (heap, scrollback)", lambda r: r["kinds"]["anon"]),
+               ("Code and libraries", lambda r: r["kinds"]["file"]),
+               ("Shared memory", lambda r: r["kinds"]["shmem"]),
+               ("X server pixmaps", lambda r: r.get("xserver", 0.0)),
+               ("GPU memory", lambda r: r.get("vram", 0.0))]
+    if split:
+        stacked(a.out, split, "ram-sources", "Where memory goes under load (after 40 MiB of output)",
+                "MiB (lower is better)",
+                [(label, [heavy(t, pick) for t in split]) for label, pick in sources],
+                lambda v: f"{v:.1f}",
+                note="Median of launches. The terminal's PSS split by kind, plus what the X server "
+                     "and the GPU hold for it.")
 
     def cpu(t, key, field=None):
         values = [v[field] if field else v for v in res[t].get(key, [])]
@@ -120,7 +176,7 @@ def main():
 
     panels(a.out, order, "cpu", "CPU use",
            [("Idle", "% of one core", [cpu(t, "cpu_idle") for t in order], lambda v: f"{v:.1f}"),
-            ("Printing 40 MB", "seconds of CPU", [cpu(t, "cpu_load", "seconds") for t in order],
+            ("Printing 40 MiB", "seconds of CPU", [cpu(t, "cpu_load", "seconds") for t in order],
              lambda v: f"{v:.2f}")],
            note="User and system time of the terminal's processes; lower is better.")
     hbars(a.out, order, "throughput", "Output throughput", "MB/s (higher is better)",
@@ -153,23 +209,47 @@ def main():
 
     lines = ["# Terminal benchmark", ""]
     versions = meta.get("versions", {})
-    lines += [f"Scrollback {meta.get('scrollback')} lines, window {meta.get('window')}, "
-              f"vsync off: {meta.get('vsync_off')}.", ""]
+    lines += [(f"Scrollback {meta.get('scrollback')} lines, window {meta.get('window')}, "
+               f"vsync off: {meta.get('vsync_off')}."), ""]
     lines += [row(["Terminal", "Version"]), row(["---", "---"])]
     lines += [row([t, versions.get(t, "")]) for t in order] + [""]
     lines += ["## Memory", "", "![Memory](ram.png)", ""]
-    lines += ["PSS shares each library page among the processes that map it; USS is the "
-              "terminal's own. X server pixmaps and GPU memory are held elsewhere on the "
-              "terminal's behalf.", ""]
+    lines += [("PSS shares each library page among the processes that map it; USS is the "
+               "terminal's own. X server pixmaps and GPU memory are held elsewhere on the "
+               "terminal's behalf."), ""]
     lines += [row(["Terminal", "Idle PSS", "Idle USS", "Heavy PSS", "Heavy USS",
                    "X server pixmaps", "GPU"]),
               row(["---"] + ["---:"] * 6)]
     for t in order:
         held = [r["xserver"] for r in res[t]["ram_idle"] if "xserver" in r]
-        lines.append(row([t, f"{mem(t, 'idle'):.1f} MB", f"{mem(t, 'idle', 'uss'):.1f} MB",
-                          f"{mem(t, 'heavy'):.1f} MB", f"{mem(t, 'heavy', 'uss'):.1f} MB",
+        lines.append(row([t, f"{mem(t, 'idle'):.1f} MiB", f"{mem(t, 'idle', 'uss'):.1f} MiB",
+                          f"{mem(t, 'heavy'):.1f} MiB", f"{mem(t, 'heavy', 'uss'):.1f} MiB",
                           f"{med(held):.1f} MiB" if held else "-",
                           f"{mem(t, 'idle', 'vram'):.0f} MiB"]))
+    if split:
+        lines += ["", "### Where the memory comes from", "", "![Memory under load by source](ram-sources.png)", ""]
+        lines += [("Each figure is the PSS of the terminal's own processes after 40 MiB of output. "
+                  "Left out are the shell and test commands, and the session bus a run starts "
+                  "for a single-instance terminal (dbus-run-session, dbus-daemon, and for "
+                  "xfce4-terminal xfconfd and gvfsd), which a desktop already runs. Private data "
+                  "is heap and other anonymous memory, scrollback included; code and libraries "
+                  "are mapped from files, each shared page divided among the processes that map "
+                  "it; X server pixmaps and GPU memory are held outside the terminal on its behalf "
+                  "and are not in its PSS."), ""]
+
+        def named(t, field):
+            names = {n for r in res[t]["ram_heavy"] for n in r[field]}
+            return ", ".join(f"{n} {heavy(t, lambda r, n=n: r[field].get(n, 0.0)):.1f}"
+                             for n in sorted(names)) or "-"
+
+        lines += [row(["Terminal", "Processes counted (MiB)", "Left out (MiB)"]),
+                  row(["---", "---", "---"])]
+        lines += [row([t, named(t, "processes"), named(t, "left_out")]) for t in split]
+        lines += ["", row(["Terminal"] + [label for label, _ in sources] + ["Total"]),
+                  row(["---"] + ["---:"] * (len(sources) + 1))]
+        for t in split:
+            parts = [heavy(t, pick) for _, pick in sources]
+            lines.append(row([t] + [f"{v:.1f} MiB" for v in parts] + [f"{sum(parts):.1f} MiB"]))
     lines += ["", "## Throughput", "", "![Throughput](throughput.png)", ""]
     lines += ["## Smoothness under load", "", "![Smoothness](smoothness.png)", ""]
     lines += [row(["Terminal", "Frames/s", "Median gap", "p99 gap", "Longest gap",
@@ -184,7 +264,7 @@ def main():
                           f"{max(gaps):.0f} ms", f"{med(echo):.1f} ms",
                           f"{pct(echo, 0.95):.1f} ms"]))
     lines += ["", "## CPU", "", "![CPU](cpu.png)", ""]
-    lines += [row(["Terminal", "Idle", "While 40 MB print", "CPU time for 40 MB"]),
+    lines += [row(["Terminal", "Idle", "While 40 MiB print", "CPU time for 40 MiB"]),
               row(["---"] + ["---:"] * 3)]
     for t in order:
         lines.append(row([t, f"{cpu(t, 'cpu_idle'):.2f}%",

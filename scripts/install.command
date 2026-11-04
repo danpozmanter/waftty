@@ -43,12 +43,9 @@ install_cli_symlink() {
 }
 
 echo ""
-echo "Installing CLI symlinks (may prompt for sudo)..."
-# /opt/homebrew belongs to Homebrew, so only /usr/local/bin is created here.
+echo "Installing the CLI symlink (may prompt for sudo)..."
 [ -d /usr/local/bin ] || sudo mkdir -p /usr/local/bin 2>/dev/null || true
-for bin_dir in /usr/local/bin /opt/homebrew/bin; do
-    install_cli_symlink "/Applications/waftty.app/Contents/MacOS/waftty" waftty "$bin_dir"
-done
+install_cli_symlink "/Applications/waftty.app/Contents/MacOS/waftty" waftty /usr/local/bin
 
 echo ""
 echo "Done. Launch from /Applications or run:"
@@ -57,7 +54,7 @@ echo "  waftty"
 path_has() {
     case ":${PATH}:" in *":$1:"*) return 0 ;; *) return 1 ;; esac
 }
-if ! path_has /usr/local/bin && ! path_has /opt/homebrew/bin; then
+if ! path_has /usr/local/bin; then
     case "${SHELL##*/}" in
         zsh)  shell_rc="$HOME/.zshrc" ;;
         bash) shell_rc="$HOME/.bash_profile" ;;
@@ -65,9 +62,8 @@ if ! path_has /usr/local/bin && ! path_has /opt/homebrew/bin; then
         *)    shell_rc="your shell profile" ;;
     esac
     echo ""
-    echo "Note: neither /usr/local/bin nor /opt/homebrew/bin is in your PATH,"
-    echo "so 'waftty' won't resolve in the shell."
-    echo "Add one of them to $shell_rc. For zsh or bash:"
+    echo "Note: /usr/local/bin is not in your PATH, so 'waftty' won't resolve"
+    echo "in the shell. Add it to $shell_rc. For zsh or bash:"
     echo ""
     echo "    export PATH=\"/usr/local/bin:\$PATH\""
     echo ""

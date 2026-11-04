@@ -73,7 +73,7 @@ Not sure which Mac you have? Open the Apple menu and choose About This Mac:
 
     It copies `waftty.app` to `/Applications`, clears the download
     quarantine, signs the copy for this Mac, and links a `waftty` command
-    into `/usr/local/bin` (and `/opt/homebrew/bin` where it exists).
+    into `/usr/local/bin`.
 
 === "Windows"
 
@@ -105,7 +105,7 @@ packages, make the folder yourself:
 
 ## Building from Source
 
-waftty needs [Gossamer](https://github.com/gossamer-lang/gossamer) 0.75.13 or
+waftty needs [Gossamer](https://github.com/gossamer-lang/gossamer) 0.76.0 or
 newer, Rust 1.95.0 through rustup (`rustup toolchain install 1.95.0`), and
 LLVM for native builds. The GUI libraries are expected beside the checkout at
 `../goose-libs`.

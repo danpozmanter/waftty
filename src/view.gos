@@ -3,11 +3,12 @@
 // settings ask, and the find bar under the terminal while it is open.
 
 use gui
-use gui::{TabItem, Widget}
+use gui::{Axis, Color, TabItem, ThemeOverride, Widget}
 
 use commands
 use model
 use model::Model
+use panes::Layout
 use settings
 
 /// The main window.
@@ -19,29 +20,87 @@ pub fn main(m: Model) -> Widget {
 pub fn window(m: Model, key: String) -> Widget {
     let Some(w) = model::window_index(m, key) else { return Widget::Empty }
     let win = m.windows[w]
-    let options = settings::view_options(m.settings)
-    let terminal = match win.current() {
-        Some(tab) => tab.terminal.view(tab.view_id(), "Terminal", font: model::font(m), font_size: model::font_size(m, w), scheme: model::scheme(m).colors, options: Some(options))
-            .context_menu(f"terminal-menu:{key}", commands::context_menu())
-            .grow(1)
-        None => Widget::Empty
-    }
+    let leader = win.leader_of(win.active)
+    let terminal = if win.index_of(leader).is_some() { page(m, w, leader) } else { Widget::Empty }
+    let tabs = win.strip()
     let strip = match m.settings.tab_bar {
-        "always" => !win.tabs.is_empty()
+        "always" => !tabs.is_empty()
         "never" => false
-        _ => win.tabs.len() > 1
+        _ => tabs.len() > 1
     }
     let body = if strip {
-        let items = win.tabs.map(|t| TabItem::new(t.key, t.label()).pinned(t.pinned).attention(t.attention).tooltip(tooltip(t)))
-        Widget::joined_tabs(win.strip_id(), items, win.active, terminal).grow(1)
+        let items = tabs.map(|t| {
+            let shown = win.shown(t.key).unwrap_or(t)
+            let attention = win.members(t.key).any(|k| win.tabs.any(|p| p.key == k && p.attention))
+            TabItem::new(t.key, shown.label()).pinned(t.pinned).attention(attention).tooltip(tooltip(shown))
+        })
+        let mut pages = Map::new()
+        for t in tabs { pages[t.key] = if t.key == leader { terminal } else { page(m, w, t.key) } }
+        Widget::joined_tab_pages(win.strip_id(), model::TAB_WORKSPACE, items, leader, pages).grow(1)
     } else {
         terminal
     }
     let mut rows = #[]
-    if m.settings.menu_bar { rows.push(commands::menu_bar(m, key)) }
+    // A drop-down window shows no menu bar, as Guake shows none.
+    if m.settings.menu_bar && !m.drop_down { rows.push(commands::menu_bar(m, key)) }
     rows.push(body)
-    rows.push(win.find.view())
-    Widget::column(rows, 0)
+    let chrome = match chrome_of(m) {
+        Some(change) => Widget::column(rows, 0).grow(1).themed(change)
+        None => Widget::column(rows, 0).grow(1)
+    }
+    Widget::column(#[chrome, win.find.view()], 0)
+}
+
+// The menu bar and tab strip join the terminal under them, so a scheme with
+// colors of its own colors them too: the active tab takes the terminal's
+// background and the bars a shade of it.
+fn chrome_of(m: Model) -> Option<ThemeOverride> {
+    let colors = model::scheme(m).colors?
+    let ground = Color::parse_css(colors.background)?
+    let shade = ground.mix(Color::black(), if ground.luminance() < 0.5 { 0.3 } else { 0.08 })
+    Some(ThemeOverride { kind: None, density: None, rtl: None, text_scale: 0.0, tokens: None, focus: None, accent: None, surface: Some(ground), field: Some(shade) })
+}
+
+// What strip tab `leader` of window `w` shows: its terminal, or its panes
+// as its layout arranges them.
+fn page(m: Model, w: i64, leader: String) -> Widget {
+    match m.windows[w].layouts.get(leader) {
+        Some(layout) => arranged(m, w, leader, layout, "")
+        None => pane(m, w, leader)
+    }
+}
+
+// The terminal of pane `key` in window `w`.
+fn pane(m: Model, w: i64, key: String) -> Widget {
+    let win = m.windows[w]
+    let Some(at) = win.index_of(key) else { return Widget::Empty }
+    let tab = win.tabs[at]
+    tab.terminal.view(tab.view_id(), "Terminal", font: model::font(m), font_size: model::font_size(m, w), scheme: model::scheme(m).colors, options: Some(settings::view_options(m.settings)))
+        .context_menu(f"terminal-menu:{win.key}:{key}", commands::context_menu(m.drop_down))
+        .grow(1)
+}
+
+// The panes of split tab `leader` as `layout` arranges them; `path` names
+// the split reached so far, as `split_of` reads it back.
+fn arranged(m: Model, w: i64, leader: String, layout: Layout, path: String) -> Widget {
+    match layout {
+        Layout::Pane(key) => pane(m, w, key)
+        Layout::Split { across, ratio, first, second } => {
+            let axis = if across { Axis::Horizontal } else { Axis::Vertical }
+            let id = f"{SPLIT_PREFIX}{m.windows[w].key}|{leader}|{path}"
+            Widget::split(id, arranged(m, w, leader, first, f"{path}a"), arranged(m, w, leader, second, f"{path}b"), axis, ratio).grow(1)
+        }
+    }
+}
+
+const SPLIT_PREFIX: String = "split|"
+
+/// The window, split tab and split path a divider's id names.
+pub fn split_of(id: String) -> Option<(String, String, String)> {
+    if !id.starts_with(SPLIT_PREFIX) { return None }
+    let parts = id.substring(SPLIT_PREFIX.byte_len(), id.byte_len()).split("|")
+    if parts.len() != 3 { return None }
+    Some((parts[0], parts[1], parts[2]))
 }
 
 // The tab's title and, when known, the folder its program works in.

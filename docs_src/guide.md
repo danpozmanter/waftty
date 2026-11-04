@@ -40,10 +40,13 @@ the menu bar. **Edit > Settings > Shortcuts** changes any of them.
 | Tab 1 to 8 / Last Tab | ++alt+1++ to ++alt+8++ / ++alt+9++ | ++cmd+1++ to ++cmd+8++ / ++cmd+9++ |
 | Switch to Last Tab | ++ctrl+shift+l++ | ++cmd+shift+l++ |
 | Move Tab Left / Right | ++ctrl+shift+page-up++ / ++ctrl+shift+page-down++ | ++cmd+shift+page-up++ / ++cmd+shift+page-down++ |
+| Split Right / Split Down | ++ctrl+shift+d++ / ++ctrl+shift+b++ | ++cmd+d++ / ++cmd+shift+d++ |
+| Next Pane / Previous Pane | ++ctrl+shift+bracket-right++ / ++ctrl+shift+bracket-left++ | ++cmd+bracket-right++ / ++cmd+bracket-left++ |
+| Close Pane | ++ctrl+shift+j++ | ++cmd+option+w++ |
 
 A right click on the terminal offers the link entries, Copy, Paste, Select
-All, New Tab, Find, Clear Scrollback, Send Signal, Zoom, Show Menu Bar and
-Settings.
+All, New Tab, Split Right, Split Down, Close Pane, Find, Clear Scrollback,
+Send Signal, Zoom, Show Menu Bar and Settings.
 
 ## Tabs
 
@@ -54,8 +57,53 @@ Settings.
   stay open.
 - A tab whose program rings the bell or posts a notification while hidden is
   marked until you look at it.
+- Drag a tab out of its window, or choose **Move Tab to New Window** from its
+  menu, to give it a window of its own. Drop a tab on another window's tab
+  strip to move it there; a split tab moves with its panes, and a window left
+  without tabs closes.
 - Closing a tab, window or waftty while a program runs asks first and names
-  the program.
+  the program. **Exit Anyway** (or ++e++, or ++left++ then ++enter++) closes
+  it anyway; **Cancel** (++c++ or ++escape++) keeps it. Every dialog's buttons
+  answer the letter underlined in their labels, and the arrow keys move
+  between them.
+
+## Split Panes
+
+- **Terminal > Split Right** and **Split Down** divide the focused pane and
+  start your shell in the new one, in the same folder.
+- Drag the divider between two panes to resize them. A click focuses a pane;
+  **Next Pane** and **Previous Pane** move through them in reading order.
+- **Close Pane** closes the focused pane, and its neighbor takes the space.
+  A pane whose program exits closes the same way.
+- A split tab is one tab in the strip, named for its focused pane. Close Tab
+  closes it with all its panes.
+
+## Drop-Down Mode
+
+```sh
+waftty --drop-down
+```
+
+opens waftty as a drop-down terminal: a window without a frame that hangs
+from the top of the screen above other windows. Its shortcut, ++f12++ unless
+**Settings > Drop-Down** names another, shows and hides it from any
+application; pressed while another window has focus, it brings the drop-down
+to the front. It has no menu bar; a right click reaches Settings, Check for
+Updates, About and Quit. It spans the display's width and half its height
+until you resize it, and then keeps the size you left it at, apart from the
+size waftty's other windows remember; the same page sets the width and the
+height, in percent of the display.
+
+Add `waftty --drop-down` to your desktop's startup applications to have it
+ready at login. Launching it again while it runs shows the running one.
+
+- On X11, Windows and macOS waftty takes the key itself. If another
+  application, such as another drop-down terminal, already holds it, waftty
+  says so; choose another key on the Drop-Down page.
+- On Wayland the desktop's GlobalShortcuts portal takes it, and the desktop
+  may ask you to confirm or change the key. Where the desktop has no such
+  portal, bind a desktop shortcut to `waftty --drop-down`, which shows the
+  running drop-down.
 
 ## Find
 
@@ -103,8 +151,8 @@ is full. For a complete record of an agent's work, keep the agent's own log.
 
 ## Pasting
 
-A paste of several lines or of control characters asks first (Settings can
-turn this off). Pastes of up to 16 MiB reach the program as fast as it reads
+With **Ask before pasting several lines** on in Settings, a paste of several
+lines or of control characters asks first; it is off by default. Pastes of up to 16 MiB reach the program as fast as it reads
 them, as one paste: typing meanwhile follows the paste, and ++escape++ or
 ++ctrl+c++ stops it where the program has got to. A paste that can't be
 sent says why.
@@ -188,6 +236,7 @@ waftty --title review -e codex               # the tab keeps this name
 waftty --hold -e ./run-checks                # the tab stays open after it ends
 ```
 
+`waftty --drop-down` starts the [drop-down terminal](#drop-down-mode).
 Every argument after `-e` is the program's own. `--hold` keeps the
 program's last screen and adds the status it exited with; close the tab when
 you are done. A folder or a program on the command line starts a new session
@@ -219,7 +268,7 @@ under **More**. Not available on Windows.
 
 ## Settings
 
-**Edit > Settings** opens a window with four pages. Each value has a button
+**Edit > Settings** opens a window with five pages. Each value has a button
 that puts it back to its default; only values that differ from the defaults
 are saved, so the defaults follow your desktop.
 
@@ -231,7 +280,9 @@ are saved, so the defaults follow your desktop.
 - **Appearance**: the font, its size and weight (empty uses the desktop's
   monospace font), ligatures, the color scheme, the cursor shape and
   blinking, bold text in bright colors, readability adjustment, padding,
-  background opacity, the scrollbar, the menu bar and the tab bar.
+  background opacity (below 100 percent the desktop shows through the
+  terminal, where it blends windows), the scrollbar and its side, the menu
+  bar and the tab bar.
 - **Behavior**: scrollback lines, scrolling on output and typing, the
   characters a double click selects, copying on select, asking before
   pasting several lines, the bell (mark the tab, flash or sound),
@@ -239,6 +290,8 @@ are saved, so the defaults follow your desktop.
   it), the editor for file paths (such as `nvim +{line} {path}`), on macOS
   whether Option is Meta, and on Linux whether keys go through the input
   method (see below).
+- **Drop-Down**: the shortcut that shows and hides the
+  [drop-down terminal](#drop-down-mode), and its width and height.
 - **Shortcuts**: every command's chords.
 
 Settings are saved in the configuration directory:
@@ -296,6 +349,12 @@ ansi = [
   "#3b5368", "#ff7b86", "#b5e890", "#ffd88a", "#86cff5", "#de9bf0", "#7fd8e2", "#ffffff",
 ]
 ```
+
+## Updates
+
+**Help > Check for Updates** asks GitHub for the latest release. When it is
+newer than the waftty running, Download opens its page; otherwise waftty says
+it is up to date. waftty checks only when asked.
 
 ## Custom Shortcuts
 
