@@ -2,7 +2,7 @@
 // the tab strip's requests, what the terminals report, window closing, and
 // the Find, Settings, Edit Colors, About and confirmation dialogs.
 
-use std::{errors, fs, os, runtime}
+use std::{errors, fs, os, path, runtime}
 
 use gui
 use gui::{Effect, Outcome, UiMsg}
@@ -91,12 +91,26 @@ fn dialog(m: &mut Model, id: String, outcome: Outcome) {
             Ok(e) => save_scheme(m, e)
             Err(why) => model::report(m.windows[0].key, "The scheme could not be imported", why)
         }
+    } else if id == "save-text" {
+        let saving = m.saving
+        m.saving = None
+        if let Outcome::Paths(files) = outcome && !files.is_empty() && let Some(asked) = saving {
+            let key, selection = asked
+            if let Some(loc) = model::tab_location(*m, key) {
+                let w, t = loc
+                if let Err(why) = m.windows[w].tabs[t].terminal.save_text(files[0], selection) {
+                    model::report(m.windows[w].key, "Couldn't save the text", why)
+                }
+            }
+        }
     } else if accepted && id.starts_with("paste:") {
         if let Some(held) = m.held_paste {
             let key, text = held
             if let Some(loc) = model::tab_location(*m, key) {
                 let w, t = loc
-                let _ = m.windows[w].tabs[t].terminal.paste(text)
+                if let Err(why) = m.windows[w].tabs[t].terminal.paste(text) {
+                    model::report(m.windows[w].key, "Couldn't paste", why)
+                }
             }
         }
         m.held_paste = None
@@ -209,6 +223,41 @@ fn command(m: &mut Model, window: String, id: String) {
                 let _ = t.terminal.scroll(rows)
             }
         }
+        commands::COPY_MODE => {
+            if let Some(t) = tab && let Err(why) = t.terminal.copy_mode() {
+                model::report(window, "Couldn't start copy mode", why)
+            }
+        }
+        commands::OPEN_LINK_HINT | commands::COPY_LINK_HINT => {
+            if let Some(t) = tab {
+                match t.terminal.hints(id == commands::COPY_LINK_HINT) {
+                    Ok(0) => gui::perform(Effect::Announce("There are no links on the screen"))
+                    Ok(_) => ()
+                    Err(why) => model::report(window, "Couldn't label the links", why)
+                }
+            }
+        }
+        commands::SAVE_SCROLLBACK | commands::SAVE_SELECTION => {
+            if let Some(t) = tab {
+                let selection = id == commands::SAVE_SELECTION
+                m.saving = Some((t.key, selection))
+                let title = if selection { "Save Selection" } else { "Save Scrollback" }
+                let filters = #[request::FileFilter { name: "Text", patterns: #["*.txt"] }]
+                gui::perform(Effect::OpenDialogIn(window, request::save_file("save-text", title, f"{model::file_name(t.label())}.txt", filters)))
+            }
+        }
+        commands::EDIT_SCROLLBACK => {
+            if let Some(t) = tab {
+                let saved = fs::temp_dir("waftty-").and_then(|dir| {
+                    let file = path::join(dir, f"{model::file_name(t.label())}.txt")
+                    t.terminal.save_text(file, false).map(|_| file)
+                })
+                match saved {
+                    Ok(file) => open_path(m, w, file, 0, 0)
+                    Err(why) => model::report(window, "Couldn't open the scrollback in the editor", why)
+                }
+            }
+        }
         commands::CLEAR_SCROLLBACK => {
             if let Some(t) = tab && let Err(why) = t.terminal.clear_scrollback() {
                 model::report(window, "Couldn't clear the scrollback", why)
@@ -248,7 +297,6 @@ fn command(m: &mut Model, window: String, id: String) {
         }
         commands::GUIDE => gui::perform(Effect::OpenUrl(commands::GUIDE_URL))
         commands::SHORTCUTS => gui::perform(Effect::OpenUrl(commands::SHORTCUTS_URL))
-        commands::REPORT => gui::perform(Effect::OpenUrl(commands::REPORT_URL))
         commands::ABOUT => gui::perform(Effect::OpenDialogIn(window, about()))
         _ => ()
     }
@@ -367,12 +415,19 @@ fn terminal_event(m: &mut Model, id: i64, event: Event) {
         }
         Event::PathActivated(path, line, col) => open_path(m, w, path, line, col)
         Event::PasteHeld(text) => hold_paste(m, w, t, text)
-        Event::Exited(_) => model::close_tab(m, w, t)
+        Event::Exited(code) => {
+            if m.windows[w].tabs[t].hold {
+                // The tab keeps the program's last screen, with its status.
+                let _ = m.windows[w].tabs[t].terminal.feed(f"\r\n[{m.windows[w].tabs[t].name} exited with status {code}]")
+            } else {
+                model::close_tab(m, w, t)
+            }
+        }
         Event::Failed(why) => {
             model::close_tab(m, w, t)
             if model::window_index(*m, window).is_some() { model::report(window, "waftty lost track of the program in this tab", errors::new(why)) }
         }
-        Event::Refused(why) => gui::perform(Effect::Announce(why))
+        Event::Refused(why) => model::report(window, "The terminal couldn't do that", errors::new(why))
         Event::LinkPointed(uri) => m.windows[w].tabs[t].link = uri
         Event::LinkActivated(uri) => gui::perform(Effect::OpenUrl(uri))
     }

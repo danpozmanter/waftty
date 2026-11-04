@@ -29,6 +29,9 @@ the menu bar. **Edit > Settings > Shortcuts** changes any of them.
 | Find / Find Next / Find Previous | ++ctrl+shift+f++ / ++ctrl+shift+g++ / ++ctrl+shift+h++ | ++cmd+f++ / ++cmd+g++ / ++cmd+shift+g++ |
 | Previous Prompt / Next Prompt | ++ctrl+shift+up++ / ++ctrl+shift+down++ | ++cmd+up++ / ++cmd+down++ |
 | Select Last Command Output | ++ctrl+shift+o++ | ++cmd+shift+o++ |
+| Copy Mode | ++ctrl+shift+x++ | ++cmd+shift+x++ |
+| Open / Copy a Link by Keyboard | ++ctrl+shift+e++ / ++ctrl+shift+y++ | ++cmd+shift+e++ / ++cmd+shift+y++ |
+| Save Scrollback | ++ctrl+shift+s++ | ++cmd+shift+s++ |
 | Scroll Up / Down a Page | ++shift+page-up++ / ++shift+page-down++ | the same |
 | Scroll to Top / Bottom | ++ctrl+shift+home++ / ++ctrl+shift+end++ | ++cmd+home++ / ++cmd+end++ |
 | Clear Scrollback | ++ctrl+shift+k++ | ++cmd+k++ |
@@ -60,14 +63,135 @@ Settings.
 whole words and regular expressions, and shows how many matches it found.
 The search field offers your earlier searches.
 
+## Copy Mode
+
+**Terminal > Copy Mode** selects and copies text without the mouse, anywhere
+in the screen and the scrollback. A cursor of its own starts where the
+program's is, and a frame round the terminal shows the mode is on. While it
+is, keys go to copy mode, not the program.
+
+| Key | Does |
+|---|---|
+| Arrows, or ++h++ ++j++ ++k++ ++l++ | Move a cell or a row |
+| ++w++ / ++b++ | Next / previous word |
+| ++0++ or ++home++ / `$` or ++end++ | Start / end of the line |
+| ++page-up++ / ++page-down++ | A screen up / down |
+| ++g++ / ++shift+g++ | The oldest row kept / the program's cursor |
+| ++v++ or ++space++ | Start or drop a selection |
+| ++y++, ++enter++ or ++ctrl+shift+c++ | Copy the selection (the cursor's line without one) and leave |
+| ++escape++ or ++q++ | Leave |
+
+## Link Hints
+
+**Edit > Open a Link by Keyboard** labels every link and file path on the
+screen with a letter or two; type a label to open that link, as a Ctrl+click
+would. **Copy a Link by Keyboard** copies it instead. ++escape++ leaves
+without choosing, and ++backspace++ takes back a typed key.
+
+## Saving Output
+
+**File > Save Scrollback** writes everything the tab keeps, the oldest row
+first, to a text file; **Save Selection** writes what is selected. A long
+line that wrapped on screen comes back as one line. **Open Scrollback in
+Editor** saves the scrollback to a file in the system's temporary folder and
+opens it in the editor Settings name, or with the desktop's default
+application.
+
+A saved terminal holds only what the scrollback kept: a full-screen program
+redraws its screen in place, and the oldest rows leave once the scrollback
+is full. For a complete record of an agent's work, keep the agent's own log.
+
+## Pasting
+
+A paste of several lines or of control characters asks first (Settings can
+turn this off). Pastes of up to 16 MiB reach the program as fast as it reads
+them, as one paste: typing meanwhile follows the paste, and ++escape++ or
+++ctrl+c++ stops it where the program has got to. A paste that can't be
+sent says why.
+
 ## Shell Integration
 
-When your shell marks its prompts with OSC 133 (the semantic prompt sequence
-most shell integration scripts emit), waftty knows where each command starts
-and ends:
+When the shell marks its prompts and its commands' output (OSC 133) and says
+which folder it is in (OSC 7), waftty knows where each command starts and
+ends:
 
 - **Previous Prompt / Next Prompt** scroll from one prompt to the next.
 - **Select Last Command Output** selects everything the last command printed.
+- New tabs and windows open in the folder the shell is in.
+
+waftty carries the scripts that do this for bash, zsh, fish and PowerShell;
+`waftty --shell-integration SHELL` prints one. Add the line for your shell to
+its startup file. Each runs only in waftty and leaves your prompt as it is.
+
+=== "bash"
+
+    ```sh
+    # ~/.bashrc
+    [ "$TERM_PROGRAM" = waftty ] && eval "$(waftty --shell-integration bash)"
+    ```
+
+=== "zsh"
+
+    ```sh
+    # ~/.zshrc
+    [[ $TERM_PROGRAM == waftty ]] && eval "$(waftty --shell-integration zsh)"
+    ```
+
+=== "fish"
+
+    ```fish
+    # ~/.config/fish/config.fish
+    test "$TERM_PROGRAM" = waftty; and waftty --shell-integration fish | source
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    # $PROFILE
+    if ($env:TERM_PROGRAM -eq 'waftty') { waftty --shell-integration powershell | Out-String | Invoke-Expression }
+    ```
+
+To check it works, run a command, then press ++ctrl+shift+o++: the command's
+output should be selected. Without integration, the prompt commands say that
+shell integration is off.
+
+## Keyboard Protocol
+
+Programs that ask for it (with kitty's keyboard protocol) get keys other
+terminals can't tell apart, such as ++shift+enter++, ++ctrl+i++ apart from
+++tab++, and key releases. Programs that don't ask get the classic xterm keys
+they always had.
+
+## Notifications from Agents
+
+waftty marks a hidden tab whose program rings the bell or posts a desktop
+notification (OSC 9 or OSC 777), and passes the notification to the desktop.
+Coding agents in a background tab can tell you when they need you:
+
+- **Claude Code:** turn on the terminal bell in its `/config` (Notifications),
+  or add a hook for its `Notification` and `Stop` events that posts one:
+
+    ```sh
+    printf '\033]777;notify;Claude Code;%s\007' "Waiting for you" > /dev/tty
+    ```
+
+- **Codex:** set `notify` in `~/.codex/config.toml` to a script that posts a
+  notification the same way when a turn finishes.
+- **Any long command:** end it with `; printf '\a'` to ring the bell when it
+  finishes.
+
+## Starting waftty
+
+```sh
+waftty --working-directory ~/dev/project     # the first tab starts there
+waftty --title review -e codex               # the tab keeps this name
+waftty --hold -e ./run-checks                # the tab stays open after it ends
+```
+
+Every argument after `-e` is the program's own. `--hold` keeps the
+program's last screen and adds the status it exited with; close the tab when
+you are done. A folder or a program on the command line starts a new session
+rather than reopening the last one.
 
 ## Links, Paths and Files
 
@@ -102,8 +226,8 @@ are saved, so the defaults follow your desktop.
 - **General**: the shell, as a command line (empty runs your login shell,
   as a login shell on macOS; PowerShell on Windows), the starting folder
   (empty is your home folder), where new tabs open, the character encoding,
-  the size new windows open at, whether windows and tabs come back at the
-  next start, and whether closing a running program asks first.
+  whether new windows open at their last size or at the columns and rows
+  set there, whether windows and tabs come back at the next start, and whether closing a running program asks first.
 - **Appearance**: the font, its size and weight (empty uses the desktop's
   monospace font), ligatures, the color scheme, the cursor shape and
   blinking, bold text in bright colors, readability adjustment, padding,
@@ -112,8 +236,9 @@ are saved, so the defaults follow your desktop.
   characters a double click selects, copying on select, asking before
   pasting several lines, the bell (mark the tab, flash or sound),
   notifications, programs writing the clipboard (OSC 52; they can never read
-  it), the editor for file paths (such as `nvim +{line} {path}`), and on
-  macOS whether Option is Meta.
+  it), the editor for file paths (such as `nvim +{line} {path}`), on macOS
+  whether Option is Meta, and on Linux whether keys go through the input
+  method (see below).
 - **Shortcuts**: every command's chords.
 
 Settings are saved in the configuration directory:
@@ -128,6 +253,21 @@ In [portable mode](installation.md#portable-mode) the configuration directory
 is `user/dev.gossamer.waftty` beside waftty instead.
 
 Dialog text and controls follow the desktop's interface font size.
+
+### Input Method
+
+On Linux, an input method such as ibus or fcitx composes Chinese, Japanese
+and Korean text, and every key waits for it, about a millisecond. **Use the
+input method** decides whether waftty sends keys through it:
+
+- **When it has more than keyboard layouts** (the default): waftty asks ibus
+  (its preloaded engines) or fcitx5 (its profile) which engines are set up,
+  and uses the input method only when one of them is more than a keyboard
+  layout.
+- **Always** or **Never**.
+
+The choice applies at the next start. Programs in the tabs keep the
+desktop's input method either way.
 
 ## Color Schemes
 

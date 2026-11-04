@@ -129,7 +129,10 @@ pub fn journey() -> Result<(), errors::Error> {
     // The prompt carries the marks a shell integration script writes
     // (OSC 133), so the journey can move between prompts.
     let first = Command { program: "/bin/sh", args: #[], cwd: "", env: #[("PS1", "\u{1b}]133;A\u{7}ready$ \u{1b}]133;I\u{7}")] }
-    let mut s = application::app(chosen, first, false).start()?
+    let mut s = application::app(chosen, first, application::FirstTab::default(), false, #[]).start()?
+    // The terminal shows output as its reader parses it, which can be before
+    // the session applies what starting asked for, such as the tab's focus.
+    s.flush()?
     await_text(&mut s, 0, "ready$")?
     require(s.focused() == "term-tab-1", f"focus starts at {s.focused()}")?
 

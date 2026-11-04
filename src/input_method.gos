@@ -1,0 +1,119 @@
+// Whether keys pass through the desktop's input method (ibus or fcitx, which
+// X11 programs reach over XIM). An input method composes Chinese, Japanese
+// and Korean text; with only keyboard layouts set up it types what the keys
+// do anyway, while every key still waits on its round trip.
+
+use std::{env, fs, path, process}
+
+/// The values the input method setting takes.
+pub const CHOICES: [String; 3] = ["auto", "on", "off"]
+
+/// Readies the input method before the first window opens, as `setting`
+/// says: "on" keeps the desktop's, "off" leaves it out, and "auto" leaves it
+/// out when it has only keyboard layouts set up. Answers the variables the
+/// programs in the tabs get back as the desktop set them.
+pub fn prepare(setting: String) -> Vec<(String, String)> {
+    let Some(modifiers) = env::var("XMODIFIERS") else { return #[] }
+    if setting == "on" || !modifiers.contains("@im=") || modifiers.contains("@im=none") {
+        return #[]
+    }
+    if setting == "auto" && !layouts_only(modifiers) { return #[] }
+    env::set_var("XMODIFIERS", "@im=none")
+    #[("XMODIFIERS", modifiers)]
+}
+
+/// Whether the input method `modifiers` names has keyboard layouts and no
+/// other engine set up; false when that cannot be told.
+pub fn layouts_only(modifiers: String) -> bool {
+    if modifiers.contains("@im=ibus") {
+        let Ok(out) = process::run("gsettings", #["get", "org.freedesktop.ibus.general", "preload-engines"]) else { return false }
+        let Some(engines) = ibus_engines(out.stdout) else { return false }
+        return engines_are_layouts(engines, locale())
+    }
+    if modifiers.contains("@im=fcitx") {
+        let config = env::var("XDG_CONFIG_HOME").unwrap_or(path::join(env::home_dir().unwrap_or(""), ".config"))
+        let Ok(profile) = fs::read_to_string(path::join(config, "fcitx5/profile")) else { return false }
+        let items = fcitx_items(profile)
+        return !items.is_empty() && items.all(|item| item.starts_with("keyboard-"))
+    }
+    false
+}
+
+/// The engines ibus's `preload-engines` setting lists, as `gsettings` prints
+/// it (`['xkb:us::eng', 'anthy']`, or `@as []` for none); `None` for text
+/// that is not such a list.
+pub fn ibus_engines(text: String) -> Option<Vec<String>> {
+    let text = text.trim()
+    let open = text.find("[")?
+    let close = text.rfind("]")?
+    if close < open { return None }
+    let inside = text.substring(open + 1, close).trim()
+    if inside.is_empty() { return Some(#[]) }
+    Some(inside.split(",").map(|e| e.trim().trim_matches("'")))
+}
+
+/// Whether ibus `engines` are keyboard layouts only. With none listed ibus
+/// takes the engines of the `locale`'s language, which for Chinese, Japanese
+/// and Korean compose text.
+pub fn engines_are_layouts(engines: Vec<String>, locale: String) -> bool {
+    if engines.is_empty() {
+        return !(locale.starts_with("ja") || locale.starts_with("zh") || locale.starts_with("ko"))
+    }
+    engines.all(|e| e.starts_with("xkb:"))
+}
+
+/// The input methods an fcitx5 `profile` holds, in its groups' items.
+pub fn fcitx_items(profile: String) -> Vec<String> {
+    let mut items = #[]
+    let mut in_item = false
+    for line in profile.lines() {
+        let line = line.trim()
+        if line.starts_with("[") {
+            in_item = line.contains("/Items/")
+        } else if in_item && let Some(name) = line.strip_prefix("Name=") {
+            items.push(name)
+        }
+    }
+    items
+}
+
+// The locale that names the language of typed text.
+fn locale() -> String {
+    env::var("LC_ALL").or(env::var("LC_CTYPE")).or(env::var("LANG")).unwrap_or("")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn ibus_lists_read_back_as_their_engines() {
+        assert_eq(super::ibus_engines("['xkb:us::eng', 'anthy']\n"), Some(#["xkb:us::eng", "anthy"]))
+        assert_eq(super::ibus_engines("@as []"), Some(#[]))
+        assert_eq(super::ibus_engines("No such schema"), None)
+    }
+
+    #[test]
+    fn only_layouts_or_a_language_without_composing_engines_count_as_layouts() {
+        assert(super::engines_are_layouts(#["xkb:us::eng", "xkb:de::ger"], "ja_JP.UTF-8"))
+        assert(!super::engines_are_layouts(#["xkb:us::eng", "mozc-jp"], "en_US.UTF-8"))
+        assert(super::engines_are_layouts(#[], "en_US.UTF-8"))
+        assert(!super::engines_are_layouts(#[], "zh_CN.UTF-8"))
+    }
+
+    #[test]
+    fn an_fcitx_profile_names_the_input_methods_of_its_groups() {
+        let profile = """
+        [Groups/0]
+        Name=Default
+        Default Layout=us
+
+        [Groups/0/Items/0]
+        Name=keyboard-us
+        Layout=
+
+        [Groups/0/Items/1]
+        Name=pinyin
+        Layout=
+        """
+        assert_eq(super::fcitx_items(profile), #["keyboard-us", "pinyin"])
+    }
+}

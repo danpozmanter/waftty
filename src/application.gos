@@ -17,8 +17,18 @@ use shortcuts
 use update
 use view
 
-fn init(s: Settings, first: Command, restore: bool) -> Model {
+/// What the command line asked of the first tab besides its program.
+#[derive(Debug, Default, PartialEq)]
+pub struct FirstTab {
+    /// Names the tab whatever titles its program sets; empty for none.
+    pub title: String
+    /// Keeps the tab open once its program exits.
+    pub hold: bool
+}
+
+fn init(s: Settings, first: Command, first_tab: FirstTab, restore: bool, program_env: Vec<(String, String)>) -> Model {
     let mut m = model::new(s)
+    m.program_env = program_env
     m.desktop_font = settings::desktop_font()
     let found, scheme_problems = schemes::user()
     m.user_schemes = found
@@ -28,6 +38,8 @@ fn init(s: Settings, first: Command, restore: bool) -> Model {
         gui::perform(gui::Effect::Quit)
         return m
     }
+    m.windows[0].tabs[0].fixed_title = first_tab.title
+    m.windows[0].tabs[0].hold = first_tab.hold
     if restore { reopen(&mut m) }
     let mut problems = scheme_problems
     match shortcuts::load() {
@@ -62,11 +74,12 @@ fn reopen(m: &mut Model) {
 
 /// The application with settings `s`, its first tab running `first`; with
 /// `restore`, the windows and tabs saved at the last quit open after it.
-pub fn app(s: Settings, first: Command, restore: bool) -> gui::App<Model> {
+pub fn app(s: Settings, first: Command, first_tab: FirstTab, restore: bool, program_env: Vec<(String, String)>) -> gui::App<Model> {
     let width, height = model::window_size(s, s.font_size)
-    gui::application(info::NAME, info::APP_ID, || init(s, first, restore), update::update, view::main)
+    gui::application(info::NAME, info::APP_ID, || init(s, first, first_tab, restore, program_env), update::update, view::main)
         .size(width, height)
         .transparent(s.opacity < 100)
+        .remember_size(s.remember_size)
         .min_size(360, 220)
         .window_commands(commands::registry)
         .windows(view::window)

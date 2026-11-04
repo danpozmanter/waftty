@@ -19,12 +19,17 @@ pub const NEW_WINDOW: String = "file.new-window"
 pub const CLOSE_TAB: String = "file.close-tab"
 pub const CLOSE_WINDOW: String = "file.close-window"
 pub const QUIT: String = "file.quit"
+pub const SAVE_SCROLLBACK: String = "file.save-scrollback"
+pub const SAVE_SELECTION: String = "file.save-selection"
+pub const EDIT_SCROLLBACK: String = "file.edit-scrollback"
 pub const COPY: String = "edit.copy"
 pub const PASTE: String = "edit.paste"
 pub const SELECT_ALL: String = "edit.select-all"
 pub const OPEN_LINK: String = "edit.open-link"
 pub const COPY_LINK: String = "edit.copy-link"
 pub const COPY_EMAIL: String = "edit.copy-email"
+pub const OPEN_LINK_HINT: String = "edit.open-link-hint"
+pub const COPY_LINK_HINT: String = "edit.copy-link-hint"
 pub const SETTINGS: String = "edit.settings"
 pub const FULLSCREEN: String = "view.fullscreen"
 pub const ZOOM_IN: String = "view.zoom-in"
@@ -39,6 +44,7 @@ pub const FIND_CLOSE: String = "terminal.find-close"
 pub const PREVIOUS_PROMPT: String = "terminal.previous-prompt"
 pub const NEXT_PROMPT: String = "terminal.next-prompt"
 pub const SELECT_OUTPUT: String = "terminal.select-output"
+pub const COPY_MODE: String = "terminal.copy-mode"
 pub const SCROLL_PAGE_UP: String = "terminal.scroll-page-up"
 pub const SCROLL_PAGE_DOWN: String = "terminal.scroll-page-down"
 pub const SCROLL_TOP: String = "terminal.scroll-top"
@@ -56,13 +62,13 @@ pub const CLOSE_OTHER_TABS: String = "tabs.close-others"
 pub const CLOSE_TABS_RIGHT: String = "tabs.close-right"
 pub const GUIDE: String = "help.guide"
 pub const SHORTCUTS: String = "help.shortcuts"
-pub const REPORT: String = "help.report"
 pub const ABOUT: String = "help.about"
 
 /// The points one Zoom In or Zoom Out adds or takes away.
 pub const ZOOM_STEP: f64 = 1.0
 
-/// Where the guide, its shortcut list and the issue tracker live.
+/// Where the guide, its shortcut list and the issue tracker live; About
+/// links the tracker.
 pub const GUIDE_URL: String = "https://danpozmanter.github.io/waftty/guide/"
 pub const SHORTCUTS_URL: String = "https://danpozmanter.github.io/waftty/guide/#shortcuts"
 pub const REPORT_URL: String = "https://github.com/danpozmanter/waftty/issues"
@@ -167,12 +173,17 @@ pub fn registry(m: Model, key: String) -> Vec<Command> {
         Command::new(CLOSE_TAB, "Close Tab").key(chord("Ctrl+Shift+W", "Cmd+W")).category("File").enabled(has_tab && !pinned)
         close_window
         Command::new(QUIT, "Quit").key(chord("Ctrl+Shift+Q", "Cmd+Q")).category("File")
+        Command::new(SAVE_SCROLLBACK, "Save Scrollback…").key(chord("Ctrl+Shift+S", "Cmd+Shift+S")).category("File").enabled(has_tab)
+        Command::new(SAVE_SELECTION, "Save Selection…").category("File").enabled(has_tab)
+        Command::new(EDIT_SCROLLBACK, "Open Scrollback in Editor").category("File").enabled(has_tab)
         copy
         paste
         select_all
         Command::new(OPEN_LINK, "Open Link").category("Edit").visible(!link.is_empty())
         Command::new(COPY_LINK, "Copy Link").category("Edit").visible(!link.is_empty())
         Command::new(COPY_EMAIL, "Copy Email Address").category("Edit").visible(email_of(link).is_some())
+        Command::new(OPEN_LINK_HINT, "Open a Link by Keyboard").key(chord("Ctrl+Shift+E", "Cmd+Shift+E")).category("Edit").enabled(has_tab)
+        Command::new(COPY_LINK_HINT, "Copy a Link by Keyboard").key(chord("Ctrl+Shift+Y", "Cmd+Shift+Y")).category("Edit").enabled(has_tab)
         Command::new(SETTINGS, "Settings…").key(chord("Ctrl+,", "Cmd+,")).category("Edit")
         Command::new(FULLSCREEN, "Fullscreen").key(chord("F11", "Ctrl+Cmd+F")).category("View").checked(window.fullscreen)
         Command::new(ZOOM_IN, "Zoom In").key(chord("Ctrl+=", "Cmd+=")).key(chord("Ctrl+Shift+=", "Cmd+Shift+=")).category("View").enabled(model::can_zoom(m.settings, window, ZOOM_STEP))
@@ -187,6 +198,7 @@ pub fn registry(m: Model, key: String) -> Vec<Command> {
         Command::new(PREVIOUS_PROMPT, "Previous Prompt").key(chord("Ctrl+Shift+Up", "Cmd+Up")).category("Terminal").enabled(has_tab)
         Command::new(NEXT_PROMPT, "Next Prompt").key(chord("Ctrl+Shift+Down", "Cmd+Down")).category("Terminal").enabled(has_tab)
         Command::new(SELECT_OUTPUT, "Select Last Command Output").key(chord("Ctrl+Shift+O", "Cmd+Shift+O")).category("Terminal").enabled(has_tab)
+        Command::new(COPY_MODE, "Copy Mode").key(chord("Ctrl+Shift+X", "Cmd+Shift+X")).category("Terminal").enabled(has_tab)
         Command::new(SCROLL_PAGE_UP, "Scroll Up a Page").key("Shift+PageUp").category("Terminal").enabled(has_tab)
         Command::new(SCROLL_PAGE_DOWN, "Scroll Down a Page").key("Shift+PageDown").category("Terminal").enabled(has_tab)
         Command::new(SCROLL_TOP, "Scroll to Top").key(chord("Ctrl+Shift+Home", "Cmd+Home")).category("Terminal").enabled(has_tab)
@@ -204,7 +216,6 @@ pub fn registry(m: Model, key: String) -> Vec<Command> {
         Command::new(CLOSE_TABS_RIGHT, "Close Tabs to the Right").category("Tabs").enabled(has_tab && at + 1 < tabs)
         Command::new(GUIDE, "waftty Guide").category("Help")
         Command::new(SHORTCUTS, "Keyboard Shortcuts").category("Help")
-        Command::new(REPORT, "Report a Problem").category("Help")
         Command::new(ABOUT, "About waftty").category("Help")
     ]
     for n in 1..10 {
@@ -271,22 +282,25 @@ pub fn menu_bar(m: Model, key: String) -> gui::Widget {
     gui::Widget::joined_menu_bar("menu", #[
         Menu::new("&File", #[
             menus::item(NEW_TAB), menus::item(NEW_WINDOW), MenuItem::Separator
+            menus::item(SAVE_SCROLLBACK), menus::item(SAVE_SELECTION), menus::item(EDIT_SCROLLBACK), MenuItem::Separator
             menus::item(CLOSE_TAB), menus::item(CLOSE_WINDOW), MenuItem::Separator
             menus::item(QUIT)
         ])
         Menu::new("&Edit", #[
             menus::item(COPY), menus::item(PASTE), MenuItem::Separator, menus::item(SELECT_ALL), MenuItem::Separator
+            menus::item(OPEN_LINK_HINT), menus::item(COPY_LINK_HINT), MenuItem::Separator
             menus::item(SETTINGS)
         ])
         Menu::new("&View", #[menus::item(FULLSCREEN), menus::item(MENU_BAR), MenuItem::Separator, zoom_menu(), menus::item(RESET_WINDOW_SIZE)])
         Menu::new("&Terminal", #[
             menus::item(FIND), menus::item(FIND_NEXT), menus::item(FIND_PREVIOUS), MenuItem::Separator
             menus::item(PREVIOUS_PROMPT), menus::item(NEXT_PROMPT), menus::item(SELECT_OUTPUT), MenuItem::Separator
+            menus::item(COPY_MODE), MenuItem::Separator
             menus::item(SCROLL_TOP), menus::item(SCROLL_BOTTOM), menus::item(CLEAR_SCROLLBACK), MenuItem::Separator
             menus::item(RESET), menus::item(RESET_AND_CLEAR), signal_menu(), menus::submenu("Set &Encoding", encoding_items)
         ])
         Menu::new("T&abs", tab_items)
-        Menu::new("&Help", #[menus::item(GUIDE), menus::item(SHORTCUTS), menus::item(REPORT), MenuItem::Separator, menus::item(ABOUT)])
+        Menu::new("&Help", #[menus::item(GUIDE), menus::item(SHORTCUTS), MenuItem::Separator, menus::item(ABOUT)])
     ])
 }
 
@@ -317,7 +331,7 @@ mod tests {
     #[test]
     fn the_link_entries_show_only_over_a_link_and_the_email_entry_over_an_address() {
         let mut m = model::new(Settings::default())
-        m.windows[0].tabs.push(model::Tab { key: "tab-1", terminal: Terminal { id: 0 }, title: "", name: "", encoding: "", pinned: false, link: "", attention: false })
+        m.windows[0].tabs.push(model::Tab { key: "tab-1", terminal: Terminal { id: 0 }, title: "", name: "", encoding: "", pinned: false, link: "", attention: false, fixed_title: "", hold: false })
         m.windows[0].active = "tab-1"
         assert(!shown(m, super::OPEN_LINK) && !shown(m, super::COPY_LINK) && !shown(m, super::COPY_EMAIL))
         m.windows[0].tabs[0].link = "https://example.org/"

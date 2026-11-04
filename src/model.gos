@@ -39,6 +39,11 @@ pub struct Tab {
     /// The program rang the bell or sent a notification while the tab was
     /// not in front of the user; the tab strip marks it until it is.
     pub attention: bool
+    /// A title given on the command line, which names the tab whatever
+    /// titles its program sets; empty for none.
+    pub fixed_title: String
+    /// The tab stays open once its program exits, showing its last screen.
+    pub hold: bool
 }
 
 impl Tab {
@@ -49,7 +54,7 @@ impl Tab {
 
     /// What the tab strip, the window title and the Tabs menu call the tab.
     pub fn label(&self) -> String {
-        if !self.title.is_empty() { self.title } else if !self.name.is_empty() { self.name } else { "Terminal" }
+        if !self.fixed_title.is_empty() { self.fixed_title } else if !self.title.is_empty() { self.title } else if !self.name.is_empty() { self.name } else { "Terminal" }
     }
 
     /// Whether a job other than the shell runs in the tab, which closing
@@ -151,6 +156,12 @@ pub struct Model {
     pub desktop_font: String
     /// The scheme Edit Colors is editing.
     pub editing_scheme: String
+    /// The tab whose text a Save dialog is choosing a file for, and whether
+    /// it saves the selection rather than the whole scrollback.
+    pub saving: Option<(String, bool)>
+    /// Variables every tab's program gets, as the desktop set those waftty
+    /// changed for itself.
+    pub program_env: Vec<(String, String)>
 }
 
 /// A model with one window, "main", and no tabs yet.
@@ -169,6 +180,8 @@ pub fn new(s: Settings) -> Model {
         quitting: false
         desktop_font: ""
         editing_scheme: ""
+        saving: None
+        program_env: #[]
     }
 }
 
@@ -215,13 +228,14 @@ pub fn open_tab(m: &mut Model, w: i64, command: gui::terminal::Command) -> Resul
     let mut named = command
     named.env.push(("TERM_PROGRAM", info::NAME))
     named.env.push(("TERM_PROGRAM_VERSION", info::VERSION))
+    for kv in m.program_env { named.env.push(kv) }
     if let Err(why) = started.and_then(|_| terminal.spawn(named)) {
         terminal.close()
         return Err(errors::wrap(why, f"running {command.program}"))
     }
     let key = f"tab-{m.next}"
     m.next += 1
-    m.windows[w].tabs.push(Tab { key: key, terminal: terminal, title: "", name: program_name(command.program), encoding: s.encoding, pinned: false, link: "", attention: false })
+    m.windows[w].tabs.push(Tab { key: key, terminal: terminal, title: "", name: program_name(command.program), encoding: s.encoding, pinned: false, link: "", attention: false, fixed_title: "", hold: false })
     activate(m, w, key)
     Ok(())
 }
@@ -504,6 +518,17 @@ pub fn report(window: String, title: String, why: errors::Error) {
     gui::perform(Effect::OpenDialogIn(window, request::error("error", title, why.message(), f"{why}", false)))
 }
 
+/// `label` as a file name: a character some file system refuses becomes `-`.
+pub fn file_name(label: String) -> String {
+    let refused = "/\\:*?\"<>|"
+    let mut out = String::with_capacity(label.byte_len())
+    for c in label {
+        if c.is_control() || refused.contains(c.to_string()) { out += "-" } else { out += c.to_string() }
+    }
+    let name = out.trim()
+    if name.is_empty() { "terminal" } else { name }
+}
+
 /// The program a new tab runs under the current settings.
 pub fn shell(m: Model) -> gui::terminal::Command {
     settings::command(m.settings)
@@ -534,6 +559,12 @@ pub fn scheme(m: Model) -> schemes::Entry {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_label_becomes_a_file_name_without_the_characters_file_systems_refuse() {
+        assert_eq(super::file_name("vim: a/b.txt"), "vim- a-b.txt")
+        assert_eq(super::file_name("  "), "terminal")
+    }
+
     use std::encoding::json
 
     use settings::Settings

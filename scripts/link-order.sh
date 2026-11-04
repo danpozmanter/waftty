@@ -48,19 +48,33 @@ trap 'rm -rf "$work"' EXIT
 (cd "$root" && GOS_LLVM_MCPU=x86-64-v2 gos build --release . --out-dir "$work/build" >&2)
 binary="$work/build/waftty"
 
-# What a user does to a session between bursts of output: resize it, move
-# the pointer through it, scroll with the wheel, click it, and switch to
-# another window and back.
+# A user's session: the login shell's prompt, commands typed into it (colored
+# listings, a long output, a link, the alternate screen), then resizing the
+# window, moving the pointer through it, scrolling with the wheel, clicking
+# it, moving focus to a window of the driver's own and back, a stretch of
+# idle, and exit. The shell writes to a FIFO once it has run the commands, so
+# the idle stretch starts after them.
 cat > "$work/interact.py" <<'EOF'
-import sys, time
-from Xlib import X, display, protocol
+import os, sys, time
+from Xlib import X, XK, display, protocol
 from Xlib.ext import xtest
 
+launcher, ready = int(sys.argv[1]), sys.argv[2]
 d = display.Display()
 root = d.screen().root
 NET_WM_PID = d.intern_atom("_NET_WM_PID")
 NET_ACTIVE = d.intern_atom("_NET_ACTIVE_WINDOW")
 NET_CLIENTS = d.intern_atom("_NET_CLIENT_LIST")
+
+def family(pid):
+    pids = {pid}
+    try:
+        for task in os.listdir(f"/proc/{pid}/task"):
+            for child in open(f"/proc/{pid}/task/{task}/children").read().split():
+                pids |= family(int(child))
+    except FileNotFoundError:
+        pass
+    return pids
 
 def clients():
     prop = root.get_full_property(NET_CLIENTS, X.AnyPropertyType)
@@ -69,6 +83,10 @@ def clients():
 def pid_of(w):
     prop = w.get_full_property(NET_WM_PID, X.AnyPropertyType)
     return prop.value[0] if prop else None
+
+def ours():
+    pids = family(launcher)
+    return next((w for w in clients() if pid_of(w) in pids), None)
 
 def activate(w):
     event = protocol.event.ClientMessage(window=w, client_type=NET_ACTIVE,
@@ -80,10 +98,62 @@ def pace():
     d.sync()
     time.sleep(0.5)
 
-ours = [w for w in clients() if pid_of(w) == int(sys.argv[1])]
-if not ours:
-    sys.exit(0)
-win = ours[0]
+# Keys go in at a fast typist's pace, one at a time.
+def key(keysym):
+    code = d.keysym_to_keycode(keysym)
+    shift = d.keycode_to_keysym(code, 0) != keysym
+    shift_code = d.keysym_to_keycode(XK.XK_Shift_L)
+    if shift:
+        xtest.fake_input(d, X.KeyPress, shift_code)
+    xtest.fake_input(d, X.KeyPress, code)
+    xtest.fake_input(d, X.KeyRelease, code)
+    if shift:
+        xtest.fake_input(d, X.KeyRelease, shift_code)
+    d.sync()
+    time.sleep(0.01)
+
+def focused():
+    w = d.get_input_focus().focus
+    # The focus is a window, or a number for PointerRoot and None.
+    while not isinstance(w, int) and w.id != root.id:
+        if w.id == win.id:
+            return True
+        w = w.query_tree().parent
+    return False
+
+# Keystrokes go to whichever window has focus, so they are sent only while
+# the session's own window has it; otherwise this waits for the window
+# manager to say focus moved.
+def ensure_focus():
+    if focused():
+        return
+    activate(win)
+    while not focused():
+        print("link-order: waiting for the waftty window to take focus", file=sys.stderr)
+        d.next_event()
+
+# Latin-1 keysyms are the characters' own code points.
+def type_line(text):
+    ensure_focus()
+    for ch in text:
+        key(ord(ch))
+    key(XK.XK_Return)
+    pace()
+
+# The window list changes when the window maps.
+root.change_attributes(event_mask=X.PropertyChangeMask)
+win = ours()
+while win is None:
+    d.next_event()
+    win = ours()
+activate(win)
+pace()
+type_line("ls -la --color=always /usr/bin | head -200")
+type_line("seq 100000")
+type_line("echo https://gossamer.dev/docs")
+type_line("tput smcup; ls -la --color=always /usr/bin | head -60; tput cup 5 10; tput rmcup")
+type_line(f"echo > {ready}")
+open(ready).read()
 win.configure(width=900, height=600)
 pace()
 geometry = win.get_geometry()
@@ -99,24 +169,44 @@ xtest.fake_input(d, X.ButtonRelease, 1)
 pace()
 root.warp_pointer(0, 0)
 pace()
-others = [w for w in clients() if w.id != win.id]
-if others:
-    activate(others[0])
-    pace()
-    activate(win)
-    pace()
-EOF
-cat > "$work/output.sh" <<EOF
-#!/bin/sh
-seq 100000
-ls -la /usr/bin | head -200
-python3 "$work/interact.py" "\$PPID"
+# Focus moves to a window of the driver's own and back, leaving the user's
+# windows alone.
+other = root.create_window(0, 0, 200, 100, 0, d.screen().root_depth,
+                           event_mask=X.StructureNotifyMask)
+other.set_wm_name("link-order focus")
+other.map()
+while d.next_event().type != X.MapNotify:
+    pass
+activate(other)
+pace()
+ensure_focus()
+other.destroy()
+pace()
 # A session spends most of its time idle: the cursor blinks, and work started
 # with the window lands.
-sleep 30
-exit
+time.sleep(30)
+# The user closes the window, its shell idle at the prompt.
+close = protocol.event.ClientMessage(window=win, client_type=d.intern_atom("WM_PROTOCOLS"),
+                                     data=(32, [d.intern_atom("WM_DELETE_WINDOW"), X.CurrentTime, 0, 0, 0]))
+win.send_event(close)
+d.flush()
 EOF
-chmod +x "$work/output.sh"
+
+# Runs one session of the program, as COMMAND... runs it, with the user's
+# input; the program exits when the user closes its window.
+session() {
+    local ready="$1"
+    shift
+    rm -f "$ready"
+    mkfifo "$ready"
+    "$@" &
+    local program=$!
+    python3 "$work/interact.py" "$program" "$ready" &
+    local user=$!
+    wait "$program" || true
+    kill "$user" 2>/dev/null || true
+    wait "$user" 2>/dev/null || true
+}
 
 # Settings as a session that has saved some keeps them: an installed font
 # (one waftty does not bundle), values of its own and a color scheme of the
@@ -181,8 +271,13 @@ callgrind() {
 }
 profile_args=(--fixture)
 callgrind "$work/journey.out" env SDL_VIDEO_DRIVER=offscreen dbus-run-session --
-profile_args=(-e "$work/output.sh")
-callgrind "$work/output.out" env
+profile_args=()
+# The session types its input through XTEST, which arrives in bursts while the
+# program runs slowly under valgrind or gdb; IBus's XIM server drops and
+# reorders keys that come that fast, so the profiled program opens no input
+# method server. Its own key handling is the same either way.
+im=XMODIFIERS=@im=none
+session "$work/ready" callgrind "$work/output.out" env "$im"
 for out in journey output; do
     [ -f "$work/$out.out.1" ] && [ -f "$work/$out.out" ] || {
         tail -n 40 "$work/$out.out.log" >&2
@@ -371,9 +466,9 @@ native() {
     local excludes
     excludes=$(printf "'%s'," "$@")
     seed_config "$out.config" "$settings"
-    XDG_CONFIG_HOME="$out.config" gdb -q -batch -ex "set pagination off" \
+    session "$work/ready" env XDG_CONFIG_HOME="$out.config" "$im" gdb -q -batch -ex "set pagination off" \
         -ex "python NATIVE_ARGS = ('$binary', '$out', '$start', [$excludes])" \
-        -ex "source $work/native.py" -ex run --args "$binary" -e "$work/output.sh" \
+        -ex "source $work/native.py" -ex run --args "$binary" \
         >"$out.log" 2>&1
     [ -f "$out" ] || { tail -n 40 "$out.log" >&2; die "the native session did not finish"; }
 }

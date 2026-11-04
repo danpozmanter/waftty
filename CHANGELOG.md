@@ -1,7 +1,23 @@
 # Changelog
 
-## 0.2.3 - Smaller memory use on Linux
+## 0.3.0 - Copy mode, link hints, resource usage, and speed
 
+- Copy mode (**Terminal > Copy Mode**, Ctrl+Shift+X) selects and copies with the keyboard, anywhere in the screen and the scrollback.
+- Link hints label the links and file paths on the screen: type a label to open one (Ctrl+Shift+E) or copy it (Ctrl+Shift+Y).
+- **File > Save Scrollback**, **Save Selection** and **Open Scrollback in Editor** write the terminal's text to a file, with wrapped lines joined.
+- Pastes of up to 16 MiB go to the program as fast as it reads them; typing meanwhile follows the paste, and Escape or Ctrl+C stops it. A paste that can't be sent says why instead of doing nothing.
+- Programs that ask for kitty's keyboard protocol get keys classic terminals can't tell apart, such as Shift+Enter; others get the keys they always had.
+- `waftty --shell-integration bash` (or `zsh`, `fish`, `powershell`) prints a script that marks prompts and output for the prompt commands; the guide has the line to add to each shell's startup file.
+- `--working-directory`, `--title` and `--hold` start the first tab in a folder, give it a name its program can't change, or keep it open after its program exits.
+- A typed character shows as soon as the program echoes it, about 1 ms, instead of up to a frame later.
+- Output shows faster than in 0.2: plain and colored text about twice as fast, and mixed Unicode about 2.5 times.
+- A flood of output draws a steady 60 frames a second, and typing during it shows in about 12 ms.
+- After a flood of output waftty holds about 5 MB less in RAM (27 MB instead of 32 MB). Colored output history compresses with its colors, and compressing waits until the flood ends.
+- A scrollback of more than about 30,000 lines no longer stops waftty from starting. The scrollback setting goes up to 100,000 lines, history well above the screen takes about a third of the memory it did, and a long history is bounded by memory as well as by lines.
+- Holding a spin box's - or + button in Settings keeps stepping.
+- On Linux, keys skip the input method (ibus or fcitx) when it has only keyboard layouts set up, so a typed character shows in about 1 ms instead of 2.3 ms. **Settings > Behavior > Use the input method** sets it to always or never instead.
+- The Help menu no longer has Report a Problem; the About window still links the issue tracker.
+- **Settings > General > Open windows at their last size** can be turned off, so new windows open at the configured columns and rows; those settings are now labeled Columns and Rows.
 - On Linux, waftty keeps about 5 MB less of its code in memory while it runs: 3.3 MB at idle instead of 8.2 MB.
 - Building from source with `install.sh` lays out the code the same way the release packages do.
 

@@ -15,6 +15,7 @@ use windowing
 
 use encodings
 use info
+use input_method
 use schemes
 use shortcuts
 
@@ -37,9 +38,11 @@ pub struct Settings {
     pub encoding: String
     /// Whether the windows and tabs open at the last quit come back.
     pub restore: bool
-    /// The size in characters a new window opens at.
+    /// The size in characters a new window opens at, unless `remember_size`
+    /// brings back the size it last closed at.
     pub columns: i64
     pub rows: i64
+    pub remember_size: bool
     /// Whether closing a tab or window with a running program asks first.
     pub confirm_close: bool
     /// The font family; empty takes the desktop's monospace font, or the
@@ -95,21 +98,25 @@ pub struct Settings {
     pub editor: String
     /// On macOS, Option sends Meta instead of the character it types.
     pub option_as_meta: bool
+    /// Whether keys pass through the desktop's input method: "auto" (when
+    /// it has more than keyboard layouts set up), "on" or "off".
+    pub input_method: String
 }
 
 impl Default for Settings {
     fn default() -> Settings {
         Settings {
-            shell: "", directory: "", new_tabs: "current", encoding: encodings::DEFAULT, restore: false, columns: 90, rows: 28, confirm_close: true
+            shell: "", directory: "", new_tabs: "current", encoding: encodings::DEFAULT, restore: false, columns: 90, rows: 28, remember_size: true, confirm_close: true
             font: "", font_size: 10.0, font_weight: 400, ligatures: true, scheme: schemes::SYSTEM, cursor: "block", cursor_blink: true, bold_bright: false, legible: true, padding: 4, opacity: 100, line_spacing: 1.0, scrollbar: "scrolling", menu_bar: true, tab_bar: "several"
-            scrollback: 1_000, scroll_on_output: false, scroll_on_keystroke: true, word_chars: WORD_CHARS, copy_on_select: false, confirm_paste: true, bell: "none", notifications: true, clipboard_write: true, editor: "", option_as_meta: false
+            scrollback: 1_000, scroll_on_output: false, scroll_on_keystroke: true, word_chars: WORD_CHARS, copy_on_select: false, confirm_paste: true, bell: "none", notifications: true, clipboard_write: true, editor: "", option_as_meta: false, input_method: "auto"
         }
     }
 }
 
 pub const FONT_SIZE_MIN: i64 = 6
 pub const FONT_SIZE_MAX: i64 = 48
-const SCROLLBACK_MAX: i64 = 1_000_000
+// The longest history a terminal keeps, as the engine bounds it.
+const SCROLLBACK_MAX: i64 = 100_000
 // The font weights the settings offer, by their number on the CSS scale.
 const WEIGHTS: [(String, String); 7] = [("100", "Thin"), ("200", "Extra light"), ("300", "Light"), ("400", "Regular"), ("500", "Medium"), ("600", "Semibold"), ("700", "Bold")]
 
@@ -177,14 +184,14 @@ fn flag(on: bool) -> String {
 fn values(s: Settings) -> Vec<(String, String)> {
     #[
         ("shell", s.shell), ("directory", s.directory), ("new_tabs", s.new_tabs), ("encoding", s.encoding)
-        ("restore", flag(s.restore)), ("columns", f"{s.columns}"), ("rows", f"{s.rows}"), ("confirm_close", flag(s.confirm_close))
+        ("restore", flag(s.restore)), ("columns", f"{s.columns}"), ("rows", f"{s.rows}"), ("remember_size", flag(s.remember_size)), ("confirm_close", flag(s.confirm_close))
         ("font", s.font), ("font_size", f"{s.font_size}"), ("font_weight", f"{s.font_weight}"), ("ligatures", flag(s.ligatures)), ("scheme", s.scheme), ("cursor", s.cursor)
         ("cursor_blink", flag(s.cursor_blink)), ("bold_bright", flag(s.bold_bright)), ("legible", flag(s.legible))
         ("padding", f"{s.padding}"), ("opacity", f"{s.opacity}"), ("line_spacing", f"{s.line_spacing}"), ("scrollbar", s.scrollbar), ("menu_bar", flag(s.menu_bar)), ("tab_bar", s.tab_bar)
         ("scrollback", f"{s.scrollback}"), ("scroll_on_output", flag(s.scroll_on_output)), ("scroll_on_keystroke", flag(s.scroll_on_keystroke))
         ("word_chars", s.word_chars), ("copy_on_select", flag(s.copy_on_select)), ("confirm_paste", flag(s.confirm_paste))
         ("bell", s.bell), ("notifications", flag(s.notifications)), ("clipboard_write", flag(s.clipboard_write))
-        ("editor", s.editor), ("option_as_meta", flag(s.option_as_meta))
+        ("editor", s.editor), ("option_as_meta", flag(s.option_as_meta)), ("input_method", s.input_method)
     ]
 }
 
@@ -217,6 +224,7 @@ pub fn with_values(s: Settings, values: Map<String, String>) -> Settings {
     if let Some(v) = values.get("restore").and_then(flag_of) { out.restore = v }
     if let Some(v) = values.get("columns").and_then(|v| number_in(v, 20, 500)) { out.columns = v }
     if let Some(v) = values.get("rows").and_then(|v| number_in(v, 5, 200)) { out.rows = v }
+    if let Some(v) = values.get("remember_size").and_then(flag_of) { out.remember_size = v }
     if let Some(v) = values.get("confirm_close").and_then(flag_of) { out.confirm_close = v }
     if let Some(v) = text("font") { out.font = v }
     if let Some(v) = values.get("font_size") && let Some(size) = v.to_f64() && size >= FONT_SIZE_MIN as f64 && size <= FONT_SIZE_MAX as f64 {
@@ -235,7 +243,8 @@ pub fn with_values(s: Settings, values: Map<String, String>) -> Settings {
     if let Some(v) = one_of(values, "scrollbar", ["always", "scrolling", "never"]) { out.scrollbar = v }
     if let Some(v) = values.get("menu_bar").and_then(flag_of) { out.menu_bar = v }
     if let Some(v) = one_of(values, "tab_bar", ["always", "several", "never"]) { out.tab_bar = v }
-    if let Some(v) = values.get("scrollback").and_then(|v| number_in(v, 0, SCROLLBACK_MAX)) { out.scrollback = v }
+    // A longer history saved by an earlier version keeps the longest there is.
+    if let Some(v) = values.get("scrollback").and_then(|v| number_in(v, 0, i64::MAX)) { out.scrollback = v.min(SCROLLBACK_MAX) }
     if let Some(v) = values.get("scroll_on_output").and_then(flag_of) { out.scroll_on_output = v }
     if let Some(v) = values.get("scroll_on_keystroke").and_then(flag_of) { out.scroll_on_keystroke = v }
     if let Some(v) = values.get("word_chars") { out.word_chars = v }
@@ -246,6 +255,7 @@ pub fn with_values(s: Settings, values: Map<String, String>) -> Settings {
     if let Some(v) = values.get("clipboard_write").and_then(flag_of) { out.clipboard_write = v }
     if let Some(v) = text("editor") { out.editor = v }
     if let Some(v) = values.get("option_as_meta").and_then(flag_of) { out.option_as_meta = v }
+    if let Some(v) = one_of(values, "input_method", input_method::CHOICES) { out.input_method = v }
     out
 }
 
@@ -297,6 +307,11 @@ pub fn dialog(s: Settings, fonts: Vec<String>, offered: Vec<schemes::Entry>, reg
         toggle("clipboard_write", "Let programs copy to the clipboard", s.clipboard_write, d.clipboard_write, "Programs can never read it.")
         field("editor", "Editor for file paths", PreferenceKind::Text, s.editor, d.editor, "Ctrl+click on a path runs it, as in vim +{line} {path}. Leave empty to open files with the desktop.")
     ]
+    // Input methods reach X11 programs through XMODIFIERS.
+    if !env::var("XMODIFIERS").unwrap_or("").is_empty() {
+        let methods = #[("auto", "When it has more than keyboard layouts"), ("on", "Always"), ("off", "Never")]
+        behavior.push(field("input_method", "Use the input method", PreferenceKind::Choice(methods), s.input_method, d.input_method, "Keys go through the desktop's input method (ibus or fcitx), which types Chinese, Japanese and Korean text; each key takes about a millisecond longer. Applies when waftty next starts."))
+    }
     if gui::input::platform_is_macos() {
         behavior.push(toggle("option_as_meta", "Use Option as Meta", s.option_as_meta, d.option_as_meta, "Option sends Escape and the key instead of typing a character."))
     }
@@ -327,8 +342,9 @@ pub fn dialog(s: Settings, fonts: Vec<String>, offered: Vec<schemes::Entry>, reg
             field("directory", "Starting folder", PreferenceKind::Text, s.directory, d.directory, "Folder new windows open in. Leave empty for your home folder.")
             field("new_tabs", "New tabs open in", PreferenceKind::Choice(starts), s.new_tabs, d.new_tabs, "")
             field("encoding", "Character encoding", PreferenceKind::Choice(charsets), s.encoding, d.encoding, "For new tabs; Terminal > Set Encoding changes the current one.")
-            field("columns", "Window width", PreferenceKind::Integer(20, 500), f"{s.columns}", f"{d.columns}", "In characters.")
-            field("rows", "Window height", PreferenceKind::Integer(5, 200), f"{s.rows}", f"{d.rows}", "In lines.")
+            toggle("remember_size", "Open windows at their last size", s.remember_size, d.remember_size, "When off, new windows open at the columns and rows below. Applies when waftty next starts.")
+            field("columns", "Columns", PreferenceKind::Integer(20, 500), f"{s.columns}", f"{d.columns}", "Characters across a new window.")
+            field("rows", "Rows", PreferenceKind::Integer(5, 200), f"{s.rows}", f"{d.rows}", "Lines down a new window.")
             toggle("restore", "Reopen windows and tabs from last time", s.restore, d.restore, "")
             toggle("confirm_close", "Ask before closing a running program", s.confirm_close, d.confirm_close, "")
         ] }
@@ -476,6 +492,12 @@ mod tests {
         let changed = super::chosen_shortcuts({ "key:edit.settings": "Ctrl+,, Ctrl+Shift+,", "key:file.new-tab": ",, Ctrl+Shift+Y" }, registry)
         assert_eq(changed["edit.settings"], #["Ctrl+,", "Ctrl+Shift+,"])
         assert_eq(changed["file.new-tab"], #[",", "Ctrl+Shift+Y"])
+    }
+
+    #[test]
+    fn a_scrollback_longer_than_the_engine_keeps_becomes_the_longest_it_does() {
+        assert_eq(super::with_values(Settings::default(), { "scrollback": "1000000" }).scrollback, 100_000)
+        assert_eq(super::with_values(Settings::default(), { "scrollback": "50000" }).scrollback, 50_000)
     }
 
     #[test]

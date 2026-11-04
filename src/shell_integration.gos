@@ -1,0 +1,135 @@
+// Shell integration: scripts a shell runs to tell waftty where each prompt
+// and each command's output begins (OSC 133) and which folder it is in
+// (OSC 7). They leave the prompt as the user set it, writing the marks
+// around it instead. `waftty --shell-integration SHELL` prints them, so a
+// startup file can evaluate the one for the waftty it runs in.
+
+/// The shells there is a script for, as a sentence names them.
+pub const SHELLS: String = "bash, zsh, fish and powershell"
+
+const BASH: String = """
+# waftty shell integration for bash: prompt and output marks (OSC 133)
+# and the working folder (OSC 7). In ~/.bashrc:
+#   [ "$TERM_PROGRAM" = waftty ] && eval "$(waftty --shell-integration bash)"
+# The prompt's commands run between these two, so the trap below leaves
+# them unmarked: the first saves the command's status, the last marks
+# the prompt.
+__waftty_status() {
+    __waftty_last=$?
+    __waftty_at_prompt=
+}
+__waftty_precmd() {
+    if [ -n "$__waftty_ran" ]; then printf '\\033]133;D;%s\\007' "$__waftty_last"; fi
+    __waftty_ran=
+    printf '\\033]7;file://%s%s\\007' "${HOSTNAME:-localhost}" "$PWD"
+    printf '\\033]133;A\\007'
+    __waftty_at_prompt=1
+}
+__waftty_preexec() {
+    [ "$__waftty_at_prompt" = 1 ] || return
+    case "$BASH_COMMAND" in __waftty_*) return ;; esac
+    __waftty_at_prompt=
+    __waftty_ran=1
+    printf '\\033]133;C\\007'
+}
+if [[ "$(declare -p PROMPT_COMMAND 2>/dev/null)" == "declare -a"* ]]; then
+    PROMPT_COMMAND=(__waftty_status "${PROMPT_COMMAND[@]}" __waftty_precmd)
+else
+    PROMPT_COMMAND="__waftty_status;${PROMPT_COMMAND:+$PROMPT_COMMAND;}__waftty_precmd"
+fi
+trap '__waftty_preexec' DEBUG
+"""
+
+const ZSH: String = """
+# waftty shell integration for zsh: prompt and output marks (OSC 133)
+# and the working folder (OSC 7). In ~/.zshrc:
+#   [[ $TERM_PROGRAM == waftty ]] && eval "$(waftty --shell-integration zsh)"
+__waftty_precmd() {
+    local status=$?
+    if [[ -n $__waftty_ran ]]; then printf '\\033]133;D;%s\\007' $status; fi
+    __waftty_ran=
+    printf '\\033]7;file://%s%s\\007' "$HOST" "$PWD"
+    printf '\\033]133;A\\007'
+}
+__waftty_preexec() {
+    __waftty_ran=1
+    printf '\\033]133;C\\007'
+}
+# First, so it reads the command's status before other hooks change it.
+precmd_functions=(__waftty_precmd $precmd_functions)
+preexec_functions+=(__waftty_preexec)
+"""
+
+const FISH: String = """
+# waftty shell integration for fish: prompt and output marks (OSC 133)
+# and the working folder (OSC 7). In ~/.config/fish/config.fish:
+#   test "$TERM_PROGRAM" = waftty; and waftty --shell-integration fish | source
+function __waftty_prompt --on-event fish_prompt
+    set -l last $status
+    if set -q __waftty_ran
+        printf '\\033]133;D;%s\\007' $last
+        set -e __waftty_ran
+    end
+    printf '\\033]7;file://%s%s\\007' (hostname) "$PWD"
+    printf '\\033]133;A\\007'
+end
+function __waftty_preexec --on-event fish_preexec
+    set -g __waftty_ran 1
+    printf '\\033]133;C\\007'
+end
+"""
+
+const POWERSHELL: String = """
+# waftty shell integration for PowerShell: prompt and output marks
+# (OSC 133) and the working folder (OSC 7). In $PROFILE:
+#   if ($env:TERM_PROGRAM -eq 'waftty') { waftty --shell-integration powershell | Out-String | Invoke-Expression }
+$global:__WafttyPrompt = $function:prompt
+function global:prompt {
+    $ok = $?
+    $e = [char]27; $bel = [char]7
+    $marks = ''
+    if ($global:__WafttyRan) {
+        $code = if ($ok) { 0 } elseif ($global:LASTEXITCODE) { $global:LASTEXITCODE } else { 1 }
+        $marks += "$e]133;D;$code$bel"
+        $global:__WafttyRan = $false
+    }
+    $here = $executionContext.SessionState.Path.CurrentLocation
+    if ($here.Provider.Name -eq 'FileSystem') {
+        $marks += "$e]7;file://$env:COMPUTERNAME/$($here.ProviderPath -replace '\\\\', '/')$bel"
+    }
+    $marks + "$e]133;A$bel" + (& $global:__WafttyPrompt)
+}
+if (Get-Module PSReadLine) {
+    Set-PSReadLineKeyHandler -Key Enter -ScriptBlock {
+        $global:__WafttyRan = $true
+        [Console]::Write("$([char]27)]133;C$([char]7)")
+        [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine()
+    }
+}
+"""
+
+/// The integration script for `shell`, or `None` for a shell without one.
+pub fn script(shell: String) -> Option<String> {
+    match shell.to_lowercase() {
+        "bash" => Some(BASH)
+        "zsh" => Some(ZSH)
+        "fish" => Some(FISH)
+        "powershell" | "pwsh" => Some(POWERSHELL)
+        _ => None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn each_shell_has_a_script_that_marks_prompts_and_output() {
+        for shell in ["bash", "zsh", "fish", "powershell", "pwsh", "Bash"] {
+            let Some(text) = super::script(shell) else { panic(f"no script for {shell}") }
+            assert(text.contains("133;A"), f"{shell} marks no prompt")
+            assert(text.contains("133;C"), f"{shell} marks no output")
+            assert(text.contains("133;D"), f"{shell} marks no command's end")
+            assert(text.contains("]7;file://"), f"{shell} reports no folder")
+        }
+        assert_eq(super::script("tcsh"), None)
+    }
+}

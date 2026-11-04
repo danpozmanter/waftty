@@ -2,48 +2,93 @@
 // or with `-e program [args...]` that program in the first one. `--fixture`
 // runs the scripted journey the checks use instead of opening a window.
 
-use std::{env, errors, process}
+use std::{env, errors, path, process}
 
 use gui::terminal::Command
 
 use application
+use application::FirstTab
 use console
 use fixture
 use info
+use input_method
 use model
 use portable
 use settings
 use settings::Settings
+use shell_integration
 
-const USAGE: String = "usage: waftty [--version] [--help] [--fixture] [-e program [args...]]\n"
+const USAGE: String = """
+usage: waftty [options] [-e program [args...]]
+
+  --working-directory DIR  start the first tab in DIR
+  --title TITLE            name the first tab TITLE, whatever its program sets
+  --hold                   keep the first tab open after its program exits
+  --shell-integration SHELL
+                           print the integration script for SHELL (bash, zsh,
+                           fish or powershell)
+  -e program [args...]     run program in the first tab; every argument after
+                           it is the program's
+  --version, -h/--help
+"""
+
+/// What the command line asks the first tab to run, and where.
+#[derive(Debug, Default, PartialEq)]
+struct Launch {
+    program: Option<Command>
+    /// The folder the first tab starts in; empty for the one Settings names.
+    directory: String
+    title: String
+    hold: bool
+}
 
 // What the command line asks for.
 #[derive(Debug, PartialEq)]
 enum Invocation {
-    Open(Option<Command>)
+    Open(Launch)
     Version
     Help
     Fixture
+    ShellIntegration(String)
 }
 
 // Options are read up to `-e`; every argument after it belongs to the
 // program, so `-e git --version` runs git's `--version`.
 fn invocation(args: Vec<String>) -> Result<Invocation, String> {
-    for (i, a) in args.iter().enumerate() {
-        match a {
+    let mut launch = Launch::default()
+    let mut i = 0
+    while i < args.len() {
+        let a = args[i]
+        // An option's value follows it, or comes after `=` in the same word.
+        let name, inline = match a.find("=") {
+            Some(at) if a.starts_with("--") => (a.substring(0, at), Some(a.substring(at + 1, a.byte_len())))
+            _ => (a, None)
+        }
+        let mut value = || -> Result<String, String> {
+            if let Some(v) = inline { return Ok(v) }
+            i += 1
+            if i >= args.len() { return Err(f"{name} needs a value") }
+            Ok(args[i])
+        }
+        match name {
             "--version" => return Ok(Invocation::Version)
             "-h" | "--help" => return Ok(Invocation::Help)
             "--fixture" => return Ok(Invocation::Fixture)
+            "--shell-integration" => return Ok(Invocation::ShellIntegration(value()?))
+            "--working-directory" => launch.directory = value()?
+            "--title" => launch.title = value()?
+            "--hold" => launch.hold = true
             "-e" => {
                 let rest = args.skip(i + 1)
                 if rest.is_empty() { return Err("-e needs a program to run") }
-                let program = Command { program: rest[0], args: rest.skip(1), cwd: "", env: #[] }
-                return Ok(Invocation::Open(Some(program)))
+                launch.program = Some(Command { program: rest[0], args: rest.skip(1), cwd: "", env: #[] })
+                return Ok(Invocation::Open(launch))
             }
             _ => return Err(f"unknown argument {a}")
         }
+        i += 1
     }
-    Ok(Invocation::Open(None))
+    Ok(Invocation::Open(launch))
 }
 
 fn main() -> Result<(), errors::Error> {
@@ -52,7 +97,7 @@ fn main() -> Result<(), errors::Error> {
         Ok(Invocation::Open(_)) => {}
         _ => console::attach()
     }
-    let program = match invoked {
+    let launch = match invoked {
         Ok(Invocation::Version) => {
             println(f"{info::NAME} {info::VERSION}")
             return Ok(())
@@ -62,7 +107,17 @@ fn main() -> Result<(), errors::Error> {
             return Ok(())
         }
         Ok(Invocation::Fixture) => return fixture::journey()
-        Ok(Invocation::Open(program)) => program
+        Ok(Invocation::ShellIntegration(shell)) => {
+            match shell_integration::script(shell) {
+                Some(script) => print(script)
+                None => {
+                    eprintln(f"{info::NAME}: no shell integration for {shell}; there is for {shell_integration::SHELLS}")
+                    process::exit(2)
+                }
+            }
+            return Ok(())
+        }
+        Ok(Invocation::Open(launch)) => launch
         Err(why) => {
             eprint(f"{info::NAME}: {why}\n{USAGE}")
             process::exit(2)
@@ -76,17 +131,30 @@ fn main() -> Result<(), errors::Error> {
             Settings::default()
         }
     }
-    // A session comes back when no program was asked for; its first window's
-    // first tab opens in its folder.
-    let restore = program.is_none() && s.restore
-    let mut first = match program {
+    // A session comes back when the command line asked for no program and no
+    // folder; its first window's first tab opens in its folder.
+    let restore = launch.program.is_none() && launch.directory.is_empty() && s.restore
+    let mut first = match launch.program {
         Some(c) => Command { cwd: settings::start_folder(s), ..c }
         None => settings::command(s)
     }
-    if restore && let Some(saved) = model::saved_session() && !saved.windows[0].folders.is_empty() && !saved.windows[0].folders[0].is_empty() {
+    if !launch.directory.is_empty() {
+        first.cwd = absolute(launch.directory)
+    } else if restore && let Some(saved) = model::saved_session() && !saved.windows[0].folders.is_empty() && !saved.windows[0].folders[0].is_empty() {
         first.cwd = saved.windows[0].folders[0]
     }
-    application::app(s, first, restore).run()
+    // The input method is chosen as the window system starts, so before it.
+    let program_env = input_method::prepare(s.input_method)
+    application::app(s, first, FirstTab { title: launch.title, hold: launch.hold }, restore, program_env).run()
+}
+
+// `dir` from the folder waftty started in, which a relative path is read from.
+fn absolute(dir: String) -> String {
+    if path::is_absolute(dir) { return dir }
+    match env::current_dir() {
+        Ok(here) => path::join(here, dir)
+        Err(_) => dir
+    }
 }
 
 #[cfg(test)]
@@ -99,16 +167,31 @@ mod tests {
 
     #[test]
     fn options_are_read_only_before_the_program() {
-        let Ok(Invocation::Open(Some(c))) = parse(["-e", "git", "--version"]) else {
-            panic("-e did not name a program")
+        let Ok(Invocation::Open(launch)) = parse(["-e", "git", "--version"]) else {
+            panic("-e did not open a tab")
         }
+        let Some(c) = launch.program else { panic("-e did not name a program") }
         assert_eq(c.program, "git")
         assert_eq(c.args, #["--version"])
         assert_eq(parse(["--version"]), Ok(Invocation::Version))
         assert_eq(parse(["--help"]), Ok(Invocation::Help))
         assert_eq(parse(["-h"]), Ok(Invocation::Help))
         assert_eq(parse(["--fixture"]), Ok(Invocation::Fixture))
-        assert_eq(parse([]), Ok(Invocation::Open(None)))
+        assert_eq(parse([]), Ok(Invocation::Open(super::Launch::default())))
+        assert_eq(parse(["--shell-integration", "zsh"]), Ok(Invocation::ShellIntegration("zsh")))
+    }
+
+    #[test]
+    fn a_folder_a_title_and_hold_come_before_the_program() {
+        let Ok(Invocation::Open(launch)) = parse(["--working-directory", "/tmp/p", "--title=review", "--hold", "-e", "make", "--title", "x"]) else {
+            panic("the options did not open a tab")
+        }
+        assert_eq(launch.directory, "/tmp/p")
+        assert_eq(launch.title, "review")
+        assert(launch.hold)
+        let Some(c) = launch.program else { panic("-e did not name a program") }
+        assert_eq(c.args, #["--title", "x"])
+        assert_eq(parse(["--title"]), Err("--title needs a value"))
     }
 
     #[test]
