@@ -5,7 +5,6 @@
 
 import argparse
 import json
-import os
 import statistics
 from pathlib import Path
 
@@ -14,7 +13,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "waftty-bench"
 MB = 20 * 1024 * 1024 / 1e6  # each input is 20 MiB
 SURFACE, INK, MUTED, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e6e5e1"
 # Validated categorical order (CVD pass); value labels and tables give relief
@@ -95,8 +93,8 @@ def row(cells):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--results", type=Path, default=CACHE / "results.json")
-    ap.add_argument("--out", type=Path, default=CACHE / "report")
+    ap.add_argument("--results", type=Path, default=Path("results.json"))
+    ap.add_argument("--out", type=Path, default=Path("report"))
     a = ap.parse_args()
     res = json.loads(a.results.read_text())
     meta = res.pop("_meta", {})

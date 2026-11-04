@@ -9,7 +9,7 @@ uv run bench.py run --only throughput,latency          # just those measures (ra
 uv run report.py                                      # charts and RESULTS.md
 ```
 
-Inputs, results and the report go to `~/.cache/waftty-bench` (`--out` and `--results` name other files). Every terminal runs on its defaults from a configuration folder of its own, with the same scrollback (`--scrollback`, 10,000 lines) and a 1000x700 window (or the nearest size its size hints allow).
+Results go to `results.json` and the report to `report/` in the current directory (`--out` and `report.py --results` name others). The test inputs and each run's configuration folders stay in `~/.cache/waftty-bench`. Every terminal runs on its defaults from a configuration folder of its own, with the same scrollback (`--scrollback`, 10,000 lines) and a 1000x700 window (or the nearest size its size hints allow).
 
 Needs an X server with the XTEST and DAMAGE extensions, and `xrandr`. Run it with nothing else busy on the machine: a stray process using a core shows up in every timing. With no monitor connected (all `xrandr` outputs disconnected), terminals that sync to vblank would fall back to the driver's 1 Hz pacing, so the run sets `__GL_SYNC_TO_VBLANK=0` and records that.
 

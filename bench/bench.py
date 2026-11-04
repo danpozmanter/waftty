@@ -7,7 +7,8 @@
 Each terminal runs on its defaults from a configuration folder of its own,
 with the same scrollback (--scrollback, 10,000 lines) and the same window size
 (1000x700, or the nearest size its size hints allow). Results go to
-~/.cache/waftty-bench unless --out names another folder.
+results.json in the current directory unless --out names another file; the
+inputs and each run's configuration folders stay in ~/.cache/waftty-bench.
 """
 
 import argparse
@@ -55,20 +56,30 @@ def config_home(term):
                     '<channel name="xfce4-terminal" version="1.0">'
                     f'<property name="scrolling-lines" type="uint" value="{SCROLLBACK}"/>'
                     "</channel>\n")
+        # The bus listens in the benchmark's folder, so the services it
+        # starts, which outlive it, carry that folder in their address.
+        with open(f"{home}/bus.conf", "w") as f:
+            f.write('<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"'
+                    ' "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">\n'
+                    f"<busconfig><type>session</type><keep_umask/><listen>unix:dir={home}</listen>"
+                    "<auth>EXTERNAL</auth><standard_session_servicedirs/>"
+                    '<policy context="default"><allow send_destination="*" eavesdrop="true"/>'
+                    '<allow eavesdrop="true"/><allow own="*"/></policy></busconfig>\n')
     return home
 
 
 TERMS = {
-    "waftty": lambda cmd: [WAFTTY, "-e", "sh", "-c", cmd],
+    "waftty": lambda cmd, home: [WAFTTY, "-e", "sh", "-c", cmd],
     # xfconf reads the scrollback from the benchmark's folder on a bus of its own.
-    "xfce4-terminal": lambda cmd: ["dbus-run-session", "--", "xfce4-terminal", "--disable-server",
-                                   "-x", "sh", "-c", cmd],
-    "alacritty": lambda cmd: ["alacritty", "-o", f"scrolling.history={SCROLLBACK}",
+    "xfce4-terminal": lambda cmd, home: ["dbus-run-session", f"--config-file={home}/bus.conf", "--",
+                                         "xfce4-terminal", "--disable-server",
+                                         "-x", "sh", "-c", cmd],
+    "alacritty": lambda cmd, home: ["alacritty", "-o", f"scrolling.history={SCROLLBACK}",
                               "-e", "sh", "-c", cmd],
-    "ghostty": lambda cmd: ["ghostty", "--config-default-files=false",
+    "ghostty": lambda cmd, home: ["ghostty", "--config-default-files=false",
                             "--gtk-single-instance=false",
                             f"--scrollback-limit-lines={SCROLLBACK}", "-e", "sh", "-c", cmd],
-    "wezterm": lambda cmd: ["wezterm", "-n", "--config", f"scrollback_lines={SCROLLBACK}", "start",
+    "wezterm": lambda cmd, home: ["wezterm", "-n", "--config", f"scrollback_lines={SCROLLBACK}", "start",
                             "--always-new-process", "--", "sh", "-c", cmd],
 }
 
@@ -204,12 +215,13 @@ def monitor_connected():
 
 
 def launch(term, cmd):
-    env = dict(os.environ, XDG_CONFIG_HOME=config_home(term))
+    home = config_home(term)
+    env = dict(os.environ, XDG_CONFIG_HOME=home)
     # Without a monitor there is no vblank: a GL terminal synced to it would
     # pace itself at the driver's 1 Hz fallback.
     if not monitor_connected():
         env["__GL_SYNC_TO_VBLANK"] = "0"
-    return subprocess.Popen(TERMS[term](cmd), stdout=subprocess.DEVNULL,
+    return subprocess.Popen(TERMS[term](cmd, home), stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL, env=env)
 
 
@@ -543,12 +555,14 @@ def startup(term):
 
 def leftovers():
     """Processes still running from a launch: each has the benchmark's
-    configuration folder in its environment."""
-    mark = f"XDG_CONFIG_HOME={OUT / 'run'}/cfg-".encode()
+    configuration folder in its environment, or its bus there."""
+    marks = (f"XDG_CONFIG_HOME={OUT / 'run'}/cfg-".encode(),
+             f"DBUS_SESSION_BUS_ADDRESS=unix:path={OUT / 'run'}/cfg-".encode())
     found = []
     for pid in filter(str.isdigit, os.listdir("/proc")):
         try:
-            if mark in open(f"/proc/{pid}/environ", "rb").read():
+            environ = open(f"/proc/{pid}/environ", "rb").read()
+            if any(mark in environ for mark in marks):
                 found.append(int(pid))
         except (FileNotFoundError, PermissionError, ProcessLookupError):
             pass
@@ -649,7 +663,8 @@ def main():
     ap.add_argument("--runs", type=int, default=3, help="repetitions of RAM and throughput")
     ap.add_argument("--scrollback", type=int, default=SCROLLBACK)
     ap.add_argument("--only", default="", help="comma-separated: ram, throughput, cpu, latency, streaming, startup")
-    ap.add_argument("--out", type=Path, default=None, help="results file (default: in the cache)")
+    ap.add_argument("--out", type=Path, default=Path("results.json"),
+                    help="results file (default: results.json in the current directory)")
     a = ap.parse_args()
     if a.command == "inputs":
         write_inputs()
@@ -667,7 +682,7 @@ def main():
     # waftty and others hand a new launch to the instance already running.
     end_leftovers()
     try:
-        measure(terms, a.runs, a.out or OUT / "results.json", {k for k in a.only.split(",") if k})
+        measure(terms, a.runs, a.out, {k for k in a.only.split(",") if k})
     finally:
         end_leftovers()
 
