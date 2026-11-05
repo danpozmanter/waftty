@@ -58,8 +58,9 @@ Send Signal, Zoom, Show Menu Bar and Settings.
 - A tab whose program rings the bell or posts a notification while hidden is
   marked until you look at it.
 - Drag a tab out of its window, or choose **Move Tab to New Window** from its
-  menu, to give it a window of its own. Drop a tab on another window's tab
-  strip to move it there; a split tab moves with its panes, and a window left
+  menu, to give it a window of its own. Drop a tab on another window of the
+  same waftty, on its tab strip or anywhere on a window showing one tab, to
+  move it there; a split tab moves with its panes, and a window left
   without tabs closes.
 - Closing a tab, window or waftty while a program runs asks first and names
   the program. **Exit Anyway** (or ++e++, or ++left++ then ++enter++) closes
@@ -78,32 +79,36 @@ Send Signal, Zoom, Show Menu Bar and Settings.
 - A split tab is one tab in the strip, named for its focused pane. Close Tab
   closes it with all its panes.
 
-## Drop-Down Mode
+## Quick Terminal
 
 ```sh
-waftty --drop-down
+waftty --quick                     # or --quick-terminal
+waftty --quick-position=left       # hang it from the left edge this time
 ```
 
-opens waftty as a drop-down terminal: a window without a frame that hangs
-from the top of the screen above other windows. Its shortcut, ++f12++ unless
-**Settings > Drop-Down** names another, shows and hides it from any
-application; pressed while another window has focus, it brings the drop-down
-to the front. It has no menu bar; a right click reaches Settings, Check for
-Updates, About and Quit. It spans the display's width and half its height
-until you resize it, and then keeps the size you left it at, apart from the
-size waftty's other windows remember; the same page sets the width and the
-height, in percent of the display.
+opens waftty as a quick terminal: a window without a frame that hangs from
+an edge of the screen above other windows, on whichever virtual desktop you
+are on. Its shortcut, ++f12++ unless **Settings > Quick Terminal** names
+another, shows it with one press and hides it with the next, from any
+application. It has no menu bar; a right click reaches Settings, Check for
+Updates, About and Quit. **Position** on the same page hangs it from the top
+(the default), bottom, left or right edge, and `--quick-position` overrides
+that for one launch. It spans its edge and reaches half way across the
+display until you resize it by dragging the edge facing the rest of the
+screen, which a line marks; it then keeps the size you left it at, apart from
+the size waftty's other windows remember. **Length** and **Depth** set that
+size, in percent of the display along the edge and out from it.
 
-Add `waftty --drop-down` to your desktop's startup applications to have it
-ready at login. Launching it again while it runs shows the running one.
+Add `waftty --quick` to your desktop's startup applications to have it ready
+at login. Launching it again while it runs shows the running one.
 
 - On X11, Windows and macOS waftty takes the key itself. If another
-  application, such as another drop-down terminal, already holds it, waftty
-  says so; choose another key on the Drop-Down page.
+  application, such as another quick or drop-down terminal, already holds
+  it, waftty says so; choose another key on the Quick Terminal page.
 - On Wayland the desktop's GlobalShortcuts portal takes it, and the desktop
   may ask you to confirm or change the key. Where the desktop has no such
-  portal, bind a desktop shortcut to `waftty --drop-down`, which shows the
-  running drop-down.
+  portal, bind a desktop shortcut to `waftty --quick`, which shows the running
+  quick terminal.
 
 ## Find
 
@@ -236,7 +241,11 @@ waftty --title review -e codex               # the tab keeps this name
 waftty --hold -e ./run-checks                # the tab stays open after it ends
 ```
 
-`waftty --drop-down` starts the [drop-down terminal](#drop-down-mode).
+`waftty --quick` starts the [quick terminal](#quick-terminal). Each launch
+of waftty is a program of its own; `--single-instance` opens the window in
+the waftty already started with `--single-instance` instead, with its folder,
+program, title and `--hold`, so tabs move between all of those windows. Its
+shells share that waftty's environment variables.
 Every argument after `-e` is the program's own. `--hold` keeps the
 program's last screen and adds the status it exited with; close the tab when
 you are done. A folder or a program on the command line starts a new session
@@ -290,8 +299,9 @@ are saved, so the defaults follow your desktop.
   it), the editor for file paths (such as `nvim +{line} {path}`), on macOS
   whether Option is Meta, and on Linux whether keys go through the input
   method (see below).
-- **Drop-Down**: the shortcut that shows and hides the
-  [drop-down terminal](#drop-down-mode), and its width and height.
+- **Quick Terminal**: the shortcut that shows and hides the
+  [quick terminal](#quick-terminal), the edge it hangs from, and its length
+  and depth.
 - **Shortcuts**: every command's chords.
 
 Settings are saved in the configuration directory:

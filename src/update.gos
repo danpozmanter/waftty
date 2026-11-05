@@ -13,6 +13,7 @@ use gui::services::desktop::Urgency
 use gui::terminal::Event
 use windowing
 
+use cli
 use commands
 use drop_down
 use info
@@ -52,6 +53,14 @@ pub fn update(m: Model, msg: UiMsg) -> Model {
                 model::transfer_tab(&mut n, from, key, to, at)
             }
         }
+        // Dropped on a window showing no strip: it goes last among that window's tabs.
+        UiMsg::TabToWindow(strip, key, window) => {
+            if let Some(from) = model::window_index(n, model::strip_window(strip)) &&
+                let Some(to) = model::window_index(n, window) {
+                model::transfer_tab(&mut n, from, key, to, i64::MAX)
+            }
+        }
+        UiMsg::CommandLine(directory, arguments) => launched(&mut n, directory, arguments)
         UiMsg::TabDetach(strip, key, x, y) => {
             if let Some(from) = model::window_index(n, model::strip_window(strip)) { model::detach_tab(&mut n, from, key, Some((x, y))) }
         }
@@ -91,7 +100,7 @@ pub fn update(m: Model, msg: UiMsg) -> Model {
         UiMsg::Hotkey(id) if id == drop_down::HOTKEY && n.drop_down => drop_down::toggle(&mut n)
         UiMsg::DockResized(window, width, height) if n.drop_down && window == "main" => drop_down::resized(&mut n, width, height)
         UiMsg::Task(id, gui::TaskOutcome::Failed(why)) if id == drop_down::HOTKEY => {
-            model::report(n.windows[0].key, "Couldn't set the drop-down shortcut", errors::new(f"{why}. Choose another in Settings > Drop-Down."))
+            model::report(n.windows[0].key, "Couldn't set the quick terminal's shortcut", errors::new(f"{why}. Choose another in Settings > Quick Terminal."))
         }
         _ => ()
     }
@@ -561,7 +570,7 @@ fn apply_settings(m: &mut Model, values: Map<String, String>) {
 // Takes settings `chosen`, puts their window theme in place and saves them.
 fn store_settings(m: &mut Model, chosen: settings::Settings) {
     if chosen == m.settings { return }
-    if m.drop_down { drop_down::settings_changed(m.settings, chosen) }
+    if m.drop_down { drop_down::settings_changed(m.settings, chosen, m.quick_position) }
     m.settings = chosen
     gui::perform(schemes::theme_effect(model::scheme(*m)))
     gui::perform(Effect::SetTransparent(chosen.opacity < 100))
@@ -591,5 +600,21 @@ mod tests {
     fn an_editor_template_keeps_quoted_words_whole() {
         assert_eq(super::editor_command("'/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl' {path}:{line}", "/tmp/a b.txt", 3, 0), #["/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl", "/tmp/a b.txt:3"])
         assert_eq(super::editor_command("vim +{line} {path}", "/x", 0, 0), #["vim", "+1", "/x"])
+    }
+}
+
+// A later `--single-instance` launch forwarded its command line: it opens a
+// window here, as that launch would have opened its own.
+fn launched(m: &mut Model, directory: String, arguments: Vec<String>) {
+    let Ok(cli::Invocation::Open(launch)) = cli::invocation(arguments) else { return }
+    let title = launch.title
+    let hold = launch.hold
+    match model::open_window(m, cli::first_command(launch, m.settings, directory)) {
+        Ok(()) => {
+            let w = m.windows.len() - 1
+            m.windows[w].tabs[0].fixed_title = title
+            m.windows[w].tabs[0].hold = hold
+        }
+        Err(why) => model::report(m.windows[0].key, "Couldn't open the window a launch asked for", why)
     }
 }

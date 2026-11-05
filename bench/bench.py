@@ -1,7 +1,7 @@
 """RAM, CPU, throughput, latency and startup of terminals on a live X11 desktop.
 
     uv run bench.py inputs                      # writes the test inputs
-    uv run bench.py run [--terminals waftty,waftty-drop-down,guake,...] [--waftty PATH]
+    uv run bench.py run [--terminals waftty,waftty-quick,guake,...] [--waftty PATH]
     uv run report.py                            # charts and RESULTS.md
 
 Each terminal runs on its defaults from a configuration folder of its own,
@@ -46,12 +46,12 @@ root.change_attributes(event_mask=X.PropertyChangeMask)
 
 # The drop-down form of a terminal, which hangs from the top of the screen
 # and stays above other windows, as Guake always does.
-DROP_DOWN = "-drop-down"
+QUICK = "-quick"
 
 
 def program(term):
     """The executable a benchmark entry runs."""
-    base = term.removesuffix(DROP_DOWN)
+    base = term.removesuffix(QUICK)
     return WAFTTY if base == "waftty" else base
 
 
@@ -64,15 +64,15 @@ def share_of_screen():
 
 def config_home(term):
     home = tempfile.mkdtemp(dir=OUT / "run", prefix=f"cfg-{term}-")
-    base, drop_down = term.removesuffix(DROP_DOWN), term.endswith(DROP_DOWN)
+    base, quick = term.removesuffix(QUICK), term.endswith(QUICK)
     if base == "waftty":
         values = {"scrollback": str(SCROLLBACK)}
-        if drop_down:
+        if quick:
             wide, tall = share_of_screen()
             # A chord nothing else holds, so the run takes its shortcut quietly.
             values.update(drop_down_key="Ctrl+Alt+Shift+F8", drop_down_width=str(wide),
                           drop_down_height=str(tall))
-            # The drop-down is a single instance named on the session bus; a
+            # The quick terminal is a single instance named on the session bus; a
             # bus of its own keeps the run from handing off to one already open.
             private_bus(home, services=False)
         os.makedirs(f"{home}/dev.gossamer.waftty")
@@ -124,8 +124,8 @@ def private_bus(home, services):
 
 TERMS = {
     "waftty": lambda cmd, home: [WAFTTY, "-e", "sh", "-c", cmd],
-    "waftty-drop-down": lambda cmd, home: ["dbus-run-session", f"--config-file={home}/bus.conf", "--",
-                                           WAFTTY, "--drop-down", "-e", "sh", "-c", cmd],
+    "waftty-quick": lambda cmd, home: ["dbus-run-session", f"--config-file={home}/bus.conf", "--",
+                                       WAFTTY, "--quick", "-e", "sh", "-c", cmd],
     # xfconf reads the scrollback from the benchmark's folder on a bus of its own.
     "xfce4-terminal": lambda cmd, home: ["dbus-run-session", f"--config-file={home}/bus.conf", "--",
                                          "xfce4-terminal", "--disable-server",
@@ -741,9 +741,9 @@ def measure(terms, runs, out, only):
     results = json.loads(out.read_text()) if out.exists() else {}
 
     def label_of(term):
-        base = term.removesuffix(DROP_DOWN)
+        base = term.removesuffix(QUICK)
         name = LABEL if base == "waftty" else base
-        return f"{name} drop-down" if term.endswith(DROP_DOWN) else name
+        return f"{name} quick" if term.endswith(QUICK) else name
 
     # A measure this run takes replaces that terminal's earlier samples of it;
     # the ones it does not take (--only, --terminals) are kept.
@@ -808,7 +808,7 @@ def main():
     global SCROLLBACK, WAFTTY, LABEL
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("command", choices=["inputs", "run"])
-    ap.add_argument("--terminals", default="waftty,waftty-drop-down,xfce4-terminal,guake,alacritty,"
+    ap.add_argument("--terminals", default="waftty,waftty-quick,xfce4-terminal,guake,alacritty,"
                     "kitty,ghostty,wezterm")
     ap.add_argument("--waftty", default="waftty", help="waftty executable to measure")
     ap.add_argument("--label", default="waftty", help="the name waftty's results go under")

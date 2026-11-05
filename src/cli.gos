@@ -1,0 +1,197 @@
+// The command line: what a launch asks for, read the same way for waftty's
+// own launch and for a later one forwarded to a running instance.
+
+use std::path
+
+use gui::terminal::Command
+
+use settings
+use settings::Settings
+
+pub const USAGE: String = """
+usage: waftty [options] [-e program [args...]]
+
+  --working-directory DIR  start the first tab in DIR
+  --title TITLE            name the first tab TITLE, whatever its program sets
+  --hold                   keep the first tab open after its program exits
+  --single-instance        open the window in the waftty already started with
+                           --single-instance, so tabs move between its windows
+  --quick, --quick-terminal
+                           open as a quick terminal that hangs from an edge of
+                           the screen; its shortcut (F12 unless Settings >
+                           Quick Terminal names another) shows and hides it
+                           from any application
+  --quick-position EDGE    hang the quick terminal from EDGE (top, bottom, left
+                           or right) instead of the one Settings names
+  --shell-integration SHELL
+                           print the integration script for SHELL (bash, zsh,
+                           fish or powershell)
+  -e program [args...]     run program in the first tab; every argument after
+                           it is the program's
+  --version, -h/--help
+"""
+
+/// What the command line asks the first tab to run, and where.
+#[derive(Debug, Default, PartialEq)]
+pub struct Launch {
+    pub program: Option<Command>
+    /// The folder the first tab starts in; empty for the one Settings names.
+    pub directory: String
+    pub title: String
+    pub hold: bool
+    /// Opens the window as a quick terminal (`--quick`).
+    pub quick: bool
+    /// The edge the quick terminal hangs from; empty for the one Settings names.
+    pub quick_position: String
+    /// Hands the window to the running `--single-instance` waftty.
+    pub single_instance: bool
+}
+
+/// What the command line asks for.
+#[derive(Debug, PartialEq)]
+pub enum Invocation {
+    Open(Launch)
+    Version
+    Help
+    Fixture
+    ShellIntegration(String)
+}
+
+/// Reads `args`. Options are read up to `-e`; every argument after it
+/// belongs to the program, so `-e git --version` runs git's `--version`.
+pub fn invocation(args: Vec<String>) -> Result<Invocation, String> {
+    let mut launch = Launch::default()
+    let mut i = 0
+    while i < args.len() {
+        let a = args[i]
+        // An option's value follows it, or comes after `=` in the same word.
+        let name, inline = match a.find("=") {
+            Some(at) if a.starts_with("--") => (a.substring(0, at), Some(a.substring(at + 1, a.byte_len())))
+            _ => (a, None)
+        }
+        let mut value = || -> Result<String, String> {
+            if let Some(v) = inline { return Ok(v) }
+            i += 1
+            if i >= args.len() { return Err(f"{name} needs a value") }
+            Ok(args[i])
+        }
+        match name {
+            "--version" => return Ok(Invocation::Version)
+            "-h" | "--help" => return Ok(Invocation::Help)
+            "--fixture" => return Ok(Invocation::Fixture)
+            "--shell-integration" => return Ok(Invocation::ShellIntegration(value()?))
+            "--working-directory" => launch.directory = value()?
+            "--title" => launch.title = value()?
+            "--hold" => launch.hold = true
+            "--single-instance" => launch.single_instance = true
+            "--quick" | "--quick-terminal" => launch.quick = true
+            "--quick-position" => {
+                let edge = value()?
+                if !settings::POSITIONS.contains(edge) { return Err(f"--quick-position takes top, bottom, left or right, not {edge}") }
+                launch.quick_position = edge
+                launch.quick = true
+            }
+            "-e" => {
+                let rest = args.skip(i + 1)
+                if rest.is_empty() { return Err("-e needs a program to run") }
+                launch.program = Some(Command { program: rest[0], args: rest.skip(1), cwd: "", env: #[] })
+                return Ok(Invocation::Open(launch))
+            }
+            _ => return Err(f"unknown argument {a}")
+        }
+        i += 1
+    }
+    Ok(Invocation::Open(launch))
+}
+
+/// The first tab's program and folder for `launch`, a relative
+/// `--working-directory` read from `from`, the folder the launch ran in.
+pub fn first_command(launch: Launch, s: Settings, from: String) -> Command {
+    let mut first = match launch.program {
+        Some(c) => Command { cwd: settings::start_folder(s), ..c }
+        None => settings::command(s)
+    }
+    if !launch.directory.is_empty() { first.cwd = absolute(launch.directory, from) }
+    first
+}
+
+/// `dir` read from `from` when it is relative.
+pub fn absolute(dir: String, from: String) -> String {
+    if path::is_absolute(dir) || from.is_empty() { dir } else { path::join(from, dir) }
+}
+
+#[cfg(test)]
+mod tests {
+    use settings::Settings
+
+    use super::{Invocation, Launch}
+
+    fn parse(args: [String]) -> Result<Invocation, String> {
+        super::invocation(args.to_vec())
+    }
+
+    #[test]
+    fn options_are_read_only_before_the_program() {
+        let Ok(Invocation::Open(launch)) = parse(["-e", "git", "--version"]) else {
+            panic("-e did not open a tab")
+        }
+        let Some(c) = launch.program else { panic("-e did not name a program") }
+        assert_eq(c.program, "git")
+        assert_eq(c.args, #["--version"])
+        assert_eq(parse(["--version"]), Ok(Invocation::Version))
+        assert_eq(parse(["--help"]), Ok(Invocation::Help))
+        assert_eq(parse(["-h"]), Ok(Invocation::Help))
+        assert_eq(parse(["--fixture"]), Ok(Invocation::Fixture))
+        assert_eq(parse([]), Ok(Invocation::Open(Launch::default())))
+        assert_eq(parse(["--shell-integration", "zsh"]), Ok(Invocation::ShellIntegration("zsh")))
+    }
+
+    #[test]
+    fn a_folder_a_title_and_hold_come_before_the_program() {
+        let Ok(Invocation::Open(launch)) = parse(["--working-directory", "/tmp/p", "--title=review", "--hold", "-e", "make", "--title", "x"]) else {
+            panic("the options did not open a tab")
+        }
+        assert_eq(launch.directory, "/tmp/p")
+        assert_eq(launch.title, "review")
+        assert(launch.hold)
+        assert(!launch.quick)
+        let Some(c) = launch.program else { panic("-e did not name a program") }
+        assert_eq(c.args, #["--title", "x"])
+        assert_eq(parse(["--title"]), Err("--title needs a value"))
+    }
+
+    #[test]
+    fn quick_opens_the_first_window_as_a_quick_terminal_at_an_edge_it_may_name() {
+        let Ok(Invocation::Open(launch)) = parse(["--quick"]) else { panic("--quick did not open a window") }
+        assert(launch.quick)
+        assert_eq(launch.quick_position, "")
+        let Ok(Invocation::Open(named)) = parse(["--quick-terminal", "--quick-position=left"]) else { panic("--quick-terminal did not open a window") }
+        assert(named.quick)
+        assert_eq(named.quick_position, "left")
+        let Ok(Invocation::Open(implied)) = parse(["--quick-position", "bottom"]) else { panic("--quick-position did not open a window") }
+        assert(implied.quick)
+        assert_eq(parse(["--quick-position=middle"]), Err("--quick-position takes top, bottom, left or right, not middle"))
+        assert_eq(parse(["--drop-down"]), Err("unknown argument --drop-down"))
+    }
+
+    #[test]
+    fn single_instance_asks_for_the_running_window_owner() {
+        let Ok(Invocation::Open(launch)) = parse(["--single-instance", "--title", "t"]) else { panic("--single-instance did not open a window") }
+        assert(launch.single_instance)
+        assert(!launch.quick)
+    }
+
+    #[test]
+    fn a_forwarded_folder_reads_relative_to_the_launch_that_named_it() {
+        let Ok(Invocation::Open(launch)) = parse(["--working-directory", "src", "-e", "ls"]) else { panic("no launch") }
+        let first = super::first_command(launch, Settings::default(), "/home/me/project")
+        assert_eq(first.cwd, "/home/me/project/src")
+        assert_eq(super::absolute("/etc", "/home/me"), "/etc")
+    }
+
+    #[test]
+    fn unknown_arguments_and_a_bare_dash_e_are_refused() {
+        assert_eq(parse(["--nope"]), Err("unknown argument --nope"))
+        assert_eq(parse(["-e"]), Err("-e needs a program to run"))
+    }
+}

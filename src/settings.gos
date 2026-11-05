@@ -104,9 +104,13 @@ pub struct Settings {
     /// Whether keys pass through the desktop's input method: "auto" (when
     /// it has more than keyboard layouts set up), "on" or "off".
     pub input_method: String
-    /// The global shortcut that shows and hides a drop-down window.
+    /// The global shortcut that shows and hides the quick terminal.
     pub drop_down_key: String
-    /// A drop-down window's width and height, in percent of the display.
+    /// The display edge the quick terminal hangs from: "top", "bottom",
+    /// "left" or "right".
+    pub drop_down_position: String
+    /// The quick terminal's length along its edge and depth out from it, in
+    /// percent of the display.
     pub drop_down_width: i64
     pub drop_down_height: i64
 }
@@ -117,10 +121,13 @@ impl Default for Settings {
             shell: "", directory: "", new_tabs: "current", encoding: encodings::DEFAULT, restore: false, columns: 90, rows: 28, remember_size: true, confirm_close: true
             font: "", font_size: 10.0, font_weight: 400, ligatures: true, scheme: schemes::SYSTEM, cursor: "block", cursor_blink: true, bold_bright: false, legible: true, padding: 4, opacity: 100, line_spacing: 1.0, scrollbar: "always", scrollbar_side: "right", menu_bar: true, tab_bar: "several"
             scrollback: 1_000, scroll_on_output: false, scroll_on_keystroke: true, word_chars: WORD_CHARS, copy_on_select: false, confirm_paste: false, bell: "none", notifications: true, clipboard_write: true, editor: "", option_as_meta: false, input_method: "auto"
-            drop_down_key: "F12", drop_down_width: 100, drop_down_height: 50
+            drop_down_key: "F12", drop_down_position: "top", drop_down_width: 100, drop_down_height: 50
         }
     }
 }
+
+/// The edges the quick terminal can hang from.
+pub const POSITIONS: [String; 4] = ["top", "bottom", "left", "right"]
 
 pub const FONT_SIZE_MIN: i64 = 6
 pub const FONT_SIZE_MAX: i64 = 48
@@ -201,7 +208,7 @@ fn values(s: Settings) -> Vec<(String, String)> {
         ("word_chars", s.word_chars), ("copy_on_select", flag(s.copy_on_select)), ("confirm_paste", flag(s.confirm_paste))
         ("bell", s.bell), ("notifications", flag(s.notifications)), ("clipboard_write", flag(s.clipboard_write))
         ("editor", s.editor), ("option_as_meta", flag(s.option_as_meta)), ("input_method", s.input_method)
-        ("drop_down_key", s.drop_down_key), ("drop_down_width", f"{s.drop_down_width}"), ("drop_down_height", f"{s.drop_down_height}")
+        ("drop_down_key", s.drop_down_key), ("drop_down_position", s.drop_down_position), ("drop_down_width", f"{s.drop_down_width}"), ("drop_down_height", f"{s.drop_down_height}")
     ]
 }
 
@@ -268,6 +275,7 @@ pub fn with_values(s: Settings, values: Map<String, String>) -> Settings {
     if let Some(v) = values.get("option_as_meta").and_then(flag_of) { out.option_as_meta = v }
     if let Some(v) = one_of(values, "input_method", input_method::CHOICES) { out.input_method = v }
     if let Some(v) = text("drop_down_key") && is_hotkey(v) { out.drop_down_key = v }
+    if let Some(v) = one_of(values, "drop_down_position", POSITIONS) { out.drop_down_position = v }
     if let Some(v) = values.get("drop_down_width").and_then(|v| number_in(v, 20, 100)) { out.drop_down_width = v }
     if let Some(v) = values.get("drop_down_height").and_then(|v| number_in(v, 10, 100)) { out.drop_down_height = v }
     out
@@ -374,10 +382,11 @@ pub fn dialog(s: Settings, fonts: Vec<String>, offered: Vec<schemes::Entry>, reg
         ] }
         PreferencePage { key: "appearance", title: "Appearance", fields: appearance }
         PreferencePage { key: "behavior", title: "Behavior", fields: behavior }
-        PreferencePage { key: "drop-down", title: "Drop-Down", fields: #[
-            field("drop_down_key", "Show and hide shortcut", PreferenceKind::Text, s.drop_down_key, d.drop_down_key, "A key with any modifiers, such as F12 or Ctrl+`. It works in any application while waftty runs with --drop-down.")
-            field("drop_down_width", "Width", PreferenceKind::Integer(20, 100), f"{s.drop_down_width}", f"{d.drop_down_width}", "In percent of the display.")
-            field("drop_down_height", "Height", PreferenceKind::Integer(10, 100), f"{s.drop_down_height}", f"{d.drop_down_height}", "In percent of the display.")
+        PreferencePage { key: "quick-terminal", title: "Quick Terminal", fields: #[
+            field("drop_down_key", "Show and hide shortcut", PreferenceKind::Text, s.drop_down_key, d.drop_down_key, "A key with any modifiers, such as F12 or Ctrl+`. It works in any application while waftty runs with --quick.")
+            field("drop_down_position", "Position", PreferenceKind::Choice(#[("top", "Top"), ("bottom", "Bottom"), ("left", "Left"), ("right", "Right")]), s.drop_down_position, d.drop_down_position, "The edge of the display the terminal hangs from.")
+            field("drop_down_width", "Length", PreferenceKind::Integer(20, 100), f"{s.drop_down_width}", f"{d.drop_down_width}", "Along its edge, in percent of the display.")
+            field("drop_down_height", "Depth", PreferenceKind::Integer(10, 100), f"{s.drop_down_height}", f"{d.drop_down_height}", "Out from its edge, in percent of the display.")
         ] }
         PreferencePage { key: "shortcuts", title: "Shortcuts", fields: shortcut_fields(registry, chosen) }
     ])
@@ -531,7 +540,7 @@ mod tests {
 
     #[test]
     fn values_out_of_range_keep_the_setting_they_would_replace() {
-        let s = super::with_values(Settings::default(), { "font_size": "200", "scrollback": "-5", "encoding": "UTF-16LE", "scheme": "dark", "new_tabs": "elsewhere", "clipboard_write": "maybe", "cursor": "star", "padding": "99", "bell": "sound", "font_weight": "350" })
+        let s = super::with_values(Settings::default(), { "font_size": "200", "scrollback": "-5", "encoding": "UTF-16LE", "scheme": "dark", "new_tabs": "elsewhere", "clipboard_write": "maybe", "cursor": "star", "padding": "99", "bell": "sound", "font_weight": "350", "drop_down_position": "middle" })
         assert_eq(s.font_size, 10.0)
         assert_eq(s.scrollback, 1_000)
         assert_eq(s.encoding, "UTF-8")
@@ -542,6 +551,7 @@ mod tests {
         assert_eq(s.padding, 4)
         assert_eq(s.bell, "sound")
         assert_eq(s.font_weight, 400)
+        assert_eq(s.drop_down_position, "top")
     }
 
     #[test]
@@ -553,7 +563,7 @@ mod tests {
 
     #[test]
     fn stored_values_read_back_as_the_same_settings() {
-        let s = Settings { shell: "/bin/zsh -l", directory: "/tmp", encoding: "KOI8-R", font: "Mono", font_size: 12.5, font_weight: 300, ligatures: false, scrollback: 9000, scheme: "user:night", new_tabs: "configured", clipboard_write: false, editor: "vim +{line} {path}", cursor: "bar", scrollbar: "always", tab_bar: "always", bell: "flash", restore: true, columns: 120, rows: 40, ..Settings::default() }
+        let s = Settings { shell: "/bin/zsh -l", directory: "/tmp", encoding: "KOI8-R", font: "Mono", font_size: 12.5, font_weight: 300, ligatures: false, scrollback: 9000, scheme: "user:night", new_tabs: "configured", clipboard_write: false, editor: "vim +{line} {path}", cursor: "bar", scrollbar: "always", tab_bar: "always", bell: "flash", restore: true, columns: 120, rows: 40, drop_down_position: "left", drop_down_width: 30, drop_down_height: 80, ..Settings::default() }
         let mut map: Map<String, String> = Map::new()
         for (k, v) in super::values(s) { map[k] = v }
         assert_eq(super::with_values(Settings::default(), map), s)

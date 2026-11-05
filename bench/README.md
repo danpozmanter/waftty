@@ -3,7 +3,7 @@
 Measures waftty beside other terminals on a live X11 desktop: memory (PSS, USS, RSS, GPU), CPU (idle, and the time spent printing 40 MB), output throughput, keystroke-to-screen latency idle and under load, frame smoothness under load, and startup.
 
 ```sh
-uv run bench.py run                                   # waftty, waftty-drop-down, xfce4-terminal, guake, alacritty, kitty, ghostty, wezterm
+uv run bench.py run                                   # waftty, waftty-quick, xfce4-terminal, guake, alacritty, kitty, ghostty, wezterm
 uv run bench.py run --terminals waftty,alacritty --waftty ../target/release/waftty
 uv run bench.py run --only throughput,latency          # just those measures (ram, throughput, cpu, latency, streaming, startup)
 uv run report.py                                      # charts and RESULTS.md
@@ -11,7 +11,7 @@ uv run report.py                                      # charts and RESULTS.md
 
 Results go to `results.json` and the report to `report/` in the current directory (`--out` and `report.py --results` name others). A run replaces the samples of each terminal and measure it takes and keeps the others, so `--only` and `--terminals` update part of a file. The test inputs and each run's configuration folders stay in `~/.cache/waftty-bench`. Every terminal runs on its defaults from a configuration folder of its own, with the same scrollback (`--scrollback`, 10,000 lines) and a 1000x700 window (or the nearest size its size hints allow).
 
-Guake only runs as a drop-down terminal, so waftty also runs as one (`waftty-drop-down`, `waftty --drop-down`, sized to the same share of the screen and then to the same window) for a like-for-like comparison. Ghostty's quick terminal is left out: Ghostty does not support it on X11.
+Guake only runs as a drop-down terminal, so waftty also runs as its quick terminal (`waftty-quick`, `waftty --quick`, sized to the same share of the screen and then to the same window) for a like-for-like comparison. Ghostty's quick terminal is left out: Ghostty does not support it on X11.
 
 Needs an X server with the XTEST and DAMAGE extensions, and `xrandr`. Run it with nothing else busy on the machine: a stray process using a core shows up in every timing. With no monitor connected (all `xrandr` outputs disconnected), terminals that sync to vblank would fall back to the driver's 1 Hz pacing, so the run sets `__GL_SYNC_TO_VBLANK=0`, and kitty's own `sync_to_monitor=no`, and records that.
 

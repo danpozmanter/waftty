@@ -1,8 +1,8 @@
-// Drop-down mode (`--drop-down`): the main window hangs from the top of its
+// The quick terminal (`--quick`): the main window hangs from an edge of its
 // display above every other window, and a global shortcut shows and hides it.
 
 use gui
-use gui::Effect
+use gui::{Edge, Effect}
 
 use model
 use model::Model
@@ -13,52 +13,88 @@ use settings::Settings
 pub const HOTKEY: String = "drop-down"
 
 /// Puts the main window in place and asks for the shortcut.
-pub fn start(s: Settings) {
+pub fn start(m: Model) {
     gui::perform(Effect::SetAlwaysOnTop("main", true))
-    place(s)
-    bind(s)
+    // The terminal drops down on whichever desktop the user is on.
+    gui::perform(Effect::SetOnAllDesktops("main", true))
+    place(m.settings, m.quick_position)
+    bind(m.settings)
 }
 
-/// Sizes the main window along the top of its display.
-pub fn place(s: Settings) {
-    gui::perform(Effect::DockTop("main", s.drop_down_width as f64 / 100.0, s.drop_down_height as f64 / 100.0))
+/// The edge the quick terminal hangs from: the one `--quick-position`
+/// named, else the one Settings names.
+pub fn position(s: Settings, named: String) -> String {
+    if named.is_empty() { s.drop_down_position } else { named }
+}
+
+/// Sizes the main window along its edge of the display.
+pub fn place(s: Settings, named: String) {
+    gui::perform(Effect::Dock("main", edge(position(s, named)), s.drop_down_width as f64 / 100.0, s.drop_down_height as f64 / 100.0))
+}
+
+/// The display edge a quick terminal position names; the top for any other.
+pub fn edge(position: String) -> Edge {
+    match position {
+        "bottom" => Edge::Bottom
+        "left" => Edge::Left
+        "right" => Edge::Right
+        _ => Edge::Top
+    }
 }
 
 /// Registers the show-and-hide shortcut, replacing any registered before.
 pub fn bind(s: Settings) {
-    gui::perform(Effect::RegisterHotkey { id: HOTKEY, shortcut: s.drop_down_key, description: "Show or hide waftty" })
+    gui::perform(Effect::RegisterHotkey { id: HOTKEY, shortcut: s.drop_down_key, description: "Show or hide the quick terminal" })
 }
 
-/// The shortcut was pressed: a hidden window drops down, an unfocused one
-/// takes focus, and a focused one goes away.
+/// The shortcut was pressed: a hidden window drops down with focus, and a
+/// shown one goes away, focused or not, so each press shows or hides it.
 pub fn toggle(m: &mut Model) {
-    let Some(w) = model::window_index(*m, "main") else { return }
-    if m.drop_down_hidden || !m.windows[w].focused {
+    if model::window_index(*m, "main").is_none() { return }
+    if m.drop_down_hidden {
         m.drop_down_hidden = false
         // The window system places a window as it maps, so it is docked once shown.
         gui::perform(Effect::SetWindowVisible("main", true))
-        place(m.settings)
+        place(m.settings, m.quick_position)
     } else {
         m.drop_down_hidden = true
         gui::perform(Effect::SetWindowVisible("main", false))
     }
 }
 
-/// The user resized the drop-down window to `width` by `height` fractions of
-/// its display: the drop-down settings keep that size for next time.
-pub fn resized(m: &mut Model, width: f64, height: f64) {
+/// The user resized the quick terminal to `length` along its edge and
+/// `depth` out from it, as fractions of its display: the quick terminal settings
+/// keep that size for next time.
+pub fn resized(m: &mut Model, length: f64, depth: f64) {
     let mut chosen = m.settings
-    chosen.drop_down_width = (width * 100.0).round() as i64
-    chosen.drop_down_height = (height * 100.0).round() as i64
+    chosen.drop_down_width = (length * 100.0).round() as i64
+    chosen.drop_down_height = (depth * 100.0).round() as i64
     chosen.drop_down_width = chosen.drop_down_width.clamp(20, 100)
     chosen.drop_down_height = chosen.drop_down_height.clamp(10, 100)
     if chosen == m.settings { return }
     m.settings = chosen
-    if let Err(why) = settings::save(chosen) { model::report(m.windows[0].key, "Couldn't save the drop-down size", why) }
+    if let Err(why) = settings::save(chosen) { model::report(m.windows[0].key, "Couldn't save the quick terminal's size", why) }
 }
 
-/// Applies changed settings to a drop-down window.
-pub fn settings_changed(before: Settings, after: Settings) {
+/// Applies changed settings to a quick terminal whose `--quick-position`
+/// was `named`.
+pub fn settings_changed(before: Settings, after: Settings, named: String) {
     if after.drop_down_key != before.drop_down_key { bind(after) }
-    if after.drop_down_width != before.drop_down_width || after.drop_down_height != before.drop_down_height { place(after) }
+    if position(after, named) != position(before, named) || after.drop_down_width != before.drop_down_width || after.drop_down_height != before.drop_down_height { place(after, named) }
+}
+
+#[cfg(test)]
+mod tests {
+    use gui::Edge
+
+    use settings
+
+    #[test]
+    fn each_position_names_its_edge() {
+        assert_eq(super::edge("top"), Edge::Top)
+        assert_eq(super::edge("bottom"), Edge::Bottom)
+        assert_eq(super::edge("left"), Edge::Left)
+        assert_eq(super::edge("right"), Edge::Right)
+        for p in settings::POSITIONS { assert(p == "top" || super::edge(p) != Edge::Top) }
+    }
 }

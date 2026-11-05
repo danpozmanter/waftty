@@ -205,10 +205,13 @@ pub struct Model {
     pub program_env: Vec<(String, String)>
     /// The window that asked for a check still running, or "".
     pub checking_window: String
-    /// Whether the main window is a drop-down (`--drop-down`), and whether
+    /// Whether the main window is a quick terminal (`--quick`), and whether
     /// its shortcut has hidden it.
     pub drop_down: bool
     pub drop_down_hidden: bool
+    /// The edge `--quick-position` named for this run; empty for the one
+    /// Settings names.
+    pub quick_position: String
 }
 
 /// A model with one window, "main", and no tabs yet.
@@ -232,6 +235,7 @@ pub fn new(s: Settings) -> Model {
         checking_window: ""
         drop_down: false
         drop_down_hidden: false
+        quick_position: ""
     }
 }
 

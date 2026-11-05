@@ -3,9 +3,10 @@
 // settings ask, and the find bar under the terminal while it is open.
 
 use gui
-use gui::{Axis, Color, TabItem, ThemeOverride, Widget}
+use gui::{Axis, Color, Edge, TabItem, ThemeOverride, Widget}
 
 use commands
+use drop_down
 use model
 use model::Model
 use panes::Layout
@@ -41,14 +42,26 @@ pub fn window(m: Model, key: String) -> Widget {
         terminal
     }
     let mut rows = #[]
-    // A drop-down window shows no menu bar, as Guake shows none.
+    // The quick terminal shows no menu bar, as Guake shows none.
     if m.settings.menu_bar && !m.drop_down { rows.push(commands::menu_bar(m, key)) }
     rows.push(body)
     let chrome = match chrome_of(m) {
         Some(change) => Widget::column(rows, 0).grow(1).themed(change)
         None => Widget::column(rows, 0).grow(1)
     }
-    Widget::column(#[chrome, win.find.view()], 0)
+    let content = Widget::column(#[chrome, win.find.view()], 0)
+    if m.drop_down && win.key == "main" { edged(content.grow(1), drop_down::position(m.settings, m.quick_position)) } else { content }
+}
+
+// The quick terminal has no frame, so a rule marks its edge facing the rest
+// of the display, where dragging resizes it.
+fn edged(content: Widget, position: String) -> Widget {
+    match drop_down::edge(position) {
+        Edge::Top => Widget::column(#[content, Widget::separator()], 0)
+        Edge::Bottom => Widget::column(#[Widget::separator(), content], 0)
+        Edge::Left => Widget::row(#[content, Widget::vseparator()], 0)
+        Edge::Right => Widget::row(#[Widget::vseparator(), content], 0)
+    }
 }
 
 // The menu bar and tab strip join the terminal under them, so a scheme with

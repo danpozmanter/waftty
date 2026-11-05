@@ -504,7 +504,7 @@
    63.40168812312186
   ]
  },
- "waftty drop-down": {
+ "waftty quick": {
   "ram_idle": [
    {
     "pss": 18.5380859375,
@@ -3768,7 +3768,7 @@
   "vsync_off": true,
   "versions": {
    "waftty": "waftty 0.4.0",
-   "waftty drop-down": "waftty 0.4.0",
+   "waftty quick": "waftty 0.4.0",
    "xfce4-terminal": "xfce4-terminal 1.1.3 (Xfce 4.18)",
    "guake": "Guake Terminal: 3.10",
    "alacritty": "alacritty 0.13.2",

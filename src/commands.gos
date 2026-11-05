@@ -277,7 +277,7 @@ pub fn context_menu(drop_down: bool) -> Vec<MenuItem> {
         menus::item(FIND), menus::item(CLEAR_SCROLLBACK), MenuItem::Separator
         signal_menu(), zoom_menu()
     ]
-    // A drop-down window has no menu bar, so its menu reaches what the bar
+    // The quick terminal has no menu bar, so its menu reaches what the bar
     // would: About, updates and Quit.
     if drop_down {
         items.extend(#[MenuItem::Separator, menus::item(SETTINGS), menus::item(CHECK_UPDATES), menus::item(ABOUT), MenuItem::Separator, menus::item(QUIT)])

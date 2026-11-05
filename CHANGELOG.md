@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0 - Quick terminal, single instance and tab drops
+
+- `--drop-down` is now `--quick` (or `--quick-terminal`), and its Settings page is **Quick Terminal**. `--quick-position=top|bottom|left|right` picks the edge for one launch.
+- On X11 one press of the quick terminal's shortcut always shows or hides it, whether or not it has focus; it used to take a second press after hiding it or after a click elsewhere.
+- **Settings > Quick Terminal > Position** hangs it from the top (the default), bottom, left or right edge. **Length** and **Depth**, formerly Width and Height, size it along its edge and out from it.
+- A line marks the quick terminal's edge facing the rest of the screen, and dragging that edge resizes it.
+- The quick terminal shows on whichever virtual desktop you are on (X11 and macOS).
+- `--single-instance` opens the window in the waftty already started with `--single-instance`, with its own folder, program, title and `--hold`, so tabs move between all of those windows.
+- A tab dropped anywhere on another window showing one tab, and so no tab strip, moves there.
+
 ## 0.4.0 - Split panes, drop-down mode, and Check for Updates
 
 - Building needs Gossamer 0.76.0 or later.

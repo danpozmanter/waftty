@@ -129,7 +129,7 @@ pub fn journey() -> Result<(), errors::Error> {
     // The prompt carries the marks a shell integration script writes
     // (OSC 133), so the journey can move between prompts.
     let first = Command { program: "/bin/sh", args: #[], cwd: "", env: #[("PS1", "\u{1b}]133;A\u{7}ready$ \u{1b}]133;I\u{7}")] }
-    let mut s = application::app(chosen, first, application::FirstTab::default(), false, #[]).start()?
+    let mut s = application::app(chosen, first, application::FirstTab::default(), false, #[], None).start()?
     // The terminal shows output as its reader parses it, which can be before
     // the session applies what starting asked for, such as the tab's focus.
     s.flush()?
@@ -182,15 +182,16 @@ pub fn journey() -> Result<(), errors::Error> {
     s.emit(gui::UiMsg::TabDetach("tabs:main", "tab-2", 40, 40))
     s.flush()?
     require(s.window_count() == 2, f"a tab dragged out of the window left {s.window_count()} windows")?
-    s.emit(gui::UiMsg::TabMove("tabs:window-1", "tab-2", "tabs:main", 1))
+    require(!s.semantics(0).dump().contains("tablist"), "the window left with one tab still shows a strip")?
+    s.emit(gui::UiMsg::TabToWindow("tabs:window-1", "tab-2", "main"))
     s.flush()?
-    require(s.window_count() == 1, f"the tab dragged back left {s.window_count()} windows")?
+    require(s.window_count() == 1, f"the tab dropped on a window showing no strip left {s.window_count()} windows")?
     await_text(&mut s, 0, "[selected 2/2]")?
     s.run_command(0, commands::show_command("tab-1"))
     s.flush()?
     await_text(&mut s, 0, "[selected 1/2]")?
     require(s.focused() == "term-tab-1", f"showing the first tab again focused {s.focused()}")?
-    println("tab windows: Move Tab to New Window gave a tab a window of its own, a drop on another window's strip took it there and closed the empty window, and a drag out of the window detached it")
+    println("tab windows: Move Tab to New Window gave a tab a window of its own, a drop on another window's strip took it there and closed the empty window, a drag out of the window detached it, and a drop on a window showing no strip took it back")
 
     enter(&mut s, "echo needle-one; echo needle-two")?
     await_text(&mut s, 0, "\nneedle-two")?
@@ -418,6 +419,15 @@ pub fn journey() -> Result<(), errors::Error> {
     s.flush()?
     require(s.window_count() == 1, f"Close Window left {s.window_count()} windows")?
     println("windows: New Window's shortcut opened one, Close Window closed it")
+
+    s.emit(gui::UiMsg::CommandLine(config, #["--title", "forwarded", "-e", "/bin/sh", "-c", "echo forwarded-run; exec /bin/sh"]))
+    s.flush()?
+    require(s.window_count() == 2, f"a forwarded launch left {s.window_count()} windows")?
+    await_text(&mut s, 1, "forwarded-run")?
+    s.run_command(1, commands::CLOSE_WINDOW)
+    s.flush()?
+    require(s.window_count() == 1, f"closing the forwarded window left {s.window_count()} windows")?
+    println("single instance: a later launch's command line opened a window of its own running the program it named")
 
     s.focus("term-tab-1")?
     shortcut(&mut s, commands::CLOSE_TAB)?

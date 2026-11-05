@@ -25,9 +25,15 @@ pub struct FirstTab {
     pub title: String
     /// Keeps the tab open once its program exits.
     pub hold: bool
-    /// Opens the window as a drop-down (`--drop-down`).
-    pub drop_down: bool
+    /// Opens the window as a quick terminal (`--quick`).
+    pub quick: bool
+    /// The edge the quick terminal hangs from; empty for the one Settings names.
+    pub quick_position: String
 }
+
+/// The single instance a quick terminal claims, apart from the one
+/// `--single-instance` windows share under the app id.
+pub const QUICK_INSTANCE: String = "dev.gossamer.waftty.Quick"
 
 fn init(s: Settings, first: Command, first_tab: FirstTab, restore: bool, program_env: Vec<(String, String)>) -> Model {
     let mut m = model::new(s)
@@ -43,9 +49,10 @@ fn init(s: Settings, first: Command, first_tab: FirstTab, restore: bool, program
     }
     m.windows[0].tabs[0].fixed_title = first_tab.title
     m.windows[0].tabs[0].hold = first_tab.hold
-    if first_tab.drop_down {
+    if first_tab.quick {
         m.drop_down = true
-        drop_down::start(s)
+        m.quick_position = first_tab.quick_position
+        drop_down::start(m)
     }
     if restore { reopen(&mut m) }
     let mut problems = scheme_problems
@@ -81,7 +88,9 @@ fn reopen(m: &mut Model) {
 
 /// The application with settings `s`, its first tab running `first`; with
 /// `restore`, the windows and tabs saved at the last quit open after it.
-pub fn app(s: Settings, first: Command, first_tab: FirstTab, restore: bool, program_env: Vec<(String, String)>) -> gui::App<Model> {
+/// `instance` is the command line a `--single-instance` launch hands to the
+/// running instance.
+pub fn app(s: Settings, first: Command, first_tab: FirstTab, restore: bool, program_env: Vec<(String, String)>, instance: Option<Vec<String>>) -> gui::App<Model> {
     let width, height = model::window_size(s, s.font_size)
     let built = gui::application(info::NAME, info::APP_ID, || init(s, first, first_tab, restore, program_env), update::update, view::main)
         .size(width, height)
@@ -92,7 +101,11 @@ pub fn app(s: Settings, first: Command, first_tab: FirstTab, restore: bool, prog
         .windows(view::window)
         .ask_before_close()
         .icon(icon::waftty(128))
-    // A second `--drop-down` launch hands over to the running drop-down,
+    // A second `--quick` launch hands over to the running quick terminal,
     // which already holds the shortcut.
-    if first_tab.drop_down { built.frameless().remember_size(false).single_instance(#[]) } else { built }
+    if first_tab.quick { return built.frameless().remember_size(false).instance(QUICK_INSTANCE).single_instance(#[]) }
+    match instance {
+        Some(arguments) => built.single_instance_command_line(arguments)
+        None => built
+    }
 }

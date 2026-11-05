@@ -27,7 +27,7 @@ description: waftty is a tabbed terminal emulator for Linux, macOS and Windows. 
   <a href="https://github.com/danpozmanter/waftty" class="secondary">View on GitHub</a>
 </div>
 
-<img src="assets/screenshot.png" alt="waftty with two tabs, running ls and neofetch" class="screenshot">
+<img src="assets/screenshot.png" alt="waftty with two tabs, the first split into two panes: git log on the left, neofetch and ls on the right" class="screenshot">
 
 </div>
 
