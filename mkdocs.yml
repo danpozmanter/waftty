@@ -43,6 +43,9 @@ theme:
 extra_css:
   - stylesheets/extra.css
 
+extra_javascript:
+  - javascripts/repository-facts.js
+
 nav:
   - Home: index.md
   - Installation: installation.md
