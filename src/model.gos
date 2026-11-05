@@ -637,7 +637,6 @@ fn would_end(m: Model, tabs: Vec<Tab>) -> Vec<String> {
     out
 }
 
-// "vim is still running", or the programs named together.
 // The button that closes over running programs, ending them; its E answers
 // from the keyboard.
 const EXIT_ANYWAY: String = "Exit Anyway"
@@ -647,6 +646,7 @@ fn running_title(jobs: Vec<String>) -> String {
     if jobs.len() == 1 { "A program is still running" } else { "Programs are still running" }
 }
 
+// "vim is still running", or the programs named together.
 fn still_running(jobs: Vec<String>) -> String {
     let named = if jobs.len() == 1 { jobs[0] } else if jobs.len() == 2 { f"{jobs[0]} and {jobs[1]}" } else { f"{jobs[0]}, {jobs[1]} and {jobs.len() - 2} more" }
     f"{named} {if jobs.len() == 1 { "is" } else { "are" }} still running"
