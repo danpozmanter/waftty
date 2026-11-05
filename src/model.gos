@@ -298,7 +298,7 @@ pub fn open_pane(m: &mut Model, w: i64, command: gui::terminal::Command, across:
     let layout = m.windows[w].layouts.get(leader).unwrap_or(Layout::Pane(leader))
     m.windows[w].layouts[leader] = panes::split(layout, target, tab.key, across)
     focus_pane(m, w, tab.key)
-    gui::perform(Effect::FocusIn(m.windows[w].key, tab.view_id()))
+    gui::perform(Effect::FocusInWindow(m.windows[w].key, tab.view_id()))
     Ok(())
 }
 
@@ -371,7 +371,7 @@ pub fn activate(m: &mut Model, w: i64, key: String) {
     }
     let Some(at) = m.windows[w].index_of(pane) else { return }
     focus_pane(m, w, pane)
-    gui::perform(Effect::FocusIn(m.windows[w].key, m.windows[w].tabs[at].view_id()))
+    gui::perform(Effect::FocusInWindow(m.windows[w].key, m.windows[w].tabs[at].view_id()))
 }
 
 /// Makes pane `key` of window `w` the one its commands act on, as when it
@@ -395,7 +395,7 @@ pub fn step_pane(m: &mut Model, w: i64, step: i64) {
     let next = panes::step_from(layout, active, step)
     let Some(at) = m.windows[w].index_of(next) else { return }
     focus_pane(m, w, next)
-    gui::perform(Effect::FocusIn(m.windows[w].key, m.windows[w].tabs[at].view_id()))
+    gui::perform(Effect::FocusInWindow(m.windows[w].key, m.windows[w].tabs[at].view_id()))
 }
 
 /// Gives the split at `path` of strip tab `leader` in window `w` the share

@@ -1,9 +1,14 @@
 # Changelog
 
+## 0.5.2 - Typing after full screen TUI apps
+
+- The first character typed after leaving a full screen TUI app that used kitty's keyboard protocol with Ctrl+C or Ctrl+D reaches the shell; it used to be dropped.
+- Builds on gui-gos 0.2.0 and gui-engine-gos 0.2.1.
+
 ## 0.5.1 - Close prompt and post full screen program fix
 
 - Closing a window again while it asks whether to end a running program keeps the question open; the second close used to dismiss it and leave the program running without an answer.
-- A shell prompt returns to its own line, at the left edge, when a full-screen program such as Claude Code exits after the window was resized while it ran with a full scrollback; it used to land a row up or partway along a line.
+- A shell prompt returns to its own line, at the left edge, when a full screen TUI app exits after the window was resized while it ran with a full scrollback; it used to land a row up or partway along a line.
 
 ## 0.5.0 - Quick terminal, single instance and tab drops
 

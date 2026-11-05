@@ -31,7 +31,7 @@ pub fn open(m: &mut Model, w: i64) {
         m.windows[w].find.query = picked
     }
     m.windows[w].find.show(false)
-    gui::perform(Effect::FocusIn(m.windows[w].key, m.windows[w].find.query_id()))
+    gui::perform(Effect::FocusInWindow(m.windows[w].key, m.windows[w].find.query_id()))
     run(m, m.windows[w].key, Step::Search)
 }
 
@@ -41,7 +41,7 @@ pub fn close(m: &mut Model, w: i64) {
     m.found = None
     if let Some(tab) = m.windows[w].current() {
         let _ = tab.terminal.clear_highlight()
-        gui::perform(Effect::FocusIn(m.windows[w].key, tab.view_id()))
+        gui::perform(Effect::FocusInWindow(m.windows[w].key, tab.view_id()))
     }
 }
 
@@ -85,7 +85,7 @@ pub fn run(m: &mut Model, window: String, step: Step) {
     let Some(tab) = m.windows[w].current() else { return }
     let bar = m.windows[w].find
     if bar.query.is_empty() {
-        m.windows[w].find.found(0, -1)
+        m.windows[w].find.set_matches(0, -1)
         let _ = tab.terminal.clear_highlight()
         return
     }
@@ -97,7 +97,7 @@ pub fn run(m: &mut Model, window: String, step: Step) {
     }
     if spans.is_empty() {
         m.found = None
-        m.windows[w].find.found(0, -1)
+        m.windows[w].find.set_matches(0, -1)
         let _ = tab.terminal.clear_highlight()
         let _ = tab.terminal.clear_selection()
         return
@@ -108,9 +108,9 @@ pub fn run(m: &mut Model, window: String, step: Step) {
     }
     let at = pick(spans, from, step)
     m.found = Some(Found { tab: tab.key, span: spans[at] })
-    m.windows[w].find.found(spans.len(), at)
+    m.windows[w].find.set_matches(spans.len(), at)
     gui::perform(Effect::Announce(f"Match {at + 1} of {spans.len()}"))
-    let _ = tab.terminal.highlight(nearest(spans, at))
+    let _ = tab.terminal.set_highlights(nearest(spans, at))
     if let Err(why) = tab.terminal.reveal(spans[at]) {
         model::report(window, "Could not show the match", why)
     }

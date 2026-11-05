@@ -71,7 +71,7 @@ Copy text with Vim-style keyboard navigation, jump directly to links and file pa
 
 ### Shell-Aware and Agent-Ready
 
-Jump between command prompts, select command output, and receive notifications from background tasks and coding agents such as Claude Code and Codex.
+Jump between command prompts, select command output, and receive notifications from background tasks and coding agents such as Codex.
 
 </div>
 

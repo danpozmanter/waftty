@@ -1,5 +1,5 @@
 // Check for Updates: the session's worker asks GitHub for the latest release
-// and answers with `UiMsg::Worked(OWNER, ..)`, which `answer` reads.
+// and answers with `UiMsg::WorkFinished(OWNER, ..)`, which `answer` reads.
 
 use std::encoding::json
 
@@ -34,7 +34,7 @@ pub fn check() {
     let headers = #[("User-Agent", f"{info::NAME}/{info::VERSION}"), ("Accept", "application/vnd.github+json")]
     let mut work = Work::new(OWNER, 1, 0, Operation::Fetch(LATEST_URL, headers))
     work.timeout_ms = DEADLINE_MS
-    gui::perform(Effect::Work(work))
+    gui::perform(Effect::StartWork(work))
 }
 
 /// What the worker's `outcome` says about the latest release.

@@ -37,37 +37,37 @@ pub fn update(m: Model, msg: UiMsg) -> Model {
         UiMsg::Command(id) => command(&mut n, "main", id)
         UiMsg::WindowCommand(window, id) => command(&mut n, window, id)
         UiMsg::Terminal(id, event) => terminal_event(&mut n, id, event)
-        UiMsg::Tab(strip, key) => {
+        UiMsg::TabSelected(strip, key) => {
             if let Some(w) = model::window_index(n, model::strip_window(strip)) { model::activate(&mut n, w, key) }
         }
-        UiMsg::Reorder(strip, key, to) => {
+        UiMsg::Reordered(strip, key, to) => {
             if let Some(w) = model::window_index(n, model::strip_window(strip)) {
                 model::move_tab(&mut n, w, key, to)
                 model::retitle(&mut n, w)
             }
         }
         UiMsg::TabAction(strip, key, action) => tab_action(&mut n, model::strip_window(strip), key, action)
-        UiMsg::TabMove(strip, key, target, at) => {
+        UiMsg::TabMoved(strip, key, target, at) => {
             if let Some(from) = model::window_index(n, model::strip_window(strip)) &&
                 let Some(to) = model::window_index(n, model::strip_window(target)) {
                 model::transfer_tab(&mut n, from, key, to, at)
             }
         }
         // Dropped on a window showing no strip: it goes last among that window's tabs.
-        UiMsg::TabToWindow(strip, key, window) => {
+        UiMsg::TabMovedToWindow(strip, key, window) => {
             if let Some(from) = model::window_index(n, model::strip_window(strip)) &&
                 let Some(to) = model::window_index(n, window) {
                 model::transfer_tab(&mut n, from, key, to, i64::MAX)
             }
         }
         UiMsg::CommandLine(directory, arguments) => launched(&mut n, directory, arguments)
-        UiMsg::TabDetach(strip, key, x, y) => {
+        UiMsg::TabDetached(strip, key, x, y) => {
             if let Some(from) = model::window_index(n, model::strip_window(strip)) { model::detach_tab(&mut n, from, key, Some((x, y))) }
         }
         UiMsg::CloseRequested(window) => {
             if let Some(w) = model::window_index(n, window) { model::request_close_window(&mut n, w) }
         }
-        UiMsg::WindowFocus(window, focused) => {
+        UiMsg::WindowFocusChanged(window, focused) => {
             if let Some(w) = model::window_index(n, window) {
                 n.windows[w].focused = focused
                 if focused && n.windows[w].key == "main" { n.drop_down_hidden = false }
@@ -75,7 +75,7 @@ pub fn update(m: Model, msg: UiMsg) -> Model {
             }
         }
         UiMsg::QuitRequested => model::request_quit(&mut n)
-        UiMsg::Split(id, ratio) => {
+        UiMsg::SplitMoved(id, ratio) => {
             if let Some(found) = view::split_of(id) {
                 let window, leader, path = found
                 if let Some(w) = model::window_index(n, window) { model::resize_split(&mut n, w, leader, path, ratio) }
@@ -96,7 +96,7 @@ pub fn update(m: Model, msg: UiMsg) -> Model {
         }
         UiMsg::DialogPreview(id, Outcome::Action(action)) if id == "settings" => settings_action(&mut n, action)
         UiMsg::Dialog(id, outcome) | UiMsg::DialogApplied(id, outcome) => dialog(&mut n, id, outcome)
-        UiMsg::Worked(owner, _, _, outcome) if owner == releases::OWNER => release_checked(&mut n, releases::answer(outcome))
+        UiMsg::WorkFinished(owner, _, _, outcome) if owner == releases::OWNER => release_checked(&mut n, releases::answer(outcome))
         UiMsg::Hotkey(id) if id == drop_down::HOTKEY && n.drop_down => drop_down::toggle(&mut n)
         UiMsg::DockResized(window, width, height) if n.drop_down && window == "main" => drop_down::resized(&mut n, width, height)
         UiMsg::Task(id, gui::TaskOutcome::Failed(why)) if id == drop_down::HOTKEY => {

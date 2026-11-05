@@ -46,7 +46,7 @@ fn await_dialog(s: &mut gui::Session, id: String) -> Result<(), errors::Error> {
 
 // Types `text` into the main window's find bar in place of what it held.
 fn find(s: &mut gui::Session, text: String) -> Result<(), errors::Error> {
-    s.emit(gui::UiMsg::Text("find-main:query", text))
+    s.emit(gui::UiMsg::TextChanged("find-main:query", text))
     s.flush()
 }
 
@@ -175,15 +175,15 @@ pub fn journey() -> Result<(), errors::Error> {
     require(s.window_count() == 2, f"Move Tab to New Window left {s.window_count()} windows")?
     require(!s.semantics(0).dump().contains("tablist"), "the window a tab left still shows two tabs")?
     await_text(&mut s, 1, "$ ")?
-    s.emit(gui::UiMsg::TabMove("tabs:window-1", "tab-2", "tabs:main", 1))
+    s.emit(gui::UiMsg::TabMoved("tabs:window-1", "tab-2", "tabs:main", 1))
     s.flush()?
     require(s.window_count() == 1, f"a tab dropped on another window's strip left {s.window_count()} windows")?
     await_text(&mut s, 0, "[selected 2/2]")?
-    s.emit(gui::UiMsg::TabDetach("tabs:main", "tab-2", 40, 40))
+    s.emit(gui::UiMsg::TabDetached("tabs:main", "tab-2", 40, 40))
     s.flush()?
     require(s.window_count() == 2, f"a tab dragged out of the window left {s.window_count()} windows")?
     require(!s.semantics(0).dump().contains("tablist"), "the window left with one tab still shows a strip")?
-    s.emit(gui::UiMsg::TabToWindow("tabs:window-1", "tab-2", "main"))
+    s.emit(gui::UiMsg::TabMovedToWindow("tabs:window-1", "tab-2", "main"))
     s.flush()?
     require(s.window_count() == 1, f"the tab dropped on a window showing no strip left {s.window_count()} windows")?
     await_text(&mut s, 0, "[selected 2/2]")?

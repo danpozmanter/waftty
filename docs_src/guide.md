@@ -221,11 +221,11 @@ waftty marks a hidden tab whose program rings the bell or posts a desktop
 notification (OSC 9 or OSC 777), and passes the notification to the desktop.
 Coding agents in a background tab can tell you when they need you:
 
-- **Claude Code:** turn on the terminal bell in its `/config` (Notifications),
-  or add a hook for its `Notification` and `Stop` events that posts one:
+- **Agents with hooks:** turn on the terminal bell in the agent's settings, or
+  add a hook for the events where it waits for you or finishes that posts one:
 
     ```sh
-    printf '\033]777;notify;Claude Code;%s\007' "Waiting for you" > /dev/tty
+    printf '\033]777;notify;Agent;%s\007' "Waiting for you" > /dev/tty
     ```
 
 - **Codex:** set `notify` in `~/.codex/config.toml` to a script that posts a
