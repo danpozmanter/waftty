@@ -40,7 +40,18 @@ dbus-send --session --print-reply --dest=org.freedesktop.DBus /org/freedesktop/D
 python3 -c "import Xlib.ext.xtest" 2>/dev/null || die "python3-xlib is not installed"
 
 work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
+# Services a profile's private session bus starts (the desktop portal) are
+# adopted by the user's service manager and outlive that bus; each carries the
+# profile's configuration folder in its environment.
+end_work() {
+    local environ
+    for environ in /proc/[0-9]*/environ; do
+        grep -qzF "XDG_CONFIG_HOME=$work/" "$environ" 2>/dev/null &&
+            kill "$(basename "$(dirname "$environ")")" 2>/dev/null
+    done
+    rm -rf "$work"
+}
+trap end_work EXIT
 
 # The build package.sh makes: code for a CPU every machine has (which valgrind
 # also runs), in the release build environment.

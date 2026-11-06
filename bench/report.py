@@ -203,7 +203,7 @@ def main():
             ("99th percentile frame gap", "ms (lower is better)",
              [pct(streaming(t, "gaps") or [0], 0.99) for t in order], lambda v: f"{v:.0f}")],
            note="X Damage reports during 4 s of a flood, timed by the X server.")
-    hbars(a.out, order, "startup", "Startup: launch to first line of text on screen",
+    hbars(a.out, order, "startup", "Startup: launch to a screenful of text on screen",
           "ms (lower is better)", [("Median", [med(res[t]["startup"]) for t in order])],
           lambda v: f"{v:.0f}", note="Median of 10 launches.")
 
@@ -230,8 +230,9 @@ def main():
         lines += ["", "### Where the memory comes from", "", "![Memory under load by source](ram-sources.png)", ""]
         lines += [("Each figure is the PSS of the terminal's own processes after 40 MiB of output. "
                   "Left out are the shell and test commands, and the session bus a run starts "
-                  "for a single-instance terminal (dbus-run-session, dbus-daemon, and for "
-                  "xfce4-terminal xfconfd and gvfsd), which a desktop already runs. Private data "
+                  "for a single-instance terminal with the desktop services on it (the portal, "
+                  "and for xfce4-terminal xfconfd and gvfsd), which a desktop already runs. "
+                  "Private data "
                   "is heap and other anonymous memory, scrollback included; code and libraries "
                   "are mapped from files, each shared page divided among the processes that map "
                   "it; X server pixmaps and GPU memory are held outside the terminal on its behalf "

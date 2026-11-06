@@ -55,11 +55,26 @@ def program(term):
     return WAFTTY if base == "waftty" else base
 
 
-def share_of_screen():
-    """The window size as whole percentages of the screen, the unit drop-down
-    terminals size themselves in."""
-    sw, sh = d.screen().width_in_pixels, d.screen().height_in_pixels
-    return round(100 * W / sw), round(100 * H / sh)
+def drop_down(term):
+    return term.endswith(QUICK) or term == "guake"
+
+
+def work_area():
+    v = root.get_full_property(A("_NET_WORKAREA"), X.AnyPropertyType).value
+    return v[2], v[3]
+
+
+def share_of_work_area():
+    """The window size as whole percentages of the work area, the unit
+    drop-down terminals size themselves in."""
+    aw, ah = work_area()
+    return round(100 * W / aw), round(100 * H / ah)
+
+
+def docked_size():
+    """The size a drop-down terminal gives itself from share_of_work_area."""
+    (aw, ah), (wide, tall) = work_area(), share_of_work_area()
+    return aw * wide / 100, ah * tall / 100
 
 
 def config_home(term):
@@ -68,13 +83,14 @@ def config_home(term):
     if base == "waftty":
         values = {"scrollback": str(SCROLLBACK)}
         if quick:
-            wide, tall = share_of_screen()
+            wide, tall = share_of_work_area()
             # A chord nothing else holds, so the run takes its shortcut quietly.
             values.update(drop_down_key="Ctrl+Alt+Shift+F8", drop_down_width=str(wide),
                           drop_down_height=str(tall))
             # The quick terminal is a single instance named on the session bus; a
-            # bus of its own keeps the run from handing off to one already open.
-            private_bus(home, services=False)
+            # bus of its own keeps the run from handing off to one already open,
+            # and starts the desktop portal it reads its scheme and font from.
+            private_bus(home, services=True)
         os.makedirs(f"{home}/dev.gossamer.waftty")
         with open(f"{home}/dev.gossamer.waftty/settings.json", "w") as f:
             json.dump({"values": values, "version": 2}, f)
@@ -87,10 +103,16 @@ def config_home(term):
                     f'<property name="scrolling-lines" type="uint" value="{SCROLLBACK}"/>'
                     "</channel>\n")
         private_bus(home, services=True)
+    elif base == "rio":
+        # Rio asks before closing a window with a program running, which would
+        # hold every run's end.
+        os.makedirs(f"{home}/rio")
+        with open(f"{home}/rio/config.toml", "w") as f:
+            f.write(f"scrollback-history-limit = {SCROLLBACK}\nconfirm-before-quit = false\n")
     elif term == "guake":
         # Guake reads GSettings, here from a key file in the run's folder; its
         # show-hide key is left unbound, so it takes no global shortcut.
-        sw, sh = d.screen().width_in_pixels, d.screen().height_in_pixels
+        wide, tall = share_of_work_area()
         os.makedirs(f"{home}/glib-2.0/settings")
         with open(f"{home}/glib-2.0/settings/keyfile", "w") as f:
             f.write("[org/guake/general]\n"
@@ -98,7 +120,7 @@ def config_home(term):
                     "use-popup=false\nuse-trayicon=false\nprompt-on-quit=false\n"
                     "default-shell='/bin/sh'\nuse-login-shell=false\n"
                     "restore-tabs-startup=false\nload-guake-yml=false\n"
-                    f"window-width={round(100 * W / sw)}\nwindow-height={round(100 * H / sh)}\n"
+                    f"window-width={wide}\nwindow-height={tall}\n"
                     "[org/guake/keybindings/global]\nshow-hide=''\n")
         # Nothing on its bus starts desktop services, which Guake would wait
         # for at startup.
@@ -124,15 +146,12 @@ def private_bus(home, services):
 
 TERMS = {
     "waftty": lambda cmd, home: [WAFTTY, "-e", "sh", "-c", cmd],
-    "waftty-quick": lambda cmd, home: ["dbus-run-session", f"--config-file={home}/bus.conf", "--",
-                                       WAFTTY, "--quick", "-e", "sh", "-c", cmd],
+    "waftty-quick": lambda cmd, home: [WAFTTY, "--quick", "-e", "sh", "-c", cmd],
     # xfconf reads the scrollback from the benchmark's folder on a bus of its own.
-    "xfce4-terminal": lambda cmd, home: ["dbus-run-session", f"--config-file={home}/bus.conf", "--",
-                                         "xfce4-terminal", "--disable-server",
+    "xfce4-terminal": lambda cmd, home: ["xfce4-terminal", "--disable-server",
                                          "-x", "sh", "-c", cmd],
     # Guake types the command into its shell, which runs it.
-    "guake": lambda cmd, home: ["dbus-run-session", f"--config-file={home}/bus.conf", "--",
-                                "guake", "--show", "-e", cmd],
+    "guake": lambda cmd, home: ["guake", "--show", "-e", cmd],
     "alacritty": lambda cmd, home: ["alacritty", "-o", f"scrolling.history={SCROLLBACK}",
                               "-e", "sh", "-c", cmd],
     "ghostty": lambda cmd, home: ["ghostty", "--config-default-files=false",
@@ -143,14 +162,31 @@ TERMS = {
     "kitty": lambda cmd, home: ["kitty", "--config=NONE", "-o", f"scrollback_lines={SCROLLBACK}",
                                 *([] if monitor_connected() else ["-o", "sync_to_monitor=no"]),
                                 "sh", "-c", cmd],
+    "rio": lambda cmd, home: ["rio", "-e", "sh", "-c", cmd],
     "wezterm": lambda cmd, home: ["wezterm", "-n", "--config", f"scrollback_lines={SCROLLBACK}", "start",
                             "--always-new-process", "--", "sh", "-c", cmd],
 }
 
-# Processes that are not the terminal: its shell and commands, and the bus and
-# settings daemon the xfce4-terminal run starts (a desktop already has both).
-HELPERS = {"sh", "bash", "cat", "head", "sleep", "python3", "dbus-daemon", "dbus-run-sessio",
-           "xfconfd", "gvfsd"}
+# Terminals that present through Vulkan's FIFO mode with no way to turn it off:
+# with no monitor connected the driver paces them at about two frames a second.
+VBLANK_BOUND = {"rio"}
+
+# Processes that are not the terminal: its shell and commands.
+HELPERS = {"sh", "bash", "cat", "head", "sleep", "python3"}
+
+# The desktop services a terminal on a bus of its own reads at startup, called
+# once before it launches: a desktop already runs them.
+WARM = {
+    "waftty-quick": [["gdbus", "call", "--session", "--dest", "org.freedesktop.portal.Desktop",
+                      "--object-path", "/org/freedesktop/portal/desktop",
+                      "--method", "org.freedesktop.portal.Settings.ReadAll", "[]"]],
+    "xfce4-terminal": [["xfconf-query", "--channel", "xfce4-terminal", "--list"],
+                       ["gdbus", "call", "--session", "--dest", "org.gtk.vfs.Daemon",
+                        "--object-path", "/org/gtk/vfs/Daemon",
+                        "--method", "org.freedesktop.DBus.Peer.Ping"],
+                       ["gdbus", "call", "--session", "--dest", "org.a11y.Bus",
+                        "--object-path", "/org/a11y/bus", "--method", "org.a11y.Bus.GetAddress"]],
+}
 
 
 _libc = ctypes.CDLL(None, use_errno=True)
@@ -206,7 +242,9 @@ def wait_readable(p, fds):
     """The ready descriptors among `fds`; Died once the terminal exits first."""
     while True:
         if p.poll() is not None:
-            raise Died(f"the terminal exited with status {p.returncode}")
+            how = (f"was killed by {signal.Signals(-p.returncode).name}" if p.returncode < 0
+                   else f"exited with status {p.returncode}")
+            raise Died(f"the terminal {how}")
         ready, _, _ = select.select([*fds, _child_r], [], [])
         if _child_r in ready:
             try:
@@ -255,8 +293,35 @@ def focused(win):
     return False
 
 
+def rect(w):
+    g = w.get_geometry()
+    at = root.translate_coords(w, 0, 0)
+    return at.x, at.y, g.width, g.height
+
+
+def check_uncovered(w):
+    """Stops the run when another window lies over `w`: without a compositor
+    its pixels read as the covering window's, and some terminals stop drawing
+    while hidden, so nothing measured then is the terminal's."""
+    stack = root.get_full_property(A("_NET_CLIENT_LIST_STACKING"), X.AnyPropertyType).value
+    x, y, wide, tall = rect(w)
+    for above in list(stack)[list(stack).index(w.id) + 1:]:
+        o = d.create_resource_object("window", above)
+        try:
+            if o.get_attributes().map_state != X.IsViewable:
+                continue
+            ox, oy, ow, oh = rect(o)
+        except error.BadWindow:
+            continue
+        if ox < x + wide and x < ox + ow and oy < y + tall and y < oy + oh:
+            name = o.get_wm_name() or hex(above)
+            raise SystemExit(f"the window under test is covered by {name!r}: the benchmark "
+                             "needs the desktop to itself while it runs")
+
+
 def ensure_focus(p, win):
     if focused(win):
+        check_uncovered(win)
         return
     ev = protocol.event.ClientMessage(window=win, client_type=A("_NET_ACTIVE_WINDOW"),
                                       data=(32, [2, X.CurrentTime, 0, 0, 0]))
@@ -264,6 +329,7 @@ def ensure_focus(p, win):
     d.sync()
     while not focused(win):
         next_event(p)
+    check_uncovered(win)
 
 
 def granted(w):
@@ -289,15 +355,24 @@ def ask_size(w, want):
     d.sync()
 
 
-def resize(p, w):
+def resize(p, term, w):
     w.change_attributes(event_mask=X.StructureNotifyMask)
+    if drop_down(term):
+        # A drop-down terminal sizes itself once its window is up; asking only
+        # after that size is in keeps its request from landing after this one.
+        dw, dh = docked_size()
+        while abs(w.get_geometry().width - dw) > 1 or abs(w.get_geometry().height - dh) > 1:
+            next_event(p)
     want = granted(w)
     ask_size(w, want)
-    while (w.get_geometry().width, w.get_geometry().height) != want:
+    while True:
+        # The window has its size once it reads right and every configure
+        # the server sent before that read has been seen.
+        if (w.get_geometry().width, w.get_geometry().height) == want:
+            d.sync()
+            if not d.pending_events():
+                return
         e = next_event(p)
-        # A drop-down terminal places itself as it maps, which can land after
-        # this size; the size is asked again each time the window settles
-        # elsewhere.
         if e.type == X.ConfigureNotify and e.window == w and (e.width, e.height) != want:
             ask_size(w, want)
 
@@ -316,8 +391,41 @@ def launch(term, cmd):
     # pace itself at the driver's 1 Hz fallback.
     if not monitor_connected():
         env["__GL_SYNC_TO_VBLANK"] = "0"
-    return subprocess.Popen(TERMS[term](cmd, home), stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL, env=env)
+    bus = None
+    if os.path.exists(f"{home}/bus.conf"):
+        bus = subprocess.Popen(["dbus-daemon", f"--config-file={home}/bus.conf", "--nofork",
+                                "--print-address=1"], stdout=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL, env=env, text=True)
+        env["DBUS_SESSION_BUS_ADDRESS"] = bus.stdout.readline().strip()
+        for call in WARM.get(term, []):
+            subprocess.run(call, stdout=subprocess.DEVNULL, env=env, check=True)
+    started = time.perf_counter()
+    p = subprocess.Popen(TERMS[term](cmd, home), stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, env=env)
+    p.home, p.bus, p.started = home, bus, started
+    return p
+
+
+def end(p):
+    """Ends launch `p`: its processes, and the services its session bus
+    started, which the user's service manager adopts rather than it."""
+    # Each process signalled is waited for: an interactive shell ignores
+    # SIGTERM and leaves only once its terminal closes the pty.
+    exits = []
+    for pid in family(p.pid) | set(started_from(p.home)):
+        try:
+            exits.append(pidfd_open(pid))
+            os.kill(pid, 15)
+        except ProcessLookupError:
+            pass
+    p.wait()
+    for fd in exits:
+        select.select([fd], [], [])
+        os.close(fd)
+    if p.bus:
+        p.bus.terminate()
+        p.bus.wait()
+        p.bus.stdout.close()
 
 
 class Run:
@@ -335,9 +443,11 @@ class Run:
         script = script.replace("$DONE", self.done)
         self.p = launch(term, f"head -n1 {self.go} >/dev/null; {script}")
         self.w = wait_window(self.p)
-        resize(self.p, self.w)
+        resize(self.p, term, self.w)
+        ensure_focus(self.p, self.w)
 
     def start(self):
+        check_uncovered(self.w)
         os.write(self.go_fd, b"go\n")
 
     def signal(self):
@@ -345,19 +455,8 @@ class Run:
         return os.read(self.done_fd, 4096).decode()
 
     def stop(self):
-        # Each process signalled is waited for: an interactive shell ignores
-        # SIGTERM and leaves only once its terminal closes the pty.
-        exits = []
-        for pid in family(self.p.pid):
-            try:
-                exits.append(pidfd_open(pid))
-                os.kill(pid, 15)
-            except ProcessLookupError:
-                pass
-        self.p.wait()
-        for fd in exits:
-            select.select([fd], [], [])
-            os.close(fd)
+        check_uncovered(self.w)
+        end(self.p)
         os.close(self.go_fd)
         os.close(self.done_fd)
 
@@ -536,7 +635,9 @@ def latency(term, samples=65):
     ensure_focus(run.p, w)
     d.damage_query_version()
     report = w.damage_create(damage.DamageReportNonEmpty)
-    box = (0, 0, 160, 80)
+    # Only the first row changes, and the top quarter holds it below any tab
+    # bar or padding.
+    box = (0, 0, 160, w.get_geometry().height // 4)
     keys = [d.keysym_to_keycode(ord(c)) for c in "ab"]
     lat = []
     for i in range(samples):
@@ -567,24 +668,32 @@ def latency(term, samples=65):
 
 # Floods colored lines below five fixed rows, the first of which shows the
 # last key typed: the same program in every terminal, so frames and echoes
-# compare. Five rows put the scrolling ones below any window's measured box.
+# compare.
 # Every line is numbered, so no two moments of the stream look the same: a
 # terminal that sends nothing for a frame identical to the last one would
 # otherwise show a gap where nothing on screen changed.
 STREAM = r'''
-import os, select, tty
+import os, select, signal, tty
 tty.setraw(0)
-rows = os.get_terminal_size(1).lines
+# A resize resets the scroll region, so the layout is set again after each.
+resized = True
+def on_resize(*_):
+    global resized
+    resized = True
+signal.signal(signal.SIGWINCH, on_resize)
 colors = [f"\x1b[38;5;{16 + 7 * i}m" for i in range(30)]
 lines = [("".join(f"{colors[(i + j) % 30]}word{j:02d} " for j in range(12)) + "\x1b[0m\r\n").encode()
     for i in range(64)]
-os.write(1, f"\x1b[?25l\x1b[2J\x1b[6;{rows}r\x1b[{rows};1H".encode())
 def put(data):
     view = memoryview(data)
     while view:
         view = view[os.write(1, view):]
 start = 0
 while True:
+    if resized:
+        resized = False
+        rows = os.get_terminal_size(1).lines
+        put(f"\x1b[?25l\x1b[2J\x1b[6;{rows}r\x1b[{rows};1H".encode())
     put(b"".join(b"%09d " % (start + i) + line for i, line in enumerate(lines)))
     start += len(lines)
     if select.select([0], [], [], 0)[0]:
@@ -640,7 +749,16 @@ def streaming(term, seconds=4, samples=25):
         if k == 0 or t - stamps[k - 1] > FRAME_SPREAD_MS:
             frames.append(t)
     gaps = [b - a for a, b in itertools.pairwise(frames)]
-    box = (0, 0, 160, 80)
+    # The first pixel row a new frame of scrolling output changes: everything
+    # above it is the fixed rows, wherever the terminal's chrome puts them.
+    height, row = w.get_geometry().height, 160 * 4
+    before = region(w, 0, 0, 160, height)
+    after = before
+    while after == before:
+        next_frame()
+        after = region(w, 0, 0, 160, height)
+    top = next(y for y in range(height) if before[y * row:(y + 1) * row] != after[y * row:(y + 1) * row])
+    box = (0, 0, 160, top)
     keys = [d.keysym_to_keycode(ord(c)) for c in "ab"]
     lat = []
     for i in range(samples):
@@ -663,42 +781,66 @@ def streaming(term, seconds=4, samples=25):
     return {"gaps": gaps, "latency": lat}
 
 
-def painted_text(w):
+def screen_image():
+    g = root.get_geometry()
+    return root.get_image(0, 0, g.width, g.height, X.ZPixmap, 0xFFFFFFFF).data, g.width
+
+
+def painted_text(w, before):
+    """Whether the middle of `w` shows text the terminal drew: more than two
+    colors, unlike what screen image `before` held there, which a window that
+    has not drawn yet shows without a compositor."""
+    # The middle of the window is text area in every terminal, below any tab
+    # bar or padding, and a screenful of output reaches it.
+    g = w.get_geometry()
+    top = g.height // 2 - 30
     try:
-        data = region(w, 0, 0, 200, 60)
+        data = region(w, 0, top, 200, 60)
+        x, y, _, _ = rect(w)
     except error.XError:
         return False
-    return len({data[i:i + 4] for i in range(0, len(data), 4)}) > 2
+    if len({data[i:i + 4] for i in range(0, len(data), 4)}) <= 2:
+        return False
+    screen, sw = before
+    under = b"".join(screen[((y + top + r) * sw + x) * 4:((y + top + r) * sw + x + 200) * 4]
+                     for r in range(60))
+    return data != under
 
 
 def startup(term):
-    """Milliseconds from launch until the first line of output is on screen."""
-    t0 = time.perf_counter()
-    p = launch(term, "echo READY; exec sleep 100000")
+    """Milliseconds from launch until a screenful of output is on screen."""
+    before = screen_image()
+    p = launch(term, "seq 200 | sed 's/.*/READY/'; exec sleep 100000")
     w = wait_window(p)
     while w.get_attributes().map_state != X.IsViewable:
         next_event(p)
     d.damage_query_version()
     report = w.damage_create(damage.DamageReportNonEmpty)
-    while not painted_text(w):
+    while not painted_text(w, before):
         while next_event(p).type != d.extension_event.DamageNotify:
             pass
         d.damage_subtract(report)
-    ms = (time.perf_counter() - t0) * 1000
-    for pid in family(p.pid):
-        try:
-            os.kill(pid, 15)
-        except ProcessLookupError:
-            pass
-    p.wait()
+    ms = (time.perf_counter() - p.started) * 1000
+    check_uncovered(w)
+    end(p)
     return ms
 
 
+def started_from(home):
+    """Processes a launch from configuration folder `home` started, wherever
+    they were reparented: each has the folder in its environment, or its bus
+    there."""
+    return with_environ(f"XDG_CONFIG_HOME={home}\0".encode(),
+                        f"DBUS_SESSION_BUS_ADDRESS=unix:path={home}/".encode())
+
+
 def leftovers():
-    """Processes still running from a launch: each has the benchmark's
-    configuration folder in its environment, or its bus there."""
-    marks = (f"XDG_CONFIG_HOME={OUT / 'run'}/cfg-".encode(),
-             f"DBUS_SESSION_BUS_ADDRESS=unix:path={OUT / 'run'}/cfg-".encode())
+    """Processes still running from any launch."""
+    return with_environ(f"XDG_CONFIG_HOME={OUT / 'run'}/cfg-".encode(),
+                        f"DBUS_SESSION_BUS_ADDRESS=unix:path={OUT / 'run'}/cfg-".encode())
+
+
+def with_environ(*marks):
     found = []
     for pid in filter(str.isdigit, os.listdir("/proc")):
         try:
@@ -809,7 +951,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("command", choices=["inputs", "run"])
     ap.add_argument("--terminals", default="waftty,waftty-quick,xfce4-terminal,guake,alacritty,"
-                    "kitty,ghostty,wezterm")
+                    "kitty,ghostty,wezterm,rio")
     ap.add_argument("--waftty", default="waftty", help="waftty executable to measure")
     ap.add_argument("--label", default="waftty", help="the name waftty's results go under")
     ap.add_argument("--runs", type=int, default=3, help="repetitions of RAM and throughput")
@@ -833,6 +975,10 @@ def main():
     missing = [t for t in terms if not shutil.which(program(t))]
     if missing:
         raise SystemExit(f"not installed: {', '.join(missing)}")
+    bound = [t for t in terms if t in VBLANK_BOUND]
+    if bound and not monitor_connected():
+        raise SystemExit(f"{', '.join(bound)} paces itself by a monitor's vblank: connect or wake "
+                         "a monitor to measure it")
     # A terminal left from an interrupted run would take this run's windows:
     # waftty and others hand a new launch to the instance already running.
     end_leftovers()

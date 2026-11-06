@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.3 - Faster repaints
+
+- Typing, and programs that redraw a few lines of a full screen, repaint only the rows that changed, so a keystroke shows sooner while other output streams.
+- Output paints once per refresh of the display, up to 120 frames a second on a 120 Hz display, instead of at most 60.
+- Colored output paints faster.
+- Builds on gui-engine-gos 0.2.2.
+
 ## 0.5.2 - Typing after full screen TUI apps
 
 - The first character typed after leaving a full screen TUI app that used kitty's keyboard protocol with Ctrl+C or Ctrl+D reaches the shell; it used to be dropped.
