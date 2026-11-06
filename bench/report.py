@@ -13,6 +13,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from timing import duration
+
 MB = 20 * 1024 * 1024 / 1e6  # each input is 20 MiB
 SURFACE, INK, MUTED, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e6e5e1"
 # Validated categorical order (CVD pass); value labels and tables give relief
@@ -133,6 +135,20 @@ def main():
     order = list(res)
     a.out.mkdir(parents=True, exist_ok=True)
 
+    # A run with --only or --terminals updates part of a file, and an
+    # interrupted run leaves a terminal with the measures it finished, so each
+    # chart and table shows the terminals that have its measures.
+    def having(*keys):
+        return [t for t in order if all(k in res[t] for k in keys)]
+
+    memory = having("ram_idle", "ram_heavy")
+    cpus = having("cpu_idle", "cpu_load")
+    rates = having("tp_plain", "tp_sgr", "tp_unicode")
+    streams = having("streaming")
+    keys = having("latency", "streaming")
+    starts = having("startup")
+    summary = having("tp_plain", "tp_sgr", "tp_unicode", "latency", "startup")
+
     # Memory is one run's own figure, the low median, so it matches the split
     # below for any number of runs.
     def mem(t, phase, key="pss"):
@@ -141,15 +157,15 @@ def main():
     def mbps(t, name):
         return MB / (med(res[t][f"tp_{name}"]) / 1000)
 
-    hbars(a.out, order, "ram", "Memory (PSS), idle and after 40 MiB of output",
+    hbars(a.out, memory, "ram", "Memory (PSS), idle and after 40 MiB of output",
           "MiB (lower is better)",
-          [("Idle", [mem(t, "idle") for t in order]),
-           ("Heavy: 20 MiB plain + 20 MiB colored text", [mem(t, "heavy") for t in order])],
+          [("Idle", [mem(t, "idle") for t in memory]),
+           ("Heavy: 20 MiB plain + 20 MiB colored text", [mem(t, "heavy") for t in memory])],
           lambda v: f"{v:.1f}",
           note="Median of launches; terminal processes only (shell excluded).")
 
     # Under load, where each terminal's memory sits. Older results lack the split.
-    split = [t for t in order if all("kinds" in r for r in res[t]["ram_heavy"])]
+    split = [t for t in memory if all("kinds" in r for r in res[t]["ram_heavy"])]
 
     # The split is of one run, the one whose PSS is the median, so its parts add
     # up to that run's total; medians taken part by part need not.
@@ -174,13 +190,13 @@ def main():
         values = [v[field] if field else v for v in res[t].get(key, [])]
         return med(values) if values else 0.0
 
-    panels(a.out, order, "cpu", "CPU use",
-           [("Idle", "% of one core", [cpu(t, "cpu_idle") for t in order], lambda v: f"{v:.1f}"),
-            ("Printing 40 MiB", "seconds of CPU", [cpu(t, "cpu_load", "seconds") for t in order],
+    panels(a.out, cpus, "cpu", "CPU use",
+           [("Idle", "% of one core", [cpu(t, "cpu_idle") for t in cpus], lambda v: f"{v:.1f}"),
+            ("Printing 40 MiB", "seconds of CPU", [cpu(t, "cpu_load", "seconds") for t in cpus],
              lambda v: f"{v:.2f}")],
            note="User and system time of the terminal's processes; lower is better.")
-    hbars(a.out, order, "throughput", "Output throughput", "MB/s (higher is better)",
-          [(label, [mbps(t, key) for t in order])
+    hbars(a.out, rates, "throughput", "Output throughput", "MB/s (higher is better)",
+          [(label, [mbps(t, key) for t in rates])
            for label, key in (("Plain ASCII", "plain"), ("256-color SGR", "sgr"),
                               ("Unicode mix", "unicode"))],
           lambda v: f"{v:.0f}", note="Time for `cat` of a 20 MiB file to finish in the terminal.")
@@ -192,25 +208,29 @@ def main():
         gaps = streaming(t, "gaps")
         return 1000 * len(gaps) / sum(gaps) if gaps else 0.0
 
-    hbars(a.out, order, "latency", "Keystroke to screen latency", "ms (lower is better)",
-          [("Idle terminal", [med(res[t]["latency"]) for t in order]),
-           ("While output streams", [med(streaming(t, "latency") or [0]) for t in order])],
+    hbars(a.out, keys, "latency", "Keystroke to screen latency", "ms (lower is better)",
+          [("Idle terminal", [med(res[t]["latency"]) for t in keys]),
+           ("While output streams", [med(streaming(t, "latency") or [0]) for t in keys])],
           lambda v: f"{v:.1f}",
           note="Median from an X key press until the echoed character's pixels change.")
-    panels(a.out, order, "smoothness", "Frames while colored output streams",
-           [("Frames per second", "higher is better", [fps(t) for t in order],
+    panels(a.out, streams, "smoothness", "Frames while colored output streams",
+           [("Frames per second", "higher is better", [fps(t) for t in streams],
              lambda v: f"{v:.0f}"),
             ("99th percentile frame gap", "ms (lower is better)",
-             [pct(streaming(t, "gaps") or [0], 0.99) for t in order], lambda v: f"{v:.0f}")],
+             [pct(streaming(t, "gaps") or [0], 0.99) for t in streams], lambda v: f"{v:.0f}")],
            note="X Damage reports during 4 s of a flood, timed by the X server.")
-    hbars(a.out, order, "startup", "Startup: launch to a screenful of text on screen",
-          "ms (lower is better)", [("Median", [med(res[t]["startup"]) for t in order])],
+    hbars(a.out, starts, "startup", "Startup: launch to a screenful of text on screen",
+          "ms (lower is better)", [("Median", [med(res[t]["startup"]) for t in starts])],
           lambda v: f"{v:.0f}", note="Median of 10 launches.")
 
     lines = ["# Terminal benchmark", ""]
     versions = meta.get("versions", {})
-    lines += [(f"Scrollback {meta.get('scrollback')} lines, window {meta.get('window')}, "
-               f"vsync off: {meta.get('vsync_off')}."), ""]
+    setup = (f"Scrollback {meta.get('scrollback')} lines, window {meta.get('window')}, "
+             f"vsync off: {meta.get('vsync_off')}.")
+    # Older results do not record how long their run took.
+    if "run_seconds" in meta:
+        setup += f" The run took {duration(meta['run_seconds'])}, finishing {meta['finished']}."
+    lines += [setup, ""]
     lines += [row(["Terminal", "Version"]), row(["---", "---"])]
     lines += [row([t, versions.get(t, "")]) for t in order] + [""]
     lines += ["## Memory", "", "![Memory](ram.png)", ""]
@@ -220,7 +240,7 @@ def main():
     lines += [row(["Terminal", "Idle PSS", "Idle USS", "Heavy PSS", "Heavy USS",
                    "X server pixmaps", "GPU"]),
               row(["---"] + ["---:"] * 6)]
-    for t in order:
+    for t in memory:
         held = [r["xserver"] for r in res[t]["ram_idle"] if "xserver" in r]
         lines.append(row([t, f"{mem(t, 'idle'):.1f} MiB", f"{mem(t, 'idle', 'uss'):.1f} MiB",
                           f"{mem(t, 'heavy'):.1f} MiB", f"{mem(t, 'heavy', 'uss'):.1f} MiB",
@@ -256,7 +276,7 @@ def main():
     lines += [row(["Terminal", "Frames/s", "Median gap", "p99 gap", "Longest gap",
                    "Echo median", "Echo p95"]),
               row(["---"] + ["---:"] * 6)]
-    for t in order:
+    for t in streams:
         gaps, echo = streaming(t, "gaps"), streaming(t, "latency")
         if not gaps:
             lines.append(row([t] + ["-"] * 6))
@@ -267,7 +287,7 @@ def main():
     lines += ["", "## CPU", "", "![CPU](cpu.png)", ""]
     lines += [row(["Terminal", "Idle", "While 40 MiB print", "CPU time for 40 MiB"]),
               row(["---"] + ["---:"] * 3)]
-    for t in order:
+    for t in cpus:
         lines.append(row([t, f"{cpu(t, 'cpu_idle'):.2f}%",
                           f"{cpu(t, 'cpu_load', 'percent'):.0f}%",
                           f"{cpu(t, 'cpu_load', 'seconds'):.2f} s"]))
@@ -276,7 +296,7 @@ def main():
     lines += [row(["Terminal", "Plain", "SGR", "Unicode", "Latency median", "Latency p95",
                    "Startup"]),
               row(["---"] + ["---:"] * 6)]
-    for t in order:
+    for t in summary:
         lat = res[t]["latency"]
         lines.append(row([t] + [f"{mbps(t, k):.0f} MB/s" for k in ("plain", "sgr", "unicode")]
                          + [f"{med(lat):.1f} ms", f"{pct(lat, 0.95):.1f} ms",

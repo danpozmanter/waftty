@@ -29,6 +29,8 @@ from pathlib import Path
 from Xlib import X, display, error, protocol
 from Xlib.ext import damage, res, xtest
 
+from timing import duration
+
 W, H = 1000, 700
 OUT = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "waftty-bench"
 INPUT_BYTES = 20 * 1024 * 1024
@@ -884,6 +886,8 @@ def write_inputs():
 
 
 def measure(terms, runs, out, only):
+    started = time.monotonic()
+
     def wanted(kind):
         return not only or kind in only
 
@@ -934,11 +938,14 @@ def measure(terms, runs, out, only):
         if wanted("startup"):
             results[label_of(term)]["startup"] = [startup(term) for _ in range(10)]
     meta = results.get("_meta", {})
-    meta.update({"scrollback": SCROLLBACK, "window": [W, H], "vsync_off": not monitor_connected()})
+    took = round(time.monotonic() - started)
+    meta.update({"scrollback": SCROLLBACK, "window": [W, H], "vsync_off": not monitor_connected(),
+                 "run_seconds": took, "finished": time.strftime("%Y-%m-%d %H:%M %Z")})
     meta.setdefault("versions", {}).update({label_of(t): v for t, v in versions(terms).items()})
     results["_meta"] = meta
     out.write_text(json.dumps(results, indent=1))
-    print("done")
+    print(f"done in {duration(took)}")
+
 
 
 def versions(terms):
