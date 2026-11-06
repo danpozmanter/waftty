@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.4 - Faster streaming output
+
+- Colored output, and text in Greek, Cyrillic, CJK, Hangul and other non-Latin scripts, streams faster: output is parsed on a thread of its own while the next is read.
+- A soft hyphen or a combining mark at the start of a piece of output joins the character before it only when the two form one grapheme, as they would if the output arrived whole.
+- Builds on gui-engine-gos 0.2.3.
+
 ## 0.5.3 - Faster repaints
 
 - Typing, and programs that redraw a few lines of a full screen, repaint only the rows that changed, so a keystroke shows sooner while other output streams.

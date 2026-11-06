@@ -643,11 +643,13 @@ def latency(term, samples=65):
     for i in range(samples):
         time.sleep(0.05 + random.random() * 0.1)
         ensure_focus(run.p, w)
-        before = region(w, *box)
-        d.damage_subtract(report)
+        # Events already queued are dropped before `report` is emptied: one
+        # that comes after it stays for the loop below, which empties it again.
         d.sync()
         while d.pending_events():
             d.next_event()
+        d.damage_subtract(report)
+        before = region(w, *box)
         t0 = time.perf_counter()
         xtest.fake_input(d, X.KeyPress, keys[i % 2])
         xtest.fake_input(d, X.KeyRelease, keys[i % 2])
@@ -724,8 +726,10 @@ def streaming(term, seconds=4, samples=25):
 
     # Damage reports that arrive together belong to one frame.
     def next_frame():
-        while next_event(run.p).type != d.extension_event.DamageNotify:
-            pass
+        while True:
+            e = next_event(run.p)
+            if e.type == d.extension_event.DamageNotify and e.damage == report:
+                break
         while d.pending_events():
             d.next_event()
         d.damage_subtract(report)
@@ -744,6 +748,9 @@ def streaming(term, seconds=4, samples=25):
                 and time.perf_counter() - t0 >= 1):
             stamps.append(e.timestamp)
     d.damage_destroy(raw)
+    # `report` notifies only once its damage is emptied, and the frames above
+    # left it damaged.
+    d.damage_subtract(report)
     frames = []
     for k, t in enumerate(stamps):
         if k == 0 or t - stamps[k - 1] > FRAME_SPREAD_MS:
