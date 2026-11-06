@@ -11,8 +11,9 @@ permissions:
 
 env:
   GOSSAMER_REPO: gossamer-lang/gossamer
-  # The toolchain release waftty requires. Its runtime targets macOS 15 and
-  # glibc 2.39 (Ubuntu 24.04), which are the floors of the packages here.
+  # The toolchain release waftty requires. Its runtime targets glibc 2.39
+  # (Ubuntu 24.04), the floor of the Linux packages. macOS packages build this
+  # release from source for macOS 12, their floor.
   GOSSAMER_VERSION: v0.76.0
   # project.toml reaches the libraries at ../goose-libs/<name>. Set these
   # repository variables to tags or commits to release against a fixed set.
@@ -82,6 +83,8 @@ jobs:
             exit 1
           fi
 
+      - uses: dtolnay/rust-toolchain@1.95.0
+
       - name: Install SDL's build dependencies, LLVM and the Gossamer toolchain (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -96,12 +99,45 @@ jobs:
             "https://github.com/AppImage/appimagetool/releases/download/${APPIMAGETOOL_VERSION}/appimagetool-x86_64.AppImage"
           chmod +x "$HOME/.local/bin/appimagetool"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      # macOS packages run on macOS 12 and later, as lite-anvil's do. Every
+      # compiler and linker in the build reads the oldest macOS from here.
+      - name: Target macOS 12 (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          echo "MACOSX_DEPLOYMENT_TARGET=12.0" >> "$GITHUB_ENV"
+          # C built for an older macOS than the SDK checks the running version
+          # through ___isPlatformVersionAtLeast, in libclang_rt.osx.a, which
+          # rustc links without (-nodefaultlibs); UTType is in its own framework.
+          case "${{ matrix.arch }}" in aarch64) clang_arch=arm64 ;; *) clang_arch=x86_64 ;; esac
+          clang_rt="$(clang -arch "$clang_arch" -print-file-name=libclang_rt.osx.a)"
+          echo "RUSTFLAGS=-C link-arg=$clang_rt -C link-arg=-framework -C link-arg=UniformTypeIdentifiers" >> "$GITHUB_ENV"
+      # The released toolchain's runtime archive targets macOS 15 and links
+      # into the app, so the same release is built here for macOS 12.
+      - uses: actions/checkout@v6
+        if: runner.os == 'macOS'
+        with:
+          repository: ${{ env.GOSSAMER_REPO }}
+          ref: ${{ env.GOSSAMER_VERSION }}
+          path: gossamer
+      - uses: actions/cache@v5
+        if: runner.os == 'macOS'
+        id: gos-cache
+        with:
+          path: gos-stage
+          key: gos-${{ env.GOSSAMER_VERSION }}-macos-${{ matrix.arch }}-${{ env.MACOSX_DEPLOYMENT_TARGET }}-${{ hashFiles('gossamer/Cargo.lock') }}
+      - name: Build the Gossamer toolchain for macOS 12 (macOS)
+        if: runner.os == 'macOS' && steps.gos-cache.outputs.cache-hit != 'true'
+        run: |
+          (cd gossamer && cargo build --release --bin gos && cargo build --release -p gossamer-runtime)
+          mkdir -p gos-stage
+          cp gossamer/target/release/gos gossamer/target/release/libgossamer_runtime.a \
+            gossamer/scripts/install.sh gos-stage/
       - name: Install the Gossamer toolchain, LLVM and Ninja (macOS)
         if: runner.os == 'macOS'
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
         run: |
-          curl -fsSL "https://raw.githubusercontent.com/${GOSSAMER_REPO}/main/scripts/install.sh" | sh
+          sh gos-stage/install.sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           brew install llvm@22 ninja
           prefix="$(brew --prefix llvm@22)"
@@ -122,7 +158,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "pacman failed (exit $LASTEXITCODE)" }
           Add-Content $env:GITHUB_ENV "GOS_LLVM_OPT=C:\msys64\mingw64\bin\opt.exe"
           Add-Content $env:GITHUB_ENV "GOS_LLC=C:\msys64\mingw64\bin\llc.exe"
-      - uses: dtolnay/rust-toolchain@1.95.0
       - run: gos --version
 
       - name: Fetch the dependencies
@@ -131,7 +166,7 @@ jobs:
           (cd waftty && gos fetch)
 
       - name: Build and package
-        run: bash waftty/scripts/package.sh --installers dist
+        run: bash waftty/scripts/package.sh --installers dist 2>&1 | tee package.log
       - name: List the package
         run: ls -la dist
 
@@ -142,6 +177,16 @@ jobs:
           ditto -x -k dist/waftty-*-macos-*.zip try
           bash try/install.command
           /Applications/waftty.app/Contents/MacOS/waftty --version
+      # Nothing in the package may ask for a macOS newer than 12: the binary's
+      # build record, Info.plist, and no object the link took from a newer one.
+      - name: Check the app opens on macOS 12 (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          app=/Applications/waftty.app/Contents
+          vtool -show-build "$app/MacOS/waftty"
+          vtool -show-build "$app/MacOS/waftty" | grep -Eq 'minos 12\.0$'
+          [ "$(plutil -extract LSMinimumSystemVersion raw "$app/Info.plist")" = 12.0 ]
+          if grep -i 'built for newer' package.log; then exit 1; fi
 
       # Each Linux package as a user gets it, installed and run: the .deb here,
       # the .rpm on Fedora, and the AppImage as downloaded.

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.5 - macOS 12 support
+
+- The macOS packages, Intel and Apple Silicon, run on macOS 12 and later; (Previously macOS 15).
+
 ## 0.5.4 - Faster streaming output
 
 - Colored output, and text in Greek, Cyrillic, CJK, Hangul and other non-Latin scripts, streams faster: output is parsed on a thread of its own while the next is read.

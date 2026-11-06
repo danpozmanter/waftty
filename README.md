@@ -29,7 +29,7 @@ Building requires Gossamer 0.76.0 or newer and Rust 1.95.0 through rustup.
 
 Release packages are built for Linux x86_64 (glibc 2.39 or newer, as on
 Ubuntu 24.04) as a .deb, an .rpm, an AppImage and a tarball; for Windows
-x86_64 as a setup program and zips; and for macOS 15 or newer, with one
+x86_64 as a setup program and zips; and for macOS 12 or newer, with one
 package for Intel Macs and one for Apple Silicon. On macOS, unzip the
 package and double-click `install.command` (the first time, allow it under
 System Settings > Privacy & Security > Open Anyway), or run
