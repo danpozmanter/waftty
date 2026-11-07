@@ -11,10 +11,10 @@ permissions:
 
 env:
   GOSSAMER_REPO: gossamer-lang/gossamer
-  # The toolchain release waftty requires. Its runtime targets glibc 2.39
-  # (Ubuntu 24.04), the floor of the Linux packages. macOS packages build this
-  # release from source for macOS 12, their floor.
-  GOSSAMER_VERSION: v0.76.0
+  # The toolchain release waftty builds with. Its runtime targets glibc 2.39
+  # (Ubuntu 24.04), the floor of the Linux packages, and its macos12 archives
+  # target macOS 12, the floor of the macOS packages.
+  GOSSAMER_VERSION: v0.77.0
   # project.toml reaches the libraries at ../goose-libs/<name>. Set these
   # repository variables to tags or commits to release against a fixed set.
   WINDOWING_REF: ${{ vars.WINDOWING_REF || 'main' }}
@@ -111,33 +111,17 @@ jobs:
           case "${{ matrix.arch }}" in aarch64) clang_arch=arm64 ;; *) clang_arch=x86_64 ;; esac
           clang_rt="$(clang -arch "$clang_arch" -print-file-name=libclang_rt.osx.a)"
           echo "RUSTFLAGS=-C link-arg=$clang_rt -C link-arg=-framework -C link-arg=UniformTypeIdentifiers" >> "$GITHUB_ENV"
-      # The released toolchain's runtime archive targets macOS 15 and links
-      # into the app, so the same release is built here for macOS 12.
-      - uses: actions/checkout@v6
-        if: runner.os == 'macOS'
-        with:
-          repository: ${{ env.GOSSAMER_REPO }}
-          ref: ${{ env.GOSSAMER_VERSION }}
-          path: gossamer
-      - uses: actions/cache@v5
-        if: runner.os == 'macOS'
-        id: gos-cache
-        with:
-          path: gos-stage
-          key: gos-${{ env.GOSSAMER_VERSION }}-macos-${{ matrix.arch }}-${{ env.MACOSX_DEPLOYMENT_TARGET }}-${{ hashFiles('gossamer/Cargo.lock') }}
-      - name: Build the Gossamer toolchain for macOS 12 (macOS)
-        if: runner.os == 'macOS' && steps.gos-cache.outputs.cache-hit != 'true'
-        run: |
-          (cd gossamer && cargo build --release --bin gos && cargo build --release -p gossamer-runtime)
-          mkdir -p gos-stage
-          cp gossamer/target/release/gos gossamer/target/release/libgossamer_runtime.a \
-            gossamer/scripts/install.sh gos-stage/
       - name: Install the Gossamer toolchain, LLVM and Ninja (macOS)
         if: runner.os == 'macOS'
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
+          GH_TOKEN: ${{ github.token }}
         run: |
-          sh gos-stage/install.sh
+          # The macos12 archive's toolchain and runtime target macOS 12.
+          gh release download "$GOSSAMER_VERSION" --repo "$GOSSAMER_REPO" \
+            --pattern "gos-*-macos12-${{ matrix.arch }}.zip" --dir gos-dist
+          ditto -x -k gos-dist/*.zip gos-dist
+          sh gos-dist/gos-*/install.sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           brew install llvm@22 ninja
           prefix="$(brew --prefix llvm@22)"
