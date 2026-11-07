@@ -1,13 +1,13 @@
 """RAM, CPU, throughput, latency and startup of terminals on a live X11 desktop.
 
-    uv run bench.py inputs                      # writes the test inputs
-    uv run bench.py run [--terminals waftty,waftty-quick,guake,...] [--waftty PATH]
-    uv run report.py                            # charts and RESULTS.md
+    uv run linux/bench.py inputs                # writes the test inputs
+    uv run linux/bench.py run [--terminals waftty,waftty-quick,guake,...] [--waftty PATH]
+    uv run report.py linux                      # charts and RESULTS.md
 
 Each terminal runs on its defaults from a configuration folder of its own,
 with the same scrollback (--scrollback, 10,000 lines) and the same window size
 (1000x700, or the nearest size its size hints allow). Results go to
-results.json in the current directory unless --out names another file; the
+linux/results.json unless --out names another file; the
 inputs and each run's configuration folders stay in ~/.cache/waftty-bench.
 """
 
@@ -22,6 +22,7 @@ import select
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -29,7 +30,8 @@ from pathlib import Path
 from Xlib import X, display, error, protocol
 from Xlib.ext import damage, res, xtest
 
-from timing import duration
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from timing import duration  # noqa: E402
 
 W, H = 1000, 700
 OUT = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "waftty-bench"
@@ -971,8 +973,8 @@ def main():
     ap.add_argument("--runs", type=int, default=3, help="repetitions of RAM and throughput")
     ap.add_argument("--scrollback", type=int, default=SCROLLBACK)
     ap.add_argument("--only", default="", help="comma-separated: ram, throughput, cpu, latency, streaming, startup")
-    ap.add_argument("--out", type=Path, default=Path("results.json"),
-                    help="results file (default: results.json in the current directory)")
+    ap.add_argument("--out", type=Path, default=Path(__file__).resolve().parent / "results.json",
+                    help="results file (default: linux/results.json)")
     a = ap.parse_args()
     if a.command == "inputs":
         write_inputs()

@@ -1,6 +1,6 @@
 // The application: its model, update and view, and the windows' settings.
 
-use std::errors
+use std::{env, errors}
 
 use gui
 use gui::terminal::Command
@@ -101,9 +101,9 @@ pub fn app(s: Settings, first: Command, first_tab: FirstTab, restore: bool, prog
         .windows(view::window)
         .ask_before_close()
         .icon(icon::waftty(128))
-    // A second `--quick` launch hands over to the running quick terminal,
-    // which already holds the shortcut.
-    if first_tab.quick { return built.frameless().remember_size(false).instance(QUICK_INSTANCE).single_instance(#[]) }
+    // A second `--quick` launch hands its command line to the running quick
+    // terminal, which already holds the shortcut and docks itself to show.
+    if first_tab.quick { return built.frameless().remember_size(false).instance(QUICK_INSTANCE).single_instance_command_line(env::args()) }
     match instance {
         Some(arguments) => built.single_instance_command_line(arguments)
         None => built

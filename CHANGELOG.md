@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.7 - Leaner memory, quick terminal relaunch
+
+- A window showing Claude Code's symbols uses about 30 MB less: the emoji and CJK fallback fonts those symbols need are mapped from disk instead of read into memory.
+- On Wayland waftty no longer loads the GPU driver, Vulkan and LLVM to show its windows, which took over 100 MB per window.
+- A hidden quick terminal lets go of its frame, and a window that went quiet lets go of the pixels it cached for redraws.
+- Launching `waftty --quick` while the quick terminal runs shows it docked along its edge with focus; it appeared at a size of the window manager's choosing and kept that size as its own.
+- Builds on windowing-gos 0.1.11, gui-engine-gos 0.2.6 and gui-gos 0.2.1.
+
 ## 0.5.6 - Quick terminal cursor on macOS, leaner macOS windows
 
 - On macOS the quick terminal shows its cursor again after it is hidden and shown; it stayed invisible until the window was clicked.

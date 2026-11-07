@@ -1,9 +1,16 @@
 [project]
 name = "waftty-bench"
 version = "0.1.0"
-description = "RAM, CPU, throughput, latency and startup of waftty beside other terminals"
+description = "RAM, CPU, throughput, latency and startup of waftty beside other terminals, on Linux and macOS"
 requires-python = ">=3.10"
-dependencies = ["python-xlib>=0.33", "matplotlib>=3.8"]
+dependencies = [
+    "matplotlib>=3.8",
+    "python-xlib>=0.33; sys_platform == 'linux'",
+    "psutil>=5.9; sys_platform == 'darwin'",
+    "pyobjc-framework-ApplicationServices>=10; sys_platform == 'darwin'",
+    "pyobjc-framework-Cocoa>=10; sys_platform == 'darwin'",
+    "pyobjc-framework-Quartz>=10; sys_platform == 'darwin'",
+]
 
 [tool.uv]
 package = false

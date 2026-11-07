@@ -606,6 +606,10 @@ mod tests {
 // A later `--single-instance` launch forwarded its command line: it opens a
 // window here, as that launch would have opened its own.
 fn launched(m: &mut Model, directory: String, arguments: Vec<String>) {
+    if m.drop_down {
+        drop_down::summon(m)
+        return
+    }
     let Ok(cli::Invocation::Open(launch)) = cli::invocation(arguments) else { return }
     let title = launch.title
     let hold = launch.hold

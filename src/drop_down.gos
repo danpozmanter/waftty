@@ -52,14 +52,21 @@ pub fn bind(s: Settings) {
 pub fn toggle(m: &mut Model) {
     if model::window_index(*m, "main").is_none() { return }
     if m.drop_down_hidden {
-        m.drop_down_hidden = false
-        // The window system places a window as it maps, so it is docked once shown.
-        gui::perform(Effect::SetWindowVisible("main", true))
-        place(m.settings, m.quick_position)
+        summon(m)
     } else {
         m.drop_down_hidden = true
         gui::perform(Effect::SetWindowVisible("main", false))
     }
+}
+
+/// Shows the quick terminal docked along its edge with focus, hidden or not,
+/// as a later `--quick` launch asks.
+pub fn summon(m: &mut Model) {
+    if model::window_index(*m, "main").is_none() { return }
+    m.drop_down_hidden = false
+    // The window system places a window as it maps, so it is docked once shown.
+    gui::perform(Effect::SetWindowVisible("main", true))
+    place(m.settings, m.quick_position)
 }
 
 /// The user resized the quick terminal to `length` along its edge and

@@ -1,6 +1,9 @@
-"""Charts and a RESULTS.md from a `bench.py run` results file.
+"""Charts and a RESULTS.md from a benchmark run's results file.
 
-    uv run report.py [--results FILE] [--out DIR]
+    uv run report.py linux|mac [--results FILE] [--out DIR]
+
+Reads <system>/results.json and writes <system>/report unless --results and
+--out name others.
 """
 
 import argparse
@@ -126,12 +129,20 @@ def row(cells):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--results", type=Path, default=Path("results.json"))
-    ap.add_argument("--out", type=Path, default=Path("report"))
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("system", choices=["linux", "mac"])
+    ap.add_argument("--results", type=Path)
+    ap.add_argument("--out", type=Path)
     a = ap.parse_args()
+    here = Path(__file__).resolve().parent / a.system
+    a.results = a.results or here / "results.json"
+    a.out = a.out or here / "report"
     res = json.loads(a.results.read_text())
     meta = res.pop("_meta", {})
+    # macOS has no proportional set size: memory there is each process's
+    # physical footprint, the figure Activity Monitor shows.
+    macos = meta.get("platform") == "macos"
+    memory_key = "footprint" if macos else "pss"
     order = list(res)
     a.out.mkdir(parents=True, exist_ok=True)
 
@@ -151,13 +162,14 @@ def main():
 
     # Memory is one run's own figure, the low median, so it matches the split
     # below for any number of runs.
-    def mem(t, phase, key="pss"):
+    def mem(t, phase, key=memory_key):
         return statistics.median_low(r[key] for r in res[t][f"ram_{phase}"])
 
     def mbps(t, name):
         return MB / (med(res[t][f"tp_{name}"]) / 1000)
 
-    hbars(a.out, memory, "ram", "Memory (PSS), idle and after 40 MiB of output",
+    hbars(a.out, memory, "ram",
+          f"Memory ({'physical footprint' if macos else 'PSS'}), idle and after 40 MiB of output",
           "MiB (lower is better)",
           [("Idle", [mem(t, "idle") for t in memory]),
            ("Heavy: 20 MiB plain + 20 MiB colored text", [mem(t, "heavy") for t in memory])],
@@ -212,20 +224,26 @@ def main():
           [("Idle terminal", [med(res[t]["latency"]) for t in keys]),
            ("While output streams", [med(streaming(t, "latency") or [0]) for t in keys])],
           lambda v: f"{v:.1f}",
-          note="Median from an X key press until the echoed character's pixels change.")
-    panels(a.out, streams, "smoothness", "Frames while colored output streams",
-           [("Frames per second", "higher is better", [fps(t) for t in streams],
-             lambda v: f"{v:.0f}"),
-            ("99th percentile frame gap", "ms (lower is better)",
-             [pct(streaming(t, "gaps") or [0], 0.99) for t in streams], lambda v: f"{v:.0f}")],
-           note="X Damage reports during 4 s of a flood, timed by the X server.")
+          note=("Median from a Quartz key event until a capture of the window shows the echo."
+                if macos else "Median from an X key press until the echoed character's pixels change."))
+    # Frame timing comes from X Damage, which macOS has no counterpart to.
+    streams = [t for t in streams if streaming(t, "gaps")]
+    if streams:
+        panels(a.out, streams, "smoothness", "Frames while colored output streams",
+               [("Frames per second", "higher is better", [fps(t) for t in streams],
+                 lambda v: f"{v:.0f}"),
+                ("99th percentile frame gap", "ms (lower is better)",
+                 [pct(streaming(t, "gaps") or [0], 0.99) for t in streams], lambda v: f"{v:.0f}")],
+               note="X Damage reports during 4 s of a flood, timed by the X server.")
     hbars(a.out, starts, "startup", "Startup: launch to a screenful of text on screen",
           "ms (lower is better)", [("Median", [med(res[t]["startup"]) for t in starts])],
           lambda v: f"{v:.0f}", note="Median of 10 launches.")
 
     lines = ["# Terminal benchmark", ""]
     versions = meta.get("versions", {})
-    setup = (f"Scrollback {meta.get('scrollback')} lines, window {meta.get('window')}, "
+    setup = (f"macOS {meta.get('os', '')}, scrollback {meta.get('scrollback')} lines, "
+             f"window {meta.get('window')}." if macos else
+             f"Scrollback {meta.get('scrollback')} lines, window {meta.get('window')}, "
              f"vsync off: {meta.get('vsync_off')}.")
     # Older results do not record how long their run took.
     if "run_seconds" in meta:
@@ -234,13 +252,24 @@ def main():
     lines += [row(["Terminal", "Version"]), row(["---", "---"])]
     lines += [row([t, versions.get(t, "")]) for t in order] + [""]
     lines += ["## Memory", "", "![Memory](ram.png)", ""]
-    lines += [("PSS shares each library page among the processes that map it; USS is the "
-               "terminal's own. X server pixmaps and GPU memory are held elsewhere on the "
-               "terminal's behalf."), ""]
-    lines += [row(["Terminal", "Idle PSS", "Idle USS", "Heavy PSS", "Heavy USS",
-                   "X server pixmaps", "GPU"]),
-              row(["---"] + ["---:"] * 6)]
-    for t in memory:
+    if macos:
+        lines += [("Physical footprint is the memory a process dirtied, compressed memory "
+                   "included, the figure Activity Monitor shows as Memory; RSS also counts the "
+                   "shared library pages it touches. Terminal processes only, shell excluded."),
+                  ""]
+        lines += [row(["Terminal", "Idle footprint", "Idle RSS", "Heavy footprint", "Heavy RSS"]),
+                  row(["---"] + ["---:"] * 4)]
+        lines += [row([t, f"{mem(t, 'idle'):.1f} MiB", f"{mem(t, 'idle', 'rss'):.1f} MiB",
+                       f"{mem(t, 'heavy'):.1f} MiB", f"{mem(t, 'heavy', 'rss'):.1f} MiB"])
+                  for t in memory]
+    else:
+        lines += [("PSS shares each library page among the processes that map it; USS is the "
+                   "terminal's own. X server pixmaps and GPU memory are held elsewhere on the "
+                   "terminal's behalf."), ""]
+        lines += [row(["Terminal", "Idle PSS", "Idle USS", "Heavy PSS", "Heavy USS",
+                       "X server pixmaps", "GPU"]),
+                  row(["---"] + ["---:"] * 6)]
+    for t in [] if macos else memory:
         held = [r["xserver"] for r in res[t]["ram_idle"] if "xserver" in r]
         lines.append(row([t, f"{mem(t, 'idle'):.1f} MiB", f"{mem(t, 'idle', 'uss'):.1f} MiB",
                           f"{mem(t, 'heavy'):.1f} MiB", f"{mem(t, 'heavy', 'uss'):.1f} MiB",
@@ -272,10 +301,11 @@ def main():
             parts = [heavy(t, pick) for _, pick in sources]
             lines.append(row([t] + [f"{v:.1f} MiB" for v in parts] + [f"{sum(parts):.1f} MiB"]))
     lines += ["", "## Throughput", "", "![Throughput](throughput.png)", ""]
-    lines += ["## Smoothness under load", "", "![Smoothness](smoothness.png)", ""]
-    lines += [row(["Terminal", "Frames/s", "Median gap", "p99 gap", "Longest gap",
-                   "Echo median", "Echo p95"]),
-              row(["---"] + ["---:"] * 6)]
+    if streams:
+        lines += ["## Smoothness under load", "", "![Smoothness](smoothness.png)", ""]
+        lines += [row(["Terminal", "Frames/s", "Median gap", "p99 gap", "Longest gap",
+                       "Echo median", "Echo p95"]),
+                  row(["---"] + ["---:"] * 6)]
     for t in streams:
         gaps, echo = streaming(t, "gaps"), streaming(t, "latency")
         if not gaps:
