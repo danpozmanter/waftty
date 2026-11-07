@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.6 - Quick terminal cursor on macOS, leaner macOS windows
+
+- On macOS the quick terminal shows its cursor again after it is hidden and shown; it stayed invisible until the window was clicked.
+- A window without keyboard focus shows a hollow cursor instead of none.
+- The cursor blinks when Blinking cursor is on; it stayed solid.
+- macOS windows use less memory: a window keeps in memory only the frame it shows, and hands the buffers it painted earlier frames into back to the system.
+- Builds on windowing-gos 0.1.9 and gui-engine-gos 0.2.4.
+
 ## 0.5.5 - macOS 12 support
 
 - The macOS packages, Intel and Apple Silicon, run on macOS 12 and later; (Previously macOS 15).
