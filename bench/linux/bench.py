@@ -532,6 +532,20 @@ def cpu_seconds(pid):
     return total / tick
 
 
+def run_seconds(pid):
+    """CPU time of the terminal's live threads at nanosecond resolution; /proc/PID/stat
+    counts whole clock ticks, which round an idle window to 0 or 10 ms. Threads that
+    exit drop out of the sum, so this suits only spans where none do."""
+    total = 0
+    for p in terminal_pids(pid):
+        for task in Path(f"/proc/{p}/task").glob("*"):
+            try:
+                total += int((task / "schedstat").read_text().split()[0])
+            except (FileNotFoundError, ProcessLookupError):
+                pass
+    return total / 1e9
+
+
 def gpu_mib(pid):
     if not shutil.which("nvidia-smi"):
         return 0
@@ -592,9 +606,9 @@ def idle_cpu(term, seconds=10):
     run.start()
     run.signal()
     time.sleep(3)  # startup work that lands after the window shows
-    before = cpu_seconds(run.p.pid)
+    before = run_seconds(run.p.pid)
     time.sleep(seconds)
-    used = cpu_seconds(run.p.pid) - before
+    used = run_seconds(run.p.pid) - before
     run.stop()
     return 100 * used / seconds
 

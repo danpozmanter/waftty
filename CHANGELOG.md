@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.8 - Less CPU for streaming output
+
+- Output that scrolls costs less CPU: rows already drawn turn with the text instead of being drawn again, and only the rows that came in are drawn.
+- An idle window keeps about 1 to 2 MB less of waftty's code in memory: the functions startup and idle drawing run sit together in the binary.
+- Builds on windowing-gos 0.1.11, gui-engine-gos 0.2.7 and gui-gos 0.2.2.
+
 ## 0.5.7 - Leaner memory, quick terminal relaunch
 
 - A window showing Claude Code's symbols uses about 30 MB less: the emoji and CJK fallback fonts those symbols need are mapped from disk instead of read into memory.
