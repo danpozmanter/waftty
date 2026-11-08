@@ -218,7 +218,8 @@ def family(pid):
         for t in os.listdir(f"/proc/{pid}/task"):
             for c in Path(f"/proc/{pid}/task/{t}/children").read_text().split():
                 pids |= family(int(c))
-    except FileNotFoundError:
+    # A process that exits while it is read answers either error.
+    except (FileNotFoundError, ProcessLookupError):
         pass
     return pids
 
@@ -229,7 +230,7 @@ def terminal_pids(pid):
         try:
             if Path(f"/proc/{p}/comm").read_text().strip() not in HELPERS:
                 out.append(p)
-        except FileNotFoundError:
+        except (FileNotFoundError, ProcessLookupError):
             pass
     return out
 
@@ -792,42 +793,54 @@ def streaming(term, seconds=4, samples=25):
     return {"gaps": gaps, "latency": lat}
 
 
-def screen_image():
-    g = root.get_geometry()
-    return root.get_image(0, 0, g.width, g.height, X.ZPixmap, 0xFFFFFFFF).data, g.width
+# How far a terminal's color pipeline may move a channel (rio draws
+# 100,150,200 as 111,149,196), and how far apart two launches' colors are.
+COLOR_SLACK = 24
+COLOR_APART = 60
 
 
-def painted_text(w, before):
-    """Whether the middle of `w` shows text the terminal drew: more than two
-    colors, unlike what screen image `before` held there, which a window that
-    has not drawn yet shows without a compositor."""
+def shows_color(w, rgb):
+    """Whether the middle of `w` is mostly cells of background `rgb`, which
+    only the launch that chose it draws."""
     # The middle of the window is text area in every terminal, below any tab
     # bar or padding, and a screenful of output reaches it.
     g = w.get_geometry()
-    top = g.height // 2 - 30
     try:
-        data = region(w, 0, top, 200, 60)
-        x, y, _, _ = rect(w)
+        data = region(w, 0, g.height // 2 - 30, 200, 60)
     except error.XError:
         return False
-    if len({data[i:i + 4] for i in range(0, len(data), 4)}) <= 2:
-        return False
-    screen, sw = before
-    under = b"".join(screen[((y + top + r) * sw + x) * 4:((y + top + r) * sw + x + 200) * 4]
-                     for r in range(60))
-    return data != under
+    r, gr, b = rgb
+    near = sum(1 for i in range(0, len(data), 4)
+               if abs(data[i + 2] - r) <= COLOR_SLACK and abs(data[i + 1] - gr) <= COLOR_SLACK
+               and abs(data[i] - b) <= COLOR_SLACK)
+    return near * 4 >= len(data) // 4
+
+
+# The previous launch's color, which the next one keeps clear of.
+last_color = (0, 0, 0)
 
 
 def startup(term):
     """Milliseconds from launch until a screenful of output is on screen."""
-    before = screen_image()
-    p = launch(term, "seq 200 | sed 's/.*/READY/'; exec sleep 100000")
+    # Every line is filled with a background color of this launch's own, so
+    # neither a window that has not drawn yet nor one an earlier launch left
+    # on screen passes for this one's output.
+    global last_color
+    rgb = last_color
+    while any(abs(c - p) < COLOR_APART for c, p in zip(rgb, last_color)):
+        rgb = tuple(random.randrange(40, 216) for _ in range(3))
+    last_color = rgb
+    sgr = "\\033[48;2;{};{};{}m".format(*rgb)
+    p = launch(term, f"printf '{sgr}'; seq 200 | sed 's/.*/{' ' * 120}/'; exec sleep 100000")
     w = wait_window(p)
+    # The window's own map notice wakes the wait: a window the window manager
+    # does not activate changes nothing on the root.
+    w.change_attributes(event_mask=X.StructureNotifyMask)
     while w.get_attributes().map_state != X.IsViewable:
         next_event(p)
     d.damage_query_version()
     report = w.damage_create(damage.DamageReportNonEmpty)
-    while not painted_text(w, before):
+    while not shows_color(w, rgb):
         while next_event(p).type != d.extension_event.DamageNotify:
             pass
         d.damage_subtract(report)
