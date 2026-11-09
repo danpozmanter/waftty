@@ -521,15 +521,23 @@ def memory_sources(pid):
 
 
 def cpu_seconds(pid):
+    """The CPU seconds so far of each of the terminal's processes, by pid."""
     tick = os.sysconf("SC_CLK_TCK")
-    total = 0
+    seen = {}
     for p in terminal_pids(pid):
         try:
             fields = Path(f"/proc/{p}/stat").read_text().rsplit(")", 1)[1].split()
-            total += int(fields[11]) + int(fields[12])
+            seen[p] = (int(fields[11]) + int(fields[12])) / tick
         except (FileNotFoundError, ProcessLookupError):
             pass
-    return total / tick
+    return seen
+
+
+def cpu_used(before, after):
+    """CPU seconds spent between two readings of `cpu_seconds`. A process that
+    exited between them is left out, since its total can no longer be read; one
+    that started between them counts from zero."""
+    return sum(seconds - before.get(pid, 0.0) for pid, seconds in after.items())
 
 
 def run_seconds(pid):
@@ -590,7 +598,7 @@ def ram(term, files):
     before = cpu_seconds(run.p.pid)
     run.start()
     run.signal()
-    cpu = cpu_seconds(run.p.pid) - before
+    cpu = cpu_used(before, cpu_seconds(run.p.pid))
     pss, uss, rss = settled_memory(run.p.pid)
     sources = memory_sources(run.p.pid)
     vram = gpu_mib(run.p.pid)
@@ -600,12 +608,18 @@ def ram(term, files):
             **sources}
 
 
+# Seconds from the last output to the idle reading: past startup's late work,
+# and past the point a terminal that rests its cursor after 10 idle seconds
+# has done so.
+IDLE_SETTLE = 13
+
+
 def idle_cpu(term, seconds=10):
     """Share of one core the terminal uses while idle with a blinking cursor."""
     run = Run(term, "echo > $DONE; exec sleep 100000")
     run.start()
     run.signal()
-    time.sleep(3)  # startup work that lands after the window shows
+    time.sleep(IDLE_SETTLE)
     before = run_seconds(run.p.pid)
     time.sleep(seconds)
     used = run_seconds(run.p.pid) - before
@@ -623,7 +637,7 @@ def load_cpu(term):
     t0 = time.perf_counter()
     run.start()
     run.signal()
-    used = cpu_seconds(run.p.pid) - before
+    used = cpu_used(before, cpu_seconds(run.p.pid))
     seconds = time.perf_counter() - t0
     run.stop()
     return {"percent": 100 * used / seconds, "seconds": used}

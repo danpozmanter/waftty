@@ -78,6 +78,15 @@ class Report(unittest.TestCase):
         self.assertIn("macOS 15.1, scrollback 10000", text)
         self.assertNotIn("heavy memory runs", text)
 
+    def test_a_mac_run_lists_its_capture_times_and_refresh_rate(self):
+        terminal = mac_terminal()
+        terminal.update(latency=[6.0, 8.0], latency_capture=[3.0, 5.0], startup=[100.0],
+                        streaming={"latency": [9.0], "capture": [4.0]})
+        text, _ = self.run_report("mac", {"_meta": {"platform": "macos", "scrollback": 10000, "display_hz": 30.0},
+                                          "waftty": terminal})
+        self.assertIn("refreshes at 30 Hz", text)
+        self.assertIn("| waftty | 7.0 ms | 4.0 ms |", text)
+
     def test_a_linux_run_reports_pss_and_every_chart(self):
         text, err = self.run_report("linux", {"_meta": {"platform": "linux", "scrollback": 10000},
                                               "waftty": linux_terminal()})

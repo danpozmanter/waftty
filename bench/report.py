@@ -283,7 +283,7 @@ def main(argv=None):
           [("Idle terminal", [med(res[t]["latency"]) for t in keys]),
            ("While output streams", [med(streaming(t, "latency") or [0]) for t in keys])],
           lambda v: f"{v:.1f}",
-          note=("Median from a Quartz key event until a capture of the window shows the echo."
+          note=("Median from a Quartz key event until the end of the capture that shows the echo."
                 if macos else "Median from an X key press until the echoed character's pixels change."))
     # Frame timing comes from X Damage, which macOS has no counterpart to.
     streams = [t for t in streams if streaming(t, "gaps")]
@@ -305,6 +305,8 @@ def main(argv=None):
     elif macos:
         setup = (f"macOS {meta.get('os', '')}, scrollback {meta['scrollback']} lines, "
                  f"window {meta.get('window')}.")
+        if meta.get("display_hz"):
+            setup += f" The display refreshes at {meta['display_hz']:.0f} Hz."
     else:
         setup = (f"Scrollback {meta['scrollback']} lines, window {meta.get('window')}, "
                  f"vsync off: {meta.get('vsync_off')}.")
@@ -399,6 +401,13 @@ def main(argv=None):
         lines += ["", "## Latency and startup", ""]
     if keys:
         lines += ["![Latency](latency.png)", ""]
+    timed = [t for t in keys if res[t].get("latency_capture")]
+    if timed:
+        lines += [("Each echo is timed at the end of the capture that first shows it, so a "
+                   "reading includes up to one capture's time."), "",
+                  row(["Terminal", "Echo median", "One capture"]), row(["---"] + ["---:"] * 2)]
+        lines += [row([t, f"{med(res[t]['latency']):.1f} ms",
+                       f"{med(res[t]['latency_capture']):.1f} ms"]) for t in timed] + [""]
     if starts:
         lines += ["![Startup](startup.png)", ""]
     if summary:

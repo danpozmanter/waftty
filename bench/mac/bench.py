@@ -32,7 +32,7 @@ from pathlib import Path
 
 import psutil
 import Quartz
-from AppKit import NSApplicationActivateIgnoringOtherApps, NSRunningApplication
+from AppKit import NSApplicationActivateIgnoringOtherApps, NSRunningApplication, NSScreen
 from ApplicationServices import (
     AXIsProcessTrusted,
     AXUIElementCopyAttributeValue,
@@ -115,6 +115,13 @@ def command(term, cmd):
     raise ValueError(term)
 
 
+def share_of_work_area():
+    """The window size as whole percentages of the first display's work area,
+    the unit waftty's quick terminal sizes itself in."""
+    area = NSScreen.screens()[0].visibleFrame().size
+    return round(100 * W / area.width), round(100 * H / area.height)
+
+
 def environment(term, home):
     """The environment `term` starts in: waftty keeps its settings and its
     single-instance claim under HOME, so a HOME of the run's own keeps it apart
@@ -125,9 +132,11 @@ def environment(term, home):
         env["HOME"] = home
         settings = Path(home) / "Library" / "Application Support" / "dev.gossamer.waftty"
         settings.mkdir(parents=True, exist_ok=True)
-        (settings / "settings.json").write_text(json.dumps(
-            {"values": {"scrollback": str(SCROLLBACK),
-                        "drop_down_key": "Ctrl+Alt+Shift+F8"}, "version": 2}))
+        values = {"scrollback": str(SCROLLBACK), "drop_down_key": "Ctrl+Alt+Shift+F8"}
+        if term.endswith(QUICK):
+            wide, tall = share_of_work_area()
+            values.update(drop_down_width=str(wide), drop_down_height=str(tall))
+        (settings / "settings.json").write_text(json.dumps({"values": values, "version": 2}))
     elif base == "rio":
         env["RIO_CONFIG_HOME"] = home
         Path(home, "config.toml").write_text(
@@ -456,14 +465,22 @@ def memory(launch):
 
 
 def cpu_seconds(launch):
-    total = 0.0
+    """The CPU seconds so far of each of the terminal's processes, by pid."""
+    seen = {}
     for p in launch.processes():
         try:
             t = p.cpu_times()
-            total += t.user + t.system
+            seen[p.pid] = t.user + t.system
         except psutil.NoSuchProcess:
             pass
-    return total
+    return seen
+
+
+def cpu_used(before, after):
+    """CPU seconds spent between two readings of `cpu_seconds`. A process that
+    exited between them is left out, since its total can no longer be read; one
+    that started between them counts from zero."""
+    return sum(seconds - before.get(pid, 0.0) for pid, seconds in after.items())
 
 
 def settled_memory(launch):
@@ -485,10 +502,15 @@ def ram(term, files):
     before = cpu_seconds(run.launch)
     run.start()
     run.signal()
-    cpu = cpu_seconds(run.launch) - before
+    cpu = cpu_used(before, cpu_seconds(run.launch))
     footprint, rss, processes = settled_memory(run.launch)
     run.stop()
     return {"footprint": footprint, "rss": rss, "cpu": cpu, "processes": processes}
+
+
+# Seconds from the last output to the idle reading: past the point a terminal
+# that rests its cursor after 10 idle seconds has done so.
+IDLE_SETTLE = 13
 
 
 def idle_cpu(term, seconds=10):
@@ -496,10 +518,10 @@ def idle_cpu(term, seconds=10):
     run = Run(term, "echo > $DONE; exec sleep 100000")
     run.start()
     run.signal()
-    time.sleep(3)
+    time.sleep(IDLE_SETTLE)
     before = cpu_seconds(run.launch)
     time.sleep(seconds)
-    used = cpu_seconds(run.launch) - before
+    used = cpu_used(before, cpu_seconds(run.launch))
     run.stop()
     return 100 * used / seconds
 
@@ -512,7 +534,7 @@ def load_cpu(term):
     t0 = time.perf_counter()
     run.start()
     run.signal()
-    used = cpu_seconds(run.launch) - before
+    used = cpu_used(before, cpu_seconds(run.launch))
     seconds = time.perf_counter() - t0
     run.stop()
     return {"percent": 100 * used / seconds, "seconds": used}
@@ -541,34 +563,45 @@ ECHO = ("import os,tty; tty.setraw(0); os.write(1, b'\\x1b[?25l\\x1b[2J\\x1b[H')
 
 
 def wait_change(term, wid, rect, before, timeout=5):
-    """Seconds until `rect` of window `wid` differs from `before`, and how long
-    one capture took, which bounds the reading's precision."""
+    """When `rect` of window `wid` was first seen to differ from `before`, at
+    the end of the capture that showed it, and how long that capture took,
+    which bounds the reading's precision."""
     t0 = time.perf_counter()
     while time.perf_counter() - t0 < timeout:
         c0 = time.perf_counter()
         now = capture(wid, rect)
+        c1 = time.perf_counter()
         if now != before:
-            return c0, time.perf_counter() - c0
+            return c1, c1 - c0
     raise SystemExit(f"{term}: the echoed key never showed")
 
 
-def latency(term, samples=65):
-    """Milliseconds from a key event until the echoed character's pixels change."""
-    run = Run(term, f'exec {PYTHON} -c "{ECHO}"')
-    run.start()
-    run.wid, (x, y, w, h) = located(run.launch, run.wid)
-    rect = (x, y, 160, h // 4)
-    lat = []
+def echo_times(term, run, rect, samples):
+    """For each key typed, the milliseconds until its echo shows in `rect`, and
+    the milliseconds the capture that showed it took."""
+    lat, captures = [], []
     for i in range(samples):
         time.sleep(0.05 + random.random() * 0.1)
         focus(run.launch)
         before = capture(run.wid, rect)
         t0 = time.perf_counter()
         press(KEYS[i % 2])
-        seen, _ = wait_change(term, run.wid, rect, before)
+        seen, took = wait_change(term, run.wid, rect, before)
         lat.append((seen - t0) * 1000)
+        captures.append(took * 1000)
+    return lat, captures
+
+
+def latency(term, samples=65):
+    """Milliseconds from a key event until the echoed character's pixels change,
+    and how long the capture that showed each took."""
+    run = Run(term, f'exec {PYTHON} -c "{ECHO}"')
+    run.start()
+    run.wid, (x, y, w, h) = located(run.launch, run.wid)
+    rect = (x, y, 160, h // 4)
+    lat, captures = echo_times(term, run, rect, samples)
     run.stop()
-    return lat[5:]
+    return lat[5:], captures[5:]
 
 
 STREAM_SOURCE = Path(__file__).resolve().parent.parent / "linux" / "bench.py"
@@ -601,17 +634,9 @@ def streaming(term, samples=25):
     row = len(before) // h
     top = next(r for r in range(h) if before[r * row:(r + 1) * row] != after[r * row:(r + 1) * row])
     rect = (x, y, 160, max(top, 1))
-    lat = []
-    for i in range(samples):
-        time.sleep(0.05 + random.random() * 0.1)
-        focus(run.launch)
-        before = capture(run.wid, rect)
-        t0 = time.perf_counter()
-        press(KEYS[i % 2])
-        seen, _ = wait_change(term, run.wid, rect, before)
-        lat.append((seen - t0) * 1000)
+    lat, captures = echo_times(term, run, rect, samples)
     run.stop()
-    return {"latency": lat}
+    return {"latency": lat, "capture": captures}
 
 
 def startup(term):
@@ -697,6 +722,8 @@ def measure(terms, runs, out, only):
     meta.pop("run_seconds", None)
     meta.pop("finished", None)
     meta.update({"platform": "macos", "scrollback": SCROLLBACK, "window": [W, H],
+                 "display_hz": float(Quartz.CGDisplayModeGetRefreshRate(
+                     Quartz.CGDisplayCopyDisplayMode(Quartz.CGMainDisplayID()))),
                  "os": subprocess.run(["sw_vers", "-productVersion"], capture_output=True,
                                       text=True, check=False).stdout.strip()})
     out.write_text(json.dumps(results, indent=1))
@@ -732,7 +759,9 @@ def measure(terms, runs, out, only):
 
     for term in terms:
         if wanted("latency"):
-            keep(term, "latency", latency(term))
+            lat, captures = latency(term)
+            keep(term, "latency", lat)
+            keep(term, "latency_capture", captures)
         if wanted("streaming"):
             keep(term, "streaming", streaming(term))
         if wanted("startup"):

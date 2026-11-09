@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.12 - Quieter when idle, faster when scrolling
+
+- A cursor stops blinking and stays lit 10 seconds after the last input or output, and blinks again on the next, so an untouched window asks almost nothing of the system.
+- Output that scrolls past a full scrollback parses about 20% faster: the row it recycles keeps its buffers.
+- macOS: a window that has painted nothing for 2 seconds gives back its spare display buffers instead of only marking them reclaimable.
+- macOS: waftty no longer loads CloudKit, CoreData, CoreImage, CoreLocation and similar system frameworks it never uses.
+- Builds on windowing-gos 0.1.13, gui-engine-gos 0.2.9 and gui-gos 0.2.4.
+
 ## 0.5.11 - UI fixes
 
 - Check for Updates no longer flashes an error dialog before showing its answer.
