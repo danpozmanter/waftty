@@ -710,14 +710,18 @@ def measure(terms, runs, out, only):
         each("cpu_idle", idle_cpu)
         for _ in range(runs):
             each("cpu_load", load_cpu)
+    # Saved as each is taken, so a run that stops early keeps what it measured.
+    def keep(term, key, value):
+        results.setdefault(label_of(term), {})[key] = value
+        out.write_text(json.dumps(results, indent=1))
+
     for term in terms:
-        results.setdefault(label_of(term), {})
         if wanted("latency"):
-            results[label_of(term)]["latency"] = latency(term)
+            keep(term, "latency", latency(term))
         if wanted("streaming"):
-            results[label_of(term)]["streaming"] = streaming(term)
+            keep(term, "streaming", streaming(term))
         if wanted("startup"):
-            results[label_of(term)]["startup"] = [startup(term) for _ in range(10)]
+            keep(term, "startup", [startup(term) for _ in range(10)])
     meta = results["_meta"]
     took = round(time.monotonic() - started)
     meta.update({"run_seconds": took, "finished": time.strftime("%Y-%m-%d %H:%M %Z")})
