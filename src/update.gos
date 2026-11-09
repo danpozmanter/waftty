@@ -96,7 +96,9 @@ pub fn update(m: Model, msg: UiMsg) -> Model {
         }
         UiMsg::DialogPreview(id, Outcome::Action(action)) if id == "settings" => settings_action(&mut n, action)
         UiMsg::Dialog(id, outcome) | UiMsg::DialogApplied(id, outcome) => dialog(&mut n, id, outcome)
-        UiMsg::WorkFinished(owner, _, _, outcome) if owner == releases::OWNER => release_checked(&mut n, releases::answer(outcome))
+        UiMsg::WorkFinished(owner, _, _, outcome) if owner == releases::OWNER => {
+            if let Some(release) = releases::answer(outcome) { release_checked(&mut n, release) }
+        }
         UiMsg::Hotkey(id) if id == drop_down::HOTKEY && n.drop_down => drop_down::toggle(&mut n)
         UiMsg::DockResized(window, width, height) if n.drop_down && window == "main" => drop_down::resized(&mut n, width, height)
         UiMsg::Task(id, gui::TaskOutcome::Failed(why)) if id == drop_down::HOTKEY => {
@@ -579,23 +581,45 @@ fn store_settings(m: &mut Model, chosen: settings::Settings) {
     }
 }
 
-/// The About window: what waftty is, its version, its toolchain in the
-/// diagnostics, its license, and where to read more or report a problem.
+/// The About window: what waftty is, its version, its license, what it is
+/// built on, and where to read more.
 pub fn about() -> DialogRequest {
+    let license = "waftty is licensed under the Apache License 2.0. It includes SDL (zlib license), IBM Plex Mono (SIL Open Font License 1.1) and terminal code from WezTerm (MIT license)."
     DialogRequest::About {
         id: "about"
         name: info::NAME
         version: info::VERSION
         description: "A light, tabbed terminal emulator."
-        credits: ""
-        licenses: "waftty is licensed under the Apache License 2.0. It includes SDL (zlib license), IBM Plex Mono (SIL Open Font License 1.1) and terminal code from WezTerm (MIT license)."
-        diagnostics: f"waftty {info::VERSION}\nGossamer {runtime::version()}\ngui-gos {gui::VERSION}\n{os::family()} {os::arch()}"
-        links: #[("Website", "https://danpozmanter.github.io/waftty/"), ("Guide", commands::GUIDE_URL), ("Report a problem", commands::REPORT_URL)]
+        credits: f"{license}\n\n{built_on()}"
+        licenses: ""
+        diagnostics: ""
+        links: #[("Website", "https://danpozmanter.github.io/waftty/"), ("Guide", commands::GUIDE_URL)]
     }
+}
+
+fn built_on() -> String {
+    f"Built on:\nGossamer {runtime::version()}\ngui-gos {gui::VERSION}\nSDL {windowing::sdl_version()}\nOS/Platform: {info::OS}/{os::arch()}"
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn built_on_names_the_toolchain_and_not_waftty() {
+        let lines = super::built_on().split("\n")
+        assert_eq(lines[0], "Built on:")
+        assert(lines[1].starts_with("Gossamer "))
+        assert(lines[2].starts_with("gui-gos "))
+        assert(lines[3].starts_with("SDL 3."))
+        assert(lines[4].starts_with("OS/Platform: "))
+        assert(!super::built_on().contains("waftty"))
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_platform_names_linux_by_its_proper_name() {
+        assert(super::built_on().contains("OS/Platform: Linux/"))
+    }
+
     #[test]
     fn an_editor_template_keeps_quoted_words_whole() {
         assert_eq(super::editor_command("'/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl' {path}:{line}", "/tmp/a b.txt", 3, 0), #["/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl", "/tmp/a b.txt:3"])

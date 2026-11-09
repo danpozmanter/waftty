@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.11 - UI fixes
+
+- Check for Updates no longer flashes an error dialog before showing its answer.
+- The About window no longer has a Report a problem link or a Copy button.
+- The About window shows its license text as plain text, without a box.
+- The About window lists what waftty is built on (Gossamer, gui-gos and SDL versions) and names the platform as, for example, `OS/Platform: Linux/x86_64`.
+
 ## 0.5.10 - macOS benchmark with the Dock on screen
 
 - The macOS benchmark no longer stops with "its window did not come to the front" while the Dock or another application's floating window is on screen.

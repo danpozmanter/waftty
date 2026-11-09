@@ -37,13 +37,15 @@ pub fn check() {
     gui::perform(Effect::StartWork(work))
 }
 
-/// What the worker's `outcome` says about the latest release.
-pub fn answer(outcome: Outcome) -> Release {
+/// What the worker's `outcome` says about the latest release; a progress
+/// report says nothing yet, and the check's answer follows it.
+pub fn answer(outcome: Outcome) -> Option<Release> {
     match outcome {
-        Outcome::Fetched(200, body) => judge(body, info::VERSION)
-        Outcome::Fetched(status, _) => Release::Failed(f"GitHub answered {status}.")
-        Outcome::Failed(why) => Release::Failed(f"GitHub couldn't be reached: {why}")
-        _ => Release::Failed("The check was cancelled.")
+        Outcome::Progress(_, _) => None
+        Outcome::Fetched(200, body) => Some(judge(body, info::VERSION))
+        Outcome::Fetched(status, _) => Some(Release::Failed(f"GitHub answered {status}."))
+        Outcome::Failed(why) => Some(Release::Failed(f"GitHub couldn't be reached: {why}"))
+        _ => Some(Release::Failed("The check was cancelled."))
     }
 }
 
@@ -101,8 +103,13 @@ mod tests {
 
     #[test]
     fn a_status_other_than_ok_or_a_failed_fetch_is_a_failed_check() {
-        assert_eq(super::answer(super::Outcome::Fetched(404, "")), Release::Failed("GitHub answered 404."))
-        assert_eq(super::answer(super::Outcome::Failed("no route")), Release::Failed("GitHub couldn't be reached: no route"))
+        assert_eq(super::answer(super::Outcome::Fetched(404, "")), Some(Release::Failed("GitHub answered 404.")))
+        assert_eq(super::answer(super::Outcome::Failed("no route")), Some(Release::Failed("GitHub couldn't be reached: no route")))
+    }
+
+    #[test]
+    fn a_progress_report_is_not_an_answer() {
+        assert_eq(super::answer(super::Outcome::Progress(1, 1)), None)
     }
 
     #[test]

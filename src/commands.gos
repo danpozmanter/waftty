@@ -73,11 +73,9 @@ pub const ABOUT: String = "help.about"
 /// The points one Zoom In or Zoom Out adds or takes away.
 pub const ZOOM_STEP: f64 = 1.0
 
-/// Where the guide, its shortcut list and the issue tracker live; About
-/// links the tracker.
+/// Where the guide and its shortcut list live.
 pub const GUIDE_URL: String = "https://danpozmanter.github.io/waftty/guide/"
 pub const SHORTCUTS_URL: String = "https://danpozmanter.github.io/waftty/guide/#shortcuts"
-pub const REPORT_URL: String = "https://github.com/danpozmanter/waftty/issues"
 
 const SIGNAL_PREFIX: String = "terminal.signal:"
 const ENCODING_PREFIX: String = "terminal.encoding:"
