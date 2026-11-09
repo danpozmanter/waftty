@@ -34,7 +34,7 @@ uv run mac/bench.py run --terminals waftty,iterm2 --waftty /Applications/waftty.
 uv run report.py mac                                  # charts and RESULTS.md in mac/report
 ```
 
-The same measures through macOS's own interfaces, written to `mac/results.json` and reported in `mac/report/`. The terminal that runs the script needs Accessibility (to size windows and type) and Screen Recording (to read pixels) in System Settings, Privacy & Security; leave the desktop alone while it runs, since keys go to the frontmost window. Terminals are found on the `PATH` or in `/Applications`; Ghostty and iTerm2 start through Launch Services. The inputs and each run's folders stay in `~/Library/Caches/waftty-bench`.
+The same measures through macOS's own interfaces, written to `mac/results.json` and reported in `mac/report/`. The terminal that runs the script needs Accessibility (to size windows and type) and Screen Recording (to read pixels) in System Settings, Privacy & Security; leave the desktop alone while it runs, since keys go to the frontmost window. The run keeps the display awake with `caffeinate`, since a display that sleeps or locks takes the windows off screen. Terminals are found on the `PATH` or in `/Applications`; Ghostty and iTerm2 start through Launch Services. The inputs and each run's folders stay in `~/Library/Caches/waftty-bench`.
 
 What differs from Linux:
 

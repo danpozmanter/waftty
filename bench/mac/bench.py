@@ -266,7 +266,7 @@ def windows(pid):
     return [w for w in info if w["kCGWindowOwnerPID"] == pid and app_layer(w)]
 
 
-def window_of(launch, timeout=30):
+def shown_window(launch, timeout=30):
     """The terminal's largest on-screen window, once it has one; the process
     that owns it, which can be a child of the one started, becomes
     `launch.owner`."""
@@ -278,17 +278,23 @@ def window_of(launch, timeout=30):
         if shown:
             w = max(shown, key=lambda w: w["kCGWindowBounds"]["Width"] * w["kCGWindowBounds"]["Height"])
             launch.owner = w["kCGWindowOwnerPID"]
-            return w["kCGWindowNumber"]
+            return w
         time.sleep(0.02)
     raise SystemExit(f"{launch.term} showed no window")
 
 
-def bounds(pid, wid):
-    for w in windows(pid):
-        if w["kCGWindowNumber"] == wid:
-            b = w["kCGWindowBounds"]
-            return b["X"], b["Y"], b["Width"], b["Height"]
-    raise SystemExit("the terminal's window closed")
+def window_of(launch):
+    return shown_window(launch)["kCGWindowNumber"]
+
+
+def located(launch, wid):
+    """The number and frame of the terminal's window: `wid` while it is on
+    screen, otherwise the one the terminal shows now, since a terminal can
+    change windows as it starts (iTerm2 closes the one it opens at launch)."""
+    w = next((w for w in windows(launch.owner) if w["kCGWindowNumber"] == wid), None)
+    w = w or shown_window(launch)
+    b = w["kCGWindowBounds"]
+    return w["kCGWindowNumber"], (b["X"], b["Y"], b["Width"], b["Height"])
 
 
 def ax_window(pid):
@@ -300,8 +306,9 @@ def ax_window(pid):
 
 
 def place(launch, wid):
-    """Moves the window to the top left of the main display at the run's size;
-    a drop-down terminal keeps the place it docks itself to."""
+    """Moves the window to the top left of the main display at the run's size,
+    a drop-down terminal keeping the place it docks itself to, and answers the
+    number of the window it placed."""
     win = None
     end = time.monotonic() + 10
     while win is None and time.monotonic() < end:
@@ -310,15 +317,18 @@ def place(launch, wid):
     if win is None:
         raise SystemExit(f"{launch.term}: its window is not reachable through Accessibility")
     if not launch.term.endswith(QUICK):
-        AXUIElementSetAttributeValue(win, kAXPositionAttribute,
-                                     AXValueCreate(kAXValueCGPointType, Quartz.CGPoint(40, 60)))
         for _ in range(20):
+            win = ax_window(launch.owner) or win
+            AXUIElementSetAttributeValue(win, kAXPositionAttribute,
+                                         AXValueCreate(kAXValueCGPointType, Quartz.CGPoint(40, 60)))
             AXUIElementSetAttributeValue(win, kAXSizeAttribute,
                                          AXValueCreate(kAXValueCGSizeType, Quartz.CGSize(W, H)))
             time.sleep(0.1)
-            if bounds(launch.owner, wid)[2:] == (W, H):
+            wid, frame = located(launch, wid)
+            if frame[2:] == (W, H):
                 break
     focus(launch)
+    return wid
 
 
 def in_front(owner):
@@ -383,8 +393,7 @@ class Run:
         self.done_fd = os.open(self.done, os.O_RDWR | os.O_NONBLOCK)
         script = script.replace("$DONE", self.done)
         self.launch = Launch(term, f"head -n1 {self.go} >/dev/null; {script}")
-        self.wid = window_of(self.launch)
-        place(self.launch, self.wid)
+        self.wid = place(self.launch, window_of(self.launch))
 
     def start(self):
         os.write(self.go_fd, b"go\n")
@@ -546,7 +555,7 @@ def latency(term, samples=65):
     """Milliseconds from a key event until the echoed character's pixels change."""
     run = Run(term, f'exec {PYTHON} -c "{ECHO}"')
     run.start()
-    x, y, w, h = bounds(run.launch.owner, run.wid)
+    run.wid, (x, y, w, h) = located(run.launch, run.wid)
     rect = (x, y, 160, h // 4)
     lat = []
     for i in range(samples):
@@ -579,7 +588,7 @@ def streaming(term, samples=25):
     run = Run(term, f"exec {PYTHON} {program}")
     run.start()
     time.sleep(1)
-    x, y, w, h = bounds(run.launch.owner, run.wid)
+    run.wid, (x, y, w, h) = located(run.launch, run.wid)
     strip = (x, y, 160, h)
     before = capture(run.wid, strip)
     after = before
@@ -604,8 +613,7 @@ def streaming(term, samples=25):
 def startup(term):
     """Milliseconds from launch until a screenful of output is on screen."""
     launch = Launch(term, "seq 200 | sed 's/.*/READY/'; exec sleep 100000")
-    wid = window_of(launch)
-    x, y, w, h = bounds(launch.owner, wid)
+    wid, (x, y, w, h) = located(launch, window_of(launch))
     rect = (x, y + h // 2 - 30, 200, 60)
     while True:
         data = capture(wid, rect)
@@ -669,6 +677,9 @@ def versions(terms):
 
 def measure(terms, runs, out, only):
     started = time.monotonic()
+    # A display that sleeps or locks during an unattended run takes the
+    # terminals' windows off screen; caffeinate ends with this process.
+    subprocess.Popen(["caffeinate", "-d", "-i", "-w", str(os.getpid())])
 
     def wanted(kind):
         return not only or kind in only
