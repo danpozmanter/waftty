@@ -931,6 +931,15 @@ def measure(terms, runs, out, only):
     # the ones it does not take (--only, --terminals) are kept.
     taken = set()
 
+    # On disk from the start, so the report can read a run that stops early;
+    # only a run that finishes says when it finished.
+    meta = results.setdefault("_meta", {})
+    meta.pop("run_seconds", None)
+    meta.pop("finished", None)
+    meta.update({"platform": "linux", "scrollback": SCROLLBACK, "window": [W, H],
+                 "vsync_off": not monitor_connected()})
+    out.write_text(json.dumps(results, indent=1))
+
     def put(term, key, value):
         samples = results.setdefault(label_of(term), {})
         if (label_of(term), key) not in taken:
@@ -966,10 +975,9 @@ def measure(terms, runs, out, only):
             results[label_of(term)]["streaming"] = streaming(term)
         if wanted("startup"):
             results[label_of(term)]["startup"] = [startup(term) for _ in range(10)]
-    meta = results.get("_meta", {})
+    meta = results["_meta"]
     took = round(time.monotonic() - started)
-    meta.update({"scrollback": SCROLLBACK, "window": [W, H], "vsync_off": not monitor_connected(),
-                 "run_seconds": took, "finished": time.strftime("%Y-%m-%d %H:%M %Z")})
+    meta.update({"run_seconds": took, "finished": time.strftime("%Y-%m-%d %H:%M %Z")})
     meta.setdefault("versions", {}).update({label_of(t): v for t, v in versions(terms).items()})
     results["_meta"] = meta
     out.write_text(json.dumps(results, indent=1))

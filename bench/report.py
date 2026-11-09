@@ -9,6 +9,7 @@ Reads <system>/results.json and writes <system>/report unless --results and
 import argparse
 import json
 import statistics
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -23,6 +24,10 @@ SURFACE, INK, MUTED, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e6e5e1"
 # Validated categorical order (CVD pass); value labels and tables give relief
 # for the third color's contrast warning.
 PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4"]
+# What each system's memory chart compares, and the name its harness records.
+MEMORY = {"linux": "pss", "mac": "footprint"}
+PLATFORM = {"linux": "linux", "mac": "macos"}
+CHARTS = ("ram", "ram-sources", "cpu", "throughput", "latency", "smoothness", "startup")
 plt.rcParams.update({
     "font.family": "DejaVu Sans", "font.size": 10, "text.color": INK,
     "axes.edgecolor": GRID, "axes.labelcolor": MUTED, "xtick.color": MUTED, "ytick.color": INK,
@@ -38,6 +43,8 @@ def pct(xs, q):
 
 def hbars(out, order, name, title, unit, series, fmt, note=None, extra=None, ends=None):
     """Horizontal bars, terminals top to bottom; `series` is (label, values) per color."""
+    if not order:
+        return
     n = len(series)
     h = 0.8 / n
     fig, ax = plt.subplots(figsize=(8, 0.62 * len(order) * max(1, n * 0.75) + 1.3))
@@ -101,13 +108,25 @@ def stacked(out, order, name, title, unit, parts, fmt, note):
 
 
 def panels(out, order, name, title, parts, note):
-    """Side-by-side horizontal bars, one panel per measure, each on its own axis."""
-    fig, axes = plt.subplots(1, len(parts), figsize=(10, 0.62 * len(order) + 1.6), sharey=True)
+    """Side-by-side horizontal bars, one panel per measure, each on its own axis.
+    A value of None is a measure that terminal has not had taken; a panel with
+    nothing but those is left out."""
+    parts = [part for part in parts if any(v is not None for v in part[2])]
+    if not order or not parts:
+        return
+    fig, axes = plt.subplots(1, len(parts), figsize=(10, 0.62 * len(order) + 1.6), sharey=True,
+                             squeeze=False)
+    axes = axes[0]
     for ax, (label, unit, vals, fmt) in zip(axes, parts):
-        top = max(vals) or 1
-        ax.barh(range(len(order)), vals, height=0.6, color=PALETTE[0], zorder=2)
+        top = max(v for v in vals if v is not None) or 1
+        measured = [(k, v) for k, v in enumerate(vals) if v is not None]
+        ax.barh([k for k, _ in measured], [v for _, v in measured], height=0.6, color=PALETTE[0],
+                zorder=2)
         for k, v in enumerate(vals):
-            ax.text(v + top * 0.03, k, fmt(v), va="center", fontsize=9, color=INK)
+            if v is None:
+                ax.text(0, k, " not measured", va="center", fontsize=9, color=MUTED)
+            else:
+                ax.text(v + top * 0.03, k, fmt(v), va="center", fontsize=9, color=INK)
         ax.set_yticks(range(len(order)), order)
         ax.set_xlim(0, top * 1.25)
         ax.set_xlabel(unit)
@@ -128,42 +147,69 @@ def row(cells):
     return "| " + " | ".join(cells) + " |"
 
 
-def main():
+def mib(value, places=1):
+    return "-" if value is None else f"{value:.{places}f} MiB"
+
+
+def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("system", choices=["linux", "mac"])
     ap.add_argument("--results", type=Path)
     ap.add_argument("--out", type=Path)
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
     here = Path(__file__).resolve().parent / a.system
     a.results = a.results or here / "results.json"
     a.out = a.out or here / "report"
-    res = json.loads(a.results.read_text())
+    measure = f"uv run {a.system}/bench.py run"
+    try:
+        res = json.loads(a.results.read_text())
+    except FileNotFoundError:
+        raise SystemExit(f"{a.results} does not exist: take the results with `{measure}`")
+    except json.JSONDecodeError as e:
+        raise SystemExit(f"{a.results} is not valid JSON ({e}): take the results again with `{measure}`")
     meta = res.pop("_meta", {})
+    if meta.get("platform", PLATFORM[a.system]) != PLATFORM[a.system]:
+        raise SystemExit(f"{a.results} holds results from {meta['platform']}, and this is the "
+                         f"{a.system} report: name the system they were taken on")
+    if not res:
+        raise SystemExit(f"{a.results} holds no measurements: take them with `{measure}`")
     # macOS has no proportional set size: memory there is each process's
-    # physical footprint, the figure Activity Monitor shows.
-    macos = meta.get("platform") == "macos"
-    memory_key = "footprint" if macos else "pss"
+    # physical footprint, the figure Activity Monitor shows. The two count
+    # shared pages differently, so a report compares only its system's own.
+    macos = a.system == "mac"
+    memory_key = MEMORY[a.system]
     order = list(res)
     a.out.mkdir(parents=True, exist_ok=True)
+    # A chart this run has no data for must not survive from an earlier one.
+    for chart in CHARTS:
+        (a.out / f"{chart}.png").unlink(missing_ok=True)
 
     # A run with --only or --terminals updates part of a file, and an
     # interrupted run leaves a terminal with the measures it finished, so each
     # chart and table shows the terminals that have its measures.
     def having(*keys):
-        return [t for t in order if all(k in res[t] for k in keys)]
+        return [t for t in order if all(res[t].get(k) for k in keys)]
 
     memory = having("ram_idle", "ram_heavy")
-    cpus = having("cpu_idle", "cpu_load")
     rates = having("tp_plain", "tp_sgr", "tp_unicode")
     streams = having("streaming")
     keys = having("latency", "streaming")
     starts = having("startup")
     summary = having("tp_plain", "tp_sgr", "tp_unicode", "latency", "startup")
 
+    for t in memory:
+        for phase in ("ram_idle", "ram_heavy"):
+            if any(memory_key not in r for r in res[t][phase]):
+                raise SystemExit(
+                    f"{a.results}: a {phase} sample of {t} has no {memory_key}, the figure the "
+                    f"{a.system} report compares. Results from another system belong in that "
+                    f"system's report; otherwise measure again with `{measure} --only ram`")
+
     # Memory is one run's own figure, the low median, so it matches the split
-    # below for any number of runs.
+    # below for any number of runs. Older results may lack the secondary figures.
     def mem(t, phase, key=memory_key):
-        return statistics.median_low(r[key] for r in res[t][f"ram_{phase}"])
+        values = [r[key] for r in res[t][f"ram_{phase}"] if key in r]
+        return statistics.median_low(values) if values else None
 
     def mbps(t, name):
         return MB / (med(res[t][f"tp_{name}"]) / 1000)
@@ -182,7 +228,7 @@ def main():
     # The split is of one run, the one whose PSS is the median, so its parts add
     # up to that run's total; medians taken part by part need not.
     def heavy(t, pick):
-        runs = sorted(res[t]["ram_heavy"], key=lambda r: r["pss"])
+        runs = sorted(res[t]["ram_heavy"], key=lambda r: r[memory_key])
         return pick(runs[(len(runs) - 1) // 2])
 
     sources = [("Private data (heap, scrollback)", lambda r: r["kinds"]["anon"]),
@@ -199,14 +245,27 @@ def main():
                      "and the GPU hold for it.")
 
     def cpu(t, key, field=None):
-        values = [v[field] if field else v for v in res[t].get(key, [])]
-        return med(values) if values else 0.0
+        values = [v[field] if field else v for v in res[t].get(key, []) if not field or field in v]
+        return med(values) if values else None
 
+    # The heavy memory runs print the same 40 MiB and time the same span as the
+    # CPU runs, so their seconds are that measure. Their idle counterpart spans
+    # no idle period, and idle CPU comes only from `cpu_idle`.
+    def print_seconds(t):
+        seconds = cpu(t, "cpu_load", "seconds")
+        return cpu(t, "ram_heavy", "cpu") if seconds is None else seconds
+
+    cpus = [t for t in order if cpu(t, "cpu_idle") is not None or print_seconds(t) is not None]
+    borrowed = [t for t in cpus if cpu(t, "cpu_load", "seconds") is None and print_seconds(t) is not None]
+    idle_missing = [t for t in cpus if cpu(t, "cpu_idle") is None]
+    cpu_note = "User and system time of the terminal's processes; lower is better."
+    if borrowed:
+        cpu_note += " CPU seconds for terminals without a CPU run come from their heavy memory runs."
     panels(a.out, cpus, "cpu", "CPU use",
            [("Idle", "% of one core", [cpu(t, "cpu_idle") for t in cpus], lambda v: f"{v:.1f}"),
-            ("Printing 40 MiB", "seconds of CPU", [cpu(t, "cpu_load", "seconds") for t in cpus],
+            ("Printing 40 MiB", "seconds of CPU", [print_seconds(t) for t in cpus],
              lambda v: f"{v:.2f}")],
-           note="User and system time of the terminal's processes; lower is better.")
+           note=cpu_note)
     hbars(a.out, rates, "throughput", "Output throughput", "MB/s (higher is better)",
           [(label, [mbps(t, key) for t in rates])
            for label, key in (("Plain ASCII", "plain"), ("256-color SGR", "sgr"),
@@ -241,28 +300,34 @@ def main():
 
     lines = ["# Terminal benchmark", ""]
     versions = meta.get("versions", {})
-    setup = (f"macOS {meta.get('os', '')}, scrollback {meta.get('scrollback')} lines, "
-             f"window {meta.get('window')}." if macos else
-             f"Scrollback {meta.get('scrollback')} lines, window {meta.get('window')}, "
-             f"vsync off: {meta.get('vsync_off')}.")
+    if "scrollback" not in meta:
+        setup = "The results file records no details of its run."
+    elif macos:
+        setup = (f"macOS {meta.get('os', '')}, scrollback {meta['scrollback']} lines, "
+                 f"window {meta.get('window')}.")
+    else:
+        setup = (f"Scrollback {meta['scrollback']} lines, window {meta.get('window')}, "
+                 f"vsync off: {meta.get('vsync_off')}.")
     # Older results do not record how long their run took.
     if "run_seconds" in meta:
         setup += f" The run took {duration(meta['run_seconds'])}, finishing {meta['finished']}."
     lines += [setup, ""]
-    lines += [row(["Terminal", "Version"]), row(["---", "---"])]
-    lines += [row([t, versions.get(t, "")]) for t in order] + [""]
-    lines += ["## Memory", "", "![Memory](ram.png)", ""]
-    if macos:
+    if versions:
+        lines += [row(["Terminal", "Version"]), row(["---", "---"])]
+        lines += [row([t, versions.get(t, "")]) for t in order] + [""]
+    if memory:
+        lines += ["## Memory", "", "![Memory](ram.png)", ""]
+    if memory and macos:
         lines += [("Physical footprint is the memory a process dirtied, compressed memory "
                    "included, the figure Activity Monitor shows as Memory; RSS also counts the "
                    "shared library pages it touches. Terminal processes only, shell excluded."),
                   ""]
         lines += [row(["Terminal", "Idle footprint", "Idle RSS", "Heavy footprint", "Heavy RSS"]),
                   row(["---"] + ["---:"] * 4)]
-        lines += [row([t, f"{mem(t, 'idle'):.1f} MiB", f"{mem(t, 'idle', 'rss'):.1f} MiB",
-                       f"{mem(t, 'heavy'):.1f} MiB", f"{mem(t, 'heavy', 'rss'):.1f} MiB"])
+        lines += [row([t, mib(mem(t, "idle")), mib(mem(t, "idle", "rss")),
+                       mib(mem(t, "heavy")), mib(mem(t, "heavy", "rss"))])
                   for t in memory]
-    else:
+    elif memory:
         lines += [("PSS shares each library page among the processes that map it; USS is the "
                    "terminal's own. X server pixmaps and GPU memory are held elsewhere on the "
                    "terminal's behalf."), ""]
@@ -271,10 +336,10 @@ def main():
                   row(["---"] + ["---:"] * 6)]
     for t in [] if macos else memory:
         held = [r["xserver"] for r in res[t]["ram_idle"] if "xserver" in r]
-        lines.append(row([t, f"{mem(t, 'idle'):.1f} MiB", f"{mem(t, 'idle', 'uss'):.1f} MiB",
-                          f"{mem(t, 'heavy'):.1f} MiB", f"{mem(t, 'heavy', 'uss'):.1f} MiB",
-                          f"{med(held):.1f} MiB" if held else "-",
-                          f"{mem(t, 'idle', 'vram'):.0f} MiB"]))
+        lines.append(row([t, mib(mem(t, "idle")), mib(mem(t, "idle", "uss")),
+                          mib(mem(t, "heavy")), mib(mem(t, "heavy", "uss")),
+                          mib(med(held)) if held else "-",
+                          mib(mem(t, "idle", "vram"), 0)]))
     if split:
         lines += ["", "### Where the memory comes from", "", "![Memory under load by source](ram-sources.png)", ""]
         lines += [("Each figure is the PSS of the terminal's own processes after 40 MiB of output. "
@@ -300,7 +365,8 @@ def main():
         for t in split:
             parts = [heavy(t, pick) for _, pick in sources]
             lines.append(row([t] + [f"{v:.1f} MiB" for v in parts] + [f"{sum(parts):.1f} MiB"]))
-    lines += ["", "## Throughput", "", "![Throughput](throughput.png)", ""]
+    if rates:
+        lines += ["", "## Throughput", "", "![Throughput](throughput.png)", ""]
     if streams:
         lines += ["## Smoothness under load", "", "![Smoothness](smoothness.png)", ""]
         lines += [row(["Terminal", "Frames/s", "Median gap", "p99 gap", "Longest gap",
@@ -314,18 +380,31 @@ def main():
         lines.append(row([t, f"{fps(t):.0f}", f"{med(gaps):.0f} ms", f"{pct(gaps, 0.99):.0f} ms",
                           f"{max(gaps):.0f} ms", f"{med(echo):.1f} ms",
                           f"{pct(echo, 0.95):.1f} ms"]))
-    lines += ["", "## CPU", "", "![CPU](cpu.png)", ""]
-    lines += [row(["Terminal", "Idle", "While 40 MiB print", "CPU time for 40 MiB"]),
-              row(["---"] + ["---:"] * 3)]
-    for t in cpus:
-        lines.append(row([t, f"{cpu(t, 'cpu_idle'):.2f}%",
-                          f"{cpu(t, 'cpu_load', 'percent'):.0f}%",
-                          f"{cpu(t, 'cpu_load', 'seconds'):.2f} s"]))
-    lines += ["", "## Latency and startup", "", "![Latency](latency.png)", "",
-              "![Startup](startup.png)", ""]
-    lines += [row(["Terminal", "Plain", "SGR", "Unicode", "Latency median", "Latency p95",
-                   "Startup"]),
-              row(["---"] + ["---:"] * 6)]
+    def shown(value, spec, suffix):
+        return "-" if value is None else f"{value:{spec}}{suffix}"
+
+    if cpus:
+        lines += ["", "## CPU", "", "![CPU](cpu.png)", ""]
+        lines += [row(["Terminal", "Idle", "While 40 MiB print", "CPU time for 40 MiB"]),
+                  row(["---"] + ["---:"] * 3)]
+        for t in cpus:
+            lines.append(row([t, shown(cpu(t, "cpu_idle"), ".2f", "%"),
+                              shown(cpu(t, "cpu_load", "percent"), ".0f", "%"),
+                              shown(print_seconds(t), ".2f", " s")]))
+        if borrowed:
+            lines += ["", ("Terminals without a CPU run take their CPU time from their heavy "
+                           "memory runs, which print the same 40 MiB; a dash is a measure not "
+                           "taken.")]
+    if keys or starts or summary:
+        lines += ["", "## Latency and startup", ""]
+    if keys:
+        lines += ["![Latency](latency.png)", ""]
+    if starts:
+        lines += ["![Startup](startup.png)", ""]
+    if summary:
+        lines += [row(["Terminal", "Plain", "SGR", "Unicode", "Latency median", "Latency p95",
+                       "Startup"]),
+                  row(["---"] + ["---:"] * 6)]
     for t in summary:
         lat = res[t]["latency"]
         lines.append(row([t] + [f"{mbps(t, k):.0f} MB/s" for k in ("plain", "sgr", "unicode")]
@@ -333,6 +412,17 @@ def main():
                             f"{med(res[t]['startup']):.0f} ms"]))
     (a.out / "RESULTS.md").write_text("\n".join(lines) + "\n")
     print(a.out / "RESULTS.md")
+
+    def absent(measures, only, terminals):
+        if terminals:
+            print(f"not in the report: {measures} for {', '.join(terminals)}; "
+                  f"take it with `{measure} --only {only}`", file=sys.stderr)
+
+    absent("memory", "ram", [t for t in order if t not in memory])
+    absent("idle CPU", "cpu", idle_missing + [t for t in order if t not in cpus])
+    absent("throughput", "throughput", [t for t in order if t not in rates])
+    absent("latency", "latency,streaming", [t for t in order if t not in keys])
+    absent("startup", "startup", [t for t in order if t not in starts])
 
 
 if __name__ == "__main__":
