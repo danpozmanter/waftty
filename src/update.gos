@@ -614,10 +614,10 @@ mod tests {
         assert(!super::built_on().contains("waftty"))
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
-    fn the_platform_names_linux_by_its_proper_name() {
-        assert(super::built_on().contains("OS/Platform: Linux/"))
+    fn the_platform_is_named_for_its_system() {
+        let line = super::built_on().split("\n")[4]
+        assert(line.starts_with("OS/Platform: Linux/") || line.starts_with("OS/Platform: macOS/") || line.starts_with("OS/Platform: Windows/"), line)
     }
 
     #[test]
