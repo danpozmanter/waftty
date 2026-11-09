@@ -321,6 +321,20 @@ def place(launch, wid):
     focus(launch)
 
 
+def in_front(owner):
+    """Whether `owner`'s window is the foremost of its level. The Dock and other
+    applications' floating windows sit at higher levels and stay above it however
+    it is raised."""
+    listed = Quartz.CGWindowListCopyWindowInfo(
+        Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements,
+        Quartz.kCGNullWindowID)
+    own = next((w for w in listed if w["kCGWindowOwnerPID"] == owner and app_layer(w)), None)
+    if own is None:
+        return False
+    top = next(w for w in listed if w["kCGWindowLayer"] == own["kCGWindowLayer"])
+    return top["kCGWindowOwnerPID"] == owner
+
+
 def focus(launch):
     app = NSRunningApplication.runningApplicationWithProcessIdentifier_(launch.owner)
     if app is not None:
@@ -330,11 +344,7 @@ def focus(launch):
         AXUIElementPerformAction(win, kAXRaiseAction)
     end = time.monotonic() + 5
     while time.monotonic() < end:
-        front = Quartz.CGWindowListCopyWindowInfo(
-            Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements,
-            Quartz.kCGNullWindowID)
-        top = next((w for w in front if app_layer(w)), None)
-        if top is not None and top["kCGWindowOwnerPID"] == launch.owner:
+        if in_front(launch.owner):
             return
         time.sleep(0.02)
     raise SystemExit(f"{launch.term}: its window did not come to the front")

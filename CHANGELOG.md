@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.10 - macOS benchmark with the Dock on screen
+
+- The macOS benchmark no longer stops with "its window did not come to the front" while the Dock or another application's floating window is on screen.
+
 ## 0.5.9 - Smaller binary, no lost wakes
 
 - The Linux binary is 2.4 MB smaller (42.8 to 40.4 MB), 2.4 MB of it code: Gossamer 0.78 links waftty's Rust libraries and the Gossamer runtime as one unit, with one standard library and one copy of each crate they share, and waftty leaves out the engine's rich text import, SVG, JPEG and GIF decoders, which a terminal does not use.

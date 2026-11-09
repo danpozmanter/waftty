@@ -95,9 +95,13 @@ jobs:
             libxss-dev libxfixes-dev libxtst-dev libxkbcommon-dev libwayland-dev \
             wayland-protocols libegl-dev libgl-dev libdecor-0-dev
           curl -fsSL "https://raw.githubusercontent.com/${GOSSAMER_REPO}/main/scripts/install.sh" | sh
-          curl -fsSL -o "$HOME/.local/bin/appimagetool" \
+          curl -fsSL --retry 20 --retry-delay 30 -o "$HOME/.local/bin/appimagetool" \
             "https://github.com/AppImage/appimagetool/releases/download/${APPIMAGETOOL_VERSION}/appimagetool-x86_64.AppImage"
           chmod +x "$HOME/.local/bin/appimagetool"
+          # appimagetool's own download of the runtime cannot retry.
+          curl -fsSL --retry 20 --retry-delay 30 -o "$HOME/.local/bin/appimage-runtime" \
+            "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64"
+          echo "APPIMAGE_RUNTIME=$HOME/.local/bin/appimage-runtime" >> "$GITHUB_ENV"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       # macOS packages run on macOS 12 and later, as lite-anvil's do. Every
       # compiler and linker in the build reads the oldest macOS from here.

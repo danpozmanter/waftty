@@ -2,4 +2,4 @@
 
 pub const NAME: String = "waftty"
 pub const APP_ID: String = "dev.gossamer.waftty"
-pub const VERSION: String = "0.5.9"
+pub const VERSION: String = "0.5.10"

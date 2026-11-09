@@ -217,7 +217,8 @@ here="\$(dirname "\$(readlink -f "\$0")")"
 exec env -u APPDIR -u APPIMAGE -u ARGV0 -u OWD "\$here/usr/bin/$exe" "\$@"
 EOF
     chmod 755 "$dir/AppRun"
-    ARCH="$arch" APPIMAGE_EXTRACT_AND_RUN=1 appimagetool --no-appstream "$dir" "$file" >&2
+    ARCH="$arch" APPIMAGE_EXTRACT_AND_RUN=1 appimagetool --no-appstream \
+        ${APPIMAGE_RUNTIME:+--runtime-file "$APPIMAGE_RUNTIME"} "$dir" "$file" >&2
     publish "$file"
 }
 
