@@ -159,6 +159,10 @@ def running(bundle):
             NSRunningApplication.runningApplicationsWithBundleIdentifier_(bundle)}
 
 
+# The launches not yet ended, which the run ends however it stops.
+LIVE = set()
+
+
 class Launch:
     """A terminal started for one measurement, and the processes it owns."""
 
@@ -195,6 +199,7 @@ class Launch:
                                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                           stderr=subprocess.DEVNULL, start_new_session=True)
             self.pid = self.popen.pid
+        LIVE.add(self)
 
     @staticmethod
     def _new_pid(bundle, before, timeout=20):
@@ -230,6 +235,7 @@ class Launch:
         return found
 
     def end(self):
+        LIVE.discard(self)
         for p in reversed(self.processes()):
             try:
                 p.terminate()
@@ -244,11 +250,20 @@ class Launch:
         shutil.rmtree(self.home, ignore_errors=True)
 
 
+# Application windows sit below the menu bar's level: normal ones at 0, and
+# floating ones, such as a drop-down terminal kept above the others, higher.
+MENU_LAYER = Quartz.CGWindowLevelForKey(Quartz.kCGMainMenuWindowLevelKey)
+
+
+def app_layer(w):
+    return 0 <= w["kCGWindowLayer"] < MENU_LAYER
+
+
 def windows(pid):
     info = Quartz.CGWindowListCopyWindowInfo(
         Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements,
         Quartz.kCGNullWindowID)
-    return [w for w in info if w["kCGWindowOwnerPID"] == pid and w["kCGWindowLayer"] == 0]
+    return [w for w in info if w["kCGWindowOwnerPID"] == pid and app_layer(w)]
 
 
 def window_of(launch, timeout=30):
@@ -318,7 +333,7 @@ def focus(launch):
         front = Quartz.CGWindowListCopyWindowInfo(
             Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements,
             Quartz.kCGNullWindowID)
-        top = next((w for w in front if w["kCGWindowLayer"] == 0), None)
+        top = next((w for w in front if app_layer(w)), None)
         if top is not None and top["kCGWindowOwnerPID"] == launch.owner:
             return
         time.sleep(0.02)
@@ -736,6 +751,9 @@ def main():
     try:
         measure(terms, a.runs, a.out, {k for k in a.only.split(",") if k})
     finally:
+        # A run that stops early leaves no terminal behind waiting on its pipe.
+        for launch in list(LIVE):
+            launch.end()
         if profile is not None:
             profile.unlink(missing_ok=True)
 

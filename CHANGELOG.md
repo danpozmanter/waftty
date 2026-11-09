@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.9 - Smaller binary, no lost wakes
+
+- The Linux binary is 2.4 MB smaller (42.8 to 40.4 MB), 2.4 MB of it code: Gossamer 0.78 links waftty's Rust libraries and the Gossamer runtime as one unit, with one standard library and one copy of each crate they share, and waftty leaves out the engine's rich text import, SVG, JPEG and GIF decoders, which a terminal does not use.
+- A large paste no longer stalls part way: the program taking the paste could wake waftty at the moment it handled the program's output, and that wake was lost.
+- Output that arrives while the window is idle shows at once: SDL could lose the wake waftty's terminal threads send, and the screen then waited for the next key, click or timer.
+- The About window names waftty's toolchain once, in its diagnostics.
+- Builds on Gossamer 0.78.1, windowing-gos 0.1.12, gui-engine-gos 0.2.8 and gui-gos 0.2.3.
+
 ## 0.5.8 - Less CPU for streaming output
 
 - Output that scrolls costs less CPU: rows already drawn turn with the text instead of being drawn again, and only the rows that came in are drawn.

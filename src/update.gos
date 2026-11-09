@@ -579,15 +579,15 @@ fn store_settings(m: &mut Model, chosen: settings::Settings) {
     }
 }
 
-/// The About window: what waftty is, its version and toolchain, its
-/// license, and where to read more or report a problem.
+/// The About window: what waftty is, its version, its toolchain in the
+/// diagnostics, its license, and where to read more or report a problem.
 pub fn about() -> DialogRequest {
     DialogRequest::About {
         id: "about"
         name: info::NAME
         version: info::VERSION
         description: "A light, tabbed terminal emulator."
-        credits: f"By Dan Pozmanter. Built with Gossamer {runtime::version()}, gui-gos {gui::VERSION} and wezterm-lite."
+        credits: ""
         licenses: "waftty is licensed under the Apache License 2.0. It includes SDL (zlib license), IBM Plex Mono (SIL Open Font License 1.1) and terminal code from WezTerm (MIT license)."
         diagnostics: f"waftty {info::VERSION}\nGossamer {runtime::version()}\ngui-gos {gui::VERSION}\n{os::family()} {os::arch()}"
         links: #[("Website", "https://danpozmanter.github.io/waftty/"), ("Guide", commands::GUIDE_URL), ("Report a problem", commands::REPORT_URL)]
