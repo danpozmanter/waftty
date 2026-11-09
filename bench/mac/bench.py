@@ -294,7 +294,8 @@ def located(launch, wid):
     w = next((w for w in windows(launch.owner) if w["kCGWindowNumber"] == wid), None)
     w = w or shown_window(launch)
     b = w["kCGWindowBounds"]
-    return w["kCGWindowNumber"], (b["X"], b["Y"], b["Width"], b["Height"])
+    # Quartz gives these as floats, and the callers count rows and slice with them.
+    return w["kCGWindowNumber"], (round(b["X"]), round(b["Y"]), round(b["Width"]), round(b["Height"]))
 
 
 def ax_window(pid):
@@ -539,7 +540,7 @@ ECHO = ("import os,tty; tty.setraw(0); os.write(1, b'\\x1b[?25l\\x1b[2J\\x1b[H')
         "[os.write(1, b'\\r' + c) for c in iter(lambda: os.read(0, 1), b'q')]")
 
 
-def wait_change(wid, rect, before, timeout=5):
+def wait_change(term, wid, rect, before, timeout=5):
     """Seconds until `rect` of window `wid` differs from `before`, and how long
     one capture took, which bounds the reading's precision."""
     t0 = time.perf_counter()
@@ -548,7 +549,7 @@ def wait_change(wid, rect, before, timeout=5):
         now = capture(wid, rect)
         if now != before:
             return c0, time.perf_counter() - c0
-    raise SystemExit("the echoed key never showed")
+    raise SystemExit(f"{term}: the echoed key never showed")
 
 
 def latency(term, samples=65):
@@ -564,7 +565,7 @@ def latency(term, samples=65):
         before = capture(run.wid, rect)
         t0 = time.perf_counter()
         press(KEYS[i % 2])
-        seen, _ = wait_change(run.wid, rect, before)
+        seen, _ = wait_change(term, run.wid, rect, before)
         lat.append((seen - t0) * 1000)
     run.stop()
     return lat[5:]
@@ -592,7 +593,10 @@ def streaming(term, samples=25):
     strip = (x, y, 160, h)
     before = capture(run.wid, strip)
     after = before
+    end = time.monotonic() + 10
     while after == before:
+        if time.monotonic() > end:
+            raise SystemExit(f"{term}: the streamed output never showed")
         after = capture(run.wid, strip)
     row = len(before) // h
     top = next(r for r in range(h) if before[r * row:(r + 1) * row] != after[r * row:(r + 1) * row])
@@ -604,7 +608,7 @@ def streaming(term, samples=25):
         before = capture(run.wid, rect)
         t0 = time.perf_counter()
         press(KEYS[i % 2])
-        seen, _ = wait_change(run.wid, rect, before)
+        seen, _ = wait_change(term, run.wid, rect, before)
         lat.append((seen - t0) * 1000)
     run.stop()
     return {"latency": lat}
@@ -613,10 +617,10 @@ def streaming(term, samples=25):
 def startup(term):
     """Milliseconds from launch until a screenful of output is on screen."""
     launch = Launch(term, "seq 200 | sed 's/.*/READY/'; exec sleep 100000")
-    wid, (x, y, w, h) = located(launch, window_of(launch))
-    rect = (x, y + h // 2 - 30, 200, 60)
+    wid = window_of(launch)
     while True:
-        data = capture(wid, rect)
+        wid, (x, y, _, h) = located(launch, wid)
+        data = capture(wid, (x, y + h // 2 - 30, 200, 60))
         if len({data[i:i + 4] for i in range(0, len(data), 4)}) > 2:
             break
         if time.perf_counter() - launch.started > 30:
