@@ -30,6 +30,11 @@ jobs:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
+    env:
+      # On macOS cargo's built-in git speaks TLS through SecureTransport, whose
+      # connections to skia.googlesource.com (a submodule of sdl3-sys's
+      # SDL_image) drop; the git client fetches over its own TLS stack.
+      CARGO_NET_GIT_FETCH_WITH_CLI: ${{ startsWith(matrix.os, 'macos') }}
     strategy:
       fail-fast: false
       matrix:
