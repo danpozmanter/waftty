@@ -109,10 +109,14 @@ def config_home(term):
         private_bus(home, services=True)
     elif base == "rio":
         # Rio asks before closing a window with a program running, which would
-        # hold every run's end.
+        # hold every run's end. Rio's colorspace names the space its colors are
+        # given in and always outputs Display P3, so its default ("srgb")
+        # moves a dark channel by up to 60 on an sRGB window; "display-p3"
+        # draws each color as given, as the other terminals do.
         os.makedirs(f"{home}/rio")
         with open(f"{home}/rio/config.toml", "w") as f:
-            f.write(f"scrollback-history-limit = {SCROLLBACK}\nconfirm-before-quit = false\n")
+            f.write(f"scrollback-history-limit = {SCROLLBACK}\nconfirm-before-quit = false\n"
+                    '[window]\ncolorspace = "display-p3"\n')
     elif term == "guake":
         # Guake reads GSettings, here from a key file in the run's folder; its
         # show-hide key is left unbound, so it takes no global shortcut.
@@ -431,6 +435,7 @@ def end(p):
         p.bus.terminate()
         p.bus.wait()
         p.bus.stdout.close()
+    shutil.rmtree(p.home)
 
 
 class Run:
@@ -438,8 +443,8 @@ class Run:
     the script, and `signal` waits for a line the script writes to its pipe."""
 
     def __init__(self, term, script):
-        tmp = tempfile.mkdtemp(dir=OUT / "run")
-        self.go, self.done = f"{tmp}/go", f"{tmp}/done"
+        self.tmp = tempfile.mkdtemp(dir=OUT / "run")
+        self.go, self.done = f"{self.tmp}/go", f"{self.tmp}/done"
         os.mkfifo(self.go)
         os.mkfifo(self.done)
         # Held open for reading and writing, neither end blocks the other.
@@ -464,6 +469,7 @@ class Run:
         end(self.p)
         os.close(self.go_fd)
         os.close(self.done_fd)
+        shutil.rmtree(self.tmp)
 
 
 def memory(pid):
@@ -821,8 +827,10 @@ def streaming(term, seconds=4, samples=25):
     return {"gaps": gaps, "latency": lat}
 
 
-# How far a terminal's color pipeline may move a channel (rio draws
-# 100,150,200 as 111,149,196), and how far apart two launches' colors are.
+# How far a terminal's color pipeline may move a channel (each one here draws
+# the color exactly once rio is set to "display-p3"), and how far apart two
+# launches' colors are, more than twice that slack so they never pass for each
+# other.
 COLOR_SLACK = 24
 COLOR_APART = 60
 

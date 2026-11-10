@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.13 - Faster output on macOS, lighter repaints
+
+- macOS: output no longer wakes a second thread for each kilobyte the pseudo-terminal hands over; a small read is parsed on the thread that read it, and the terminal's reading and parsing threads run at the priority of interactive work.
+- Colored output prints about 12% faster on Linux.
+- Every repaint, a cursor blink included, takes less time: the engine no longer asks the system how many processors it has on each frame, which on Linux reads files, and no longer copies the window's command list.
+- macOS: waftty's windows are not restorable, so macOS no longer rewrites their saved state as they move and change.
+- Builds on windowing-gos 0.1.14 and gui-engine-gos 0.2.10.
+
 ## 0.5.12 - Quieter when idle, faster when scrolling
 
 - A cursor stops blinking and stays lit 10 seconds after the last input or output, and blinks again on the next, so an untouched window asks almost nothing of the system.

@@ -395,8 +395,8 @@ class Run:
     script go, and `signal` waits for the line it writes to its pipe."""
 
     def __init__(self, term, script):
-        tmp = tempfile.mkdtemp(dir=OUT / "run")
-        self.go, self.done = f"{tmp}/go", f"{tmp}/done"
+        self.tmp = tempfile.mkdtemp(dir=OUT / "run")
+        self.go, self.done = f"{self.tmp}/go", f"{self.tmp}/done"
         os.mkfifo(self.go)
         os.mkfifo(self.done)
         self.go_fd = os.open(self.go, os.O_RDWR)
@@ -422,6 +422,7 @@ class Run:
         self.launch.end()
         os.close(self.go_fd)
         os.close(self.done_fd)
+        shutil.rmtree(self.tmp)
 
 
 class RusageInfoV2(ctypes.Structure):
