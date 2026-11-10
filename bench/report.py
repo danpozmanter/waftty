@@ -41,6 +41,12 @@ def pct(xs, q):
     return xs[min(len(xs) - 1, round(q * (len(xs) - 1)))]
 
 
+def number(value, spec):
+    """`value` formatted by `spec`, with no sign when it rounds to zero."""
+    text = f"{value:{spec}}"
+    return text[1:] if text.startswith("-") and float(text) == 0 else text
+
+
 def hbars(out, order, name, title, unit, series, fmt, note=None, extra=None, ends=None):
     """Horizontal bars, terminals top to bottom; `series` is (label, values) per color."""
     if not order:
@@ -262,7 +268,7 @@ def main(argv=None):
     if borrowed:
         cpu_note += " CPU seconds for terminals without a CPU run come from their heavy memory runs."
     panels(a.out, cpus, "cpu", "CPU use",
-           [("Idle", "% of one core", [cpu(t, "cpu_idle") for t in cpus], lambda v: f"{v:.1f}"),
+           [("Idle", "% of one core", [cpu(t, "cpu_idle") for t in cpus], lambda v: number(v, ".1f")),
             ("Printing 40 MiB", "seconds of CPU", [print_seconds(t) for t in cpus],
              lambda v: f"{v:.2f}")],
            note=cpu_note)
@@ -383,7 +389,7 @@ def main(argv=None):
                           f"{max(gaps):.0f} ms", f"{med(echo):.1f} ms",
                           f"{pct(echo, 0.95):.1f} ms"]))
     def shown(value, spec, suffix):
-        return "-" if value is None else f"{value:{spec}}{suffix}"
+        return "-" if value is None else f"{number(value, spec)}{suffix}"
 
     if cpus:
         lines += ["", "## CPU", "", "![CPU](cpu.png)", ""]

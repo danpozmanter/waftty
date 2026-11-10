@@ -527,14 +527,18 @@ def memory_sources(pid):
 
 
 def cpu_seconds(pid):
-    """The CPU seconds so far of each of the terminal's processes, by pid."""
-    tick = os.sysconf("SC_CLK_TCK")
+    """The CPU seconds so far of each of the terminal's processes, by pid, read
+    from each process's CPU clock: nanoseconds, threads that exited included,
+    where /proc/PID/stat counts whole clock ticks and per-thread schedstat
+    loses the time of each thread that ends."""
     seen = {}
     for p in terminal_pids(pid):
+        # The kernel's clock id for a process's total scheduled time
+        # (CPUCLOCK_SCHED of process `p`).
+        clock = ((~p) << 3) | 2
         try:
-            fields = Path(f"/proc/{p}/stat").read_text().rsplit(")", 1)[1].split()
-            seen[p] = (int(fields[11]) + int(fields[12])) / tick
-        except (FileNotFoundError, ProcessLookupError):
+            seen[p] = time.clock_gettime_ns(clock) / 1e9
+        except OSError:
             pass
     return seen
 
@@ -544,20 +548,6 @@ def cpu_used(before, after):
     exited between them is left out, since its total can no longer be read; one
     that started between them counts from zero."""
     return sum(seconds - before.get(pid, 0.0) for pid, seconds in after.items())
-
-
-def run_seconds(pid):
-    """CPU time of the terminal's live threads at nanosecond resolution; /proc/PID/stat
-    counts whole clock ticks, which round an idle window to 0 or 10 ms. Threads that
-    exit drop out of the sum, so this suits only spans where none do."""
-    total = 0
-    for p in terminal_pids(pid):
-        for task in Path(f"/proc/{p}/task").glob("*"):
-            try:
-                total += int((task / "schedstat").read_text().split()[0])
-            except (FileNotFoundError, ProcessLookupError):
-                pass
-    return total / 1e9
 
 
 def gpu_mib(pid):
@@ -626,9 +616,9 @@ def idle_cpu(term, seconds=10):
     run.start()
     run.signal()
     time.sleep(IDLE_SETTLE)
-    before = run_seconds(run.p.pid)
+    before = cpu_seconds(run.p.pid)
     time.sleep(seconds)
-    used = run_seconds(run.p.pid) - before
+    used = cpu_used(before, cpu_seconds(run.p.pid))
     run.stop()
     return 100 * used / seconds
 

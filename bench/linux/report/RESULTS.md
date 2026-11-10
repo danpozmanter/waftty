@@ -90,8 +90,8 @@ Each figure is the PSS of the terminal's own processes after 40 MiB of output. L
 | --- | ---: | ---: | ---: |
 | waftty | 0.00% | 128% | 0.33 s |
 | waftty quick | 0.01% | 133% | 0.31 s |
-| xfce4-terminal | -0.00% | 86% | 0.30 s |
-| guake | -0.00% | 81% | 0.30 s |
+| xfce4-terminal | 0.00% | 86% | 0.30 s |
+| guake | 0.00% | 81% | 0.30 s |
 | alacritty | 0.00% | 103% | 0.31 s |
 | kitty | 0.03% | 98% | 0.55 s |
 | ghostty | 0.36% | 186% | 0.59 s |
