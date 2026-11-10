@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.14 - Lighter scrolling, faster colors
+
+- Output that scrolls takes less CPU to show: a frame copies only what it does not repaint, macOS no longer copies the screen in from the last two frames first, and scrolled rows reach the window without swapping their colors' bytes.
+- Colored output and mixed scripts print faster.
+- macOS: output that keeps coming is read with one read per wake and parsed on its own thread, instead of switching threads for each kilobyte.
+- macOS: a window gives back its spare display buffers soon after it stops painting, and a blinking cursor no longer keeps them.
+- While output floods, the window repaints no more often than its paints leave time for, and rendering leaves a core to the parser.
+- Memory used to draw output goes back sooner after the output stops.
+- Starting takes much less memory, most of all on macOS: the list of every installed font no longer passes through waftty's own code at launch.
+- macOS: `vmmap` and `footprint` list waftty's heap as its own memory instead of as graphics memory.
+- Builds on Gossamer 0.78.3, windowing-gos 0.1.15, gui-engine-gos 0.2.11 and wezterm-lite 0.1.9.
+
 ## 0.5.13 - Faster output on macOS, lighter repaints
 
 - macOS: output no longer wakes a second thread for each kilobyte the pseudo-terminal hands over; a small read is parsed on the thread that read it, and the terminal's reading and parsing threads run at the priority of interactive work.

@@ -63,18 +63,29 @@ class Report(unittest.TestCase):
         self.assertEqual(self.charts(), {"ram", "cpu", "throughput"})
         self.assertIn("Idle footprint", text)
         self.assertIn("| waftty | 36.4 MiB | 72.8 MiB | 53.1 MiB | 106.2 MiB |", text)
-        self.assertIn("| waftty | - | - | 1.70 s |", text)
+        self.assertIn("| waftty | - | - | - | 1.70 s |", text)
         self.assertNotIn("PSS", text)
         self.assertNotIn("None", text)
         self.assertIn("idle CPU for waftty, kitty", err)
         self.assertIn("uv run mac/bench.py run --only cpu", err)
+
+    def test_memory_after_the_cursor_rests_and_cpu_for_a_line_stream_are_reported(self):
+        terminal = mac_terminal()
+        for phase, rested in (("ram_idle", 30.0), ("ram_heavy", 41.5)):
+            terminal[phase][0]["rested"] = {"footprint": rested, "rss": rested * 2}
+        terminal.update(cpu_idle=[0.5], cpu_lines=[9.25, 9.75],
+                        cpu_load=[{"percent": 90.0, "seconds": 2.25}])
+        text, _ = self.run_report("mac", {"waftty": terminal})
+        self.assertIn("| waftty | 36.4 MiB | 72.8 MiB | 53.1 MiB | 106.2 MiB | 30.0 MiB | 41.5 MiB |",
+                      text)
+        self.assertIn("| waftty | 0.50% | 9.5% | 90% | 2.25 s |", text)
 
     def test_a_finished_mac_run_reads_its_cpu_runs(self):
         terminal = mac_terminal()
         terminal.update(cpu_idle=[0.5], cpu_load=[{"percent": 90.0, "seconds": 2.25}])
         text, _ = self.run_report("mac", {"_meta": {"platform": "macos", "scrollback": 10000, "os": "15.1"},
                                           "waftty": terminal})
-        self.assertIn("| waftty | 0.50% | 90% | 2.25 s |", text)
+        self.assertIn("| waftty | 0.50% | - | 90% | 2.25 s |", text)
         self.assertIn("macOS 15.1, scrollback 10000", text)
         self.assertNotIn("heavy memory runs", text)
 
@@ -93,7 +104,7 @@ class Report(unittest.TestCase):
         self.assertEqual(self.charts(), {"ram", "cpu", "throughput", "latency", "smoothness", "startup"})
         self.assertIn("Idle PSS", text)
         self.assertIn("| waftty | 15.2 MiB | 14.2 MiB | 25.2 MiB | 24.2 MiB |", text)
-        self.assertIn("| waftty | 0.25% | 139% | 0.35 s |", text)
+        self.assertIn("| waftty | 0.25% | - | 139% | 0.35 s |", text)
         self.assertEqual(err, "")
 
     def test_older_linux_results_without_meta_or_secondary_figures_report(self):
@@ -128,8 +139,8 @@ class Report(unittest.TestCase):
         partial = mac_terminal()
         partial["cpu_idle"] = [0.5]
         text, err = self.run_report("mac", {"waftty": partial, "kitty": mac_terminal(90.0, 120.0, 3.5)})
-        self.assertIn("| waftty | 0.50% | - | 1.70 s |", text)
-        self.assertIn("| kitty | - | - | 3.50 s |", text)
+        self.assertIn("| waftty | 0.50% | - | - | 1.70 s |", text)
+        self.assertIn("| kitty | - | - | - | 3.50 s |", text)
         self.assertIn("idle CPU for kitty", err)
         self.assertIn("cpu", self.charts())
 

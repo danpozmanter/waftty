@@ -587,27 +587,33 @@ def settled_memory(pid):
     return memory(pid)
 
 
+# Seconds from the last output to the idle reading: past startup's late work,
+# and past the point a terminal that rests its cursor after 10 idle seconds
+# has done so.
+IDLE_SETTLE = 13
+
+
 def ram(term, files):
-    """Memory after `files` print (none: idle), and the CPU time printing them took."""
+    """Memory after `files` print (none: idle), and the CPU time printing them
+    took. Memory is read once it stops moving, and again `IDLE_SETTLE` seconds
+    after the output, once a terminal that rests its cursor has: memory that
+    goes only then is held all the while a cursor blinks."""
     load = f"cat {' '.join(str(OUT / f'{n}.txt') for n in files)}; " if files else ""
     run = Run(term, f"{load}echo > $DONE; exec sleep 100000")
     before = cpu_seconds(run.p.pid)
     run.start()
     run.signal()
+    printed = time.monotonic()
     cpu = cpu_used(before, cpu_seconds(run.p.pid))
     pss, uss, rss = settled_memory(run.p.pid)
     sources = memory_sources(run.p.pid)
     vram = gpu_mib(run.p.pid)
     xserver = xserver_mib(run.p.pid)
+    time.sleep(max(0.0, IDLE_SETTLE - (time.monotonic() - printed)))
+    rested_pss, rested_uss, rested_rss = memory(run.p.pid)
     run.stop()
     return {"pss": pss, "uss": uss, "rss": rss, "vram": vram, "xserver": xserver, "cpu": cpu,
-            **sources}
-
-
-# Seconds from the last output to the idle reading: past startup's late work,
-# and past the point a terminal that rests its cursor after 10 idle seconds
-# has done so.
-IDLE_SETTLE = 13
+            "rested": {"pss": rested_pss, "uss": rested_uss, "rss": rested_rss}, **sources}
 
 
 def idle_cpu(term, seconds=10):
@@ -616,6 +622,34 @@ def idle_cpu(term, seconds=10):
     run.start()
     run.signal()
     time.sleep(IDLE_SETTLE)
+    before = cpu_seconds(run.p.pid)
+    time.sleep(seconds)
+    used = cpu_used(before, cpu_seconds(run.p.pid))
+    run.stop()
+    return 100 * used / seconds
+
+
+# One colored line every 16 ms, as a build or an agent streams its log: the
+# output most of a terminal's working day shows.
+LINES = r'''import sys, time
+i = 0
+while True:
+    sys.stdout.write(f"\x1b[38;5;{16 + i % 216}m{i:06} compiling crate {i} of the workspace build\x1b[0m\n")
+    sys.stdout.flush()
+    i += 1
+    time.sleep(0.016)
+'''
+
+
+def lines_cpu(term, warm=2, seconds=8):
+    """Share of one core the terminal uses while a program prints one colored
+    line every 16 ms, each scrolling the screen."""
+    program = OUT / "lines.py"
+    program.write_text(LINES)
+    run = Run(term, f"echo > $DONE; exec python3 {program}")
+    run.start()
+    run.signal()
+    time.sleep(warm)
     before = cpu_seconds(run.p.pid)
     time.sleep(seconds)
     used = cpu_used(before, cpu_seconds(run.p.pid))
@@ -979,6 +1013,7 @@ def measure(terms, runs, out, only):
         each("cpu_idle", idle_cpu)
         for _ in range(runs):
             each("cpu_load", load_cpu)
+            each("cpu_lines", lines_cpu)
     # Saved as each is taken, so a run that stops early keeps what it measured.
     def keep(term, key, value):
         results.setdefault(label_of(term), {})[key] = value

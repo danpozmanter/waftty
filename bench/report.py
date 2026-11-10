@@ -217,6 +217,13 @@ def main(argv=None):
         values = [r[key] for r in res[t][f"ram_{phase}"] if key in r]
         return statistics.median_low(values) if values else None
 
+    # The same figure read again once a cursor that rests has, which older
+    # results lack.
+    def rested(t, phase, key=memory_key):
+        values = [r["rested"][key] for r in res[t][f"ram_{phase}"]
+                  if key in r.get("rested", {})]
+        return statistics.median_low(values) if values else None
+
     def mbps(t, name):
         return MB / (med(res[t][f"tp_{name}"]) / 1000)
 
@@ -224,7 +231,10 @@ def main(argv=None):
           f"Memory ({'physical footprint' if macos else 'PSS'}), idle and after 40 MiB of output",
           "MiB (lower is better)",
           [("Idle", [mem(t, "idle") for t in memory]),
-           ("Heavy: 20 MiB plain + 20 MiB colored text", [mem(t, "heavy") for t in memory])],
+           ("Heavy: 20 MiB plain + 20 MiB colored text", [mem(t, "heavy") for t in memory])]
+          + ([("Heavy, 13 s after the output (cursor rested)",
+               [rested(t, "heavy") for t in memory])]
+             if all(rested(t, "heavy") is not None for t in memory) else []),
           lambda v: f"{v:.1f}",
           note="Median of launches; terminal processes only (shell excluded).")
 
@@ -261,7 +271,8 @@ def main(argv=None):
         seconds = cpu(t, "cpu_load", "seconds")
         return cpu(t, "ram_heavy", "cpu") if seconds is None else seconds
 
-    cpus = [t for t in order if cpu(t, "cpu_idle") is not None or print_seconds(t) is not None]
+    cpus = [t for t in order
+            if any(v is not None for v in (cpu(t, "cpu_idle"), print_seconds(t), cpu(t, "cpu_lines")))]
     borrowed = [t for t in cpus if cpu(t, "cpu_load", "seconds") is None and print_seconds(t) is not None]
     idle_missing = [t for t in cpus if cpu(t, "cpu_idle") is None]
     cpu_note = "User and system time of the terminal's processes; lower is better."
@@ -269,6 +280,8 @@ def main(argv=None):
         cpu_note += " CPU seconds for terminals without a CPU run come from their heavy memory runs."
     panels(a.out, cpus, "cpu", "CPU use",
            [("Idle", "% of one core", [cpu(t, "cpu_idle") for t in cpus], lambda v: number(v, ".1f")),
+            ("One colored line every 16 ms", "% of one core", [cpu(t, "cpu_lines") for t in cpus],
+             lambda v: number(v, ".1f")),
             ("Printing 40 MiB", "seconds of CPU", [print_seconds(t) for t in cpus],
              lambda v: f"{v:.2f}")],
            note=cpu_note)
@@ -323,29 +336,39 @@ def main(argv=None):
     if versions:
         lines += [row(["Terminal", "Version"]), row(["---", "---"])]
         lines += [row([t, versions.get(t, "")]) for t in order] + [""]
+    def rested_mib(t, phase):
+        value = rested(t, phase)
+        return "-" if value is None else mib(value)
+
     if memory:
         lines += ["## Memory", "", "![Memory](ram.png)", ""]
+        lines += [("The cursor-rested figures read the same memory again 13 seconds after the "
+                   "output, once a terminal that stops blinking its cursor has; what goes only "
+                   "then is held all the while the cursor blinks."), ""]
     if memory and macos:
         lines += [("Physical footprint is the memory a process dirtied, compressed memory "
                    "included, the figure Activity Monitor shows as Memory; RSS also counts the "
                    "shared library pages it touches. Terminal processes only, shell excluded."),
                   ""]
-        lines += [row(["Terminal", "Idle footprint", "Idle RSS", "Heavy footprint", "Heavy RSS"]),
-                  row(["---"] + ["---:"] * 4)]
+        lines += [row(["Terminal", "Idle footprint", "Idle RSS", "Heavy footprint", "Heavy RSS",
+                       "Idle, cursor rested", "Heavy, cursor rested"]),
+                  row(["---"] + ["---:"] * 6)]
         lines += [row([t, mib(mem(t, "idle")), mib(mem(t, "idle", "rss")),
-                       mib(mem(t, "heavy")), mib(mem(t, "heavy", "rss"))])
+                       mib(mem(t, "heavy")), mib(mem(t, "heavy", "rss")),
+                       rested_mib(t, "idle"), rested_mib(t, "heavy")])
                   for t in memory]
     elif memory:
         lines += [("PSS shares each library page among the processes that map it; USS is the "
                    "terminal's own. X server pixmaps and GPU memory are held elsewhere on the "
                    "terminal's behalf."), ""]
         lines += [row(["Terminal", "Idle PSS", "Idle USS", "Heavy PSS", "Heavy USS",
-                       "X server pixmaps", "GPU"]),
-                  row(["---"] + ["---:"] * 6)]
+                       "Idle, cursor rested", "Heavy, cursor rested", "X server pixmaps", "GPU"]),
+                  row(["---"] + ["---:"] * 8)]
     for t in [] if macos else memory:
         held = [r["xserver"] for r in res[t]["ram_idle"] if "xserver" in r]
         lines.append(row([t, mib(mem(t, "idle")), mib(mem(t, "idle", "uss")),
                           mib(mem(t, "heavy")), mib(mem(t, "heavy", "uss")),
+                          rested_mib(t, "idle"), rested_mib(t, "heavy"),
                           mib(med(held)) if held else "-",
                           mib(mem(t, "idle", "vram"), 0)]))
     if split:
@@ -393,10 +416,12 @@ def main(argv=None):
 
     if cpus:
         lines += ["", "## CPU", "", "![CPU](cpu.png)", ""]
-        lines += [row(["Terminal", "Idle", "While 40 MiB print", "CPU time for 40 MiB"]),
-                  row(["---"] + ["---:"] * 3)]
+        lines += [row(["Terminal", "Idle", "One line every 16 ms", "While 40 MiB print",
+                       "CPU time for 40 MiB"]),
+                  row(["---"] + ["---:"] * 4)]
         for t in cpus:
             lines.append(row([t, shown(cpu(t, "cpu_idle"), ".2f", "%"),
+                              shown(cpu(t, "cpu_lines"), ".1f", "%"),
                               shown(cpu(t, "cpu_load", "percent"), ".0f", "%"),
                               shown(print_seconds(t), ".2f", " s")]))
         if borrowed:
