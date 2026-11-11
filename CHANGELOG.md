@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.15 - Less CPU while output streams
+
+- macOS: a scrolling terminal is shown in layers of its own, so scrolling no longer copies the whole screen each frame. A line of output every 16 ms takes about 9% of a core instead of 21%.
+- macOS: the terminal's reader thread only reads while output streams and hands output to the parser in batches. Plain output prints about 60% faster (48 to 78 MB/s), colored output about 40% faster (38 to 53 MB/s), and 40 MiB of output takes about a fifth less CPU (1.63 to 1.29 s). Typed characters echo as fast as before, and while output streams the slowest echoes are faster (p95 62 to 48 ms).
+- Unicode text in mixed scripts parses faster: about 13% on Linux, and on macOS it prints at 53 MB/s instead of 48.
+- While output streams, the window wakes once per frame instead of once per write.
+- macOS: whether VoiceOver is running is checked at most once a second instead of on every frame.
+- Builds on Gossamer 0.78.5, windowing-gos 0.1.16, gui-engine-gos 0.2.12 and wezterm-lite 0.1.10.
+
 ## 0.5.14 - Lighter scrolling, faster colors
 
 - Output that scrolls takes less CPU to show: a frame copies only what it does not repaint, macOS no longer copies the screen in from the last two frames first, and scrolled rows reach the window without swapping their colors' bytes.

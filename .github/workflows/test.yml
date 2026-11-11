@@ -12,7 +12,7 @@ permissions:
 env:
   GOSSAMER_REPO: gossamer-lang/gossamer
   # The toolchain release waftty requires.
-  GOSSAMER_VERSION: v0.78.3
+  GOSSAMER_VERSION: v0.78.5
   # project.toml reaches the libraries at ../goose-libs/<name>. Set these
   # repository variables to a tag or commit to check against a fixed set.
   WINDOWING_REF: ${{ vars.WINDOWING_REF || 'main' }}
