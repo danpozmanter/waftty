@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.16 - Cursor blinks without repaint
+
+- macOS: a blinking cursor no longer repaints the window and uses less of a core.
+- macOS: an idle window uses less RAM, and memory used during heavy output is freed sooner.
+- Builds on windowing-gos 0.1.17 and gui-engine-gos 0.2.13.
+
 ## 0.5.15 - Less CPU while output streams
 
 - macOS: a scrolling terminal is shown in layers of its own, so scrolling no longer copies the whole screen each frame. A line of output every 16 ms takes about 9% of a core instead of 21%.
