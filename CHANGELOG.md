@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.0 - Command palette
+## 0.6.0 - Command palette, private sessions, shell history, cd history
 
 - A command palette: Ctrl+Shift+P (Cmd+Shift+P on macOS) finds and runs any command by part of its name.
 - Tabs and the window title name the command in front and its folder, as "claude: ~/dev/waftty".
@@ -12,7 +12,8 @@
 - Closing a tab or window, or quitting, no longer loses bash history.
 - The menu bar can be hidden (View > Show Menu Bar); it shows by default.
 - A shell's first prompt no longer flickers at startup, in new tabs or in split panes.
-- Builds on gui-engine-gos 0.2.14 and gui-gos 0.2.5.
+- X11: Background opacity below 100 now shows what lies behind the window, under a compositor such as KWin's.
+- Builds on gui-engine-gos 0.2.14, gui-gos 0.2.5 and windowing-gos 0.1.18.
 
 ## 0.5.16 - Cursor blinks without repaint
 

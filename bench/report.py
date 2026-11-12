@@ -8,6 +8,7 @@ Reads <system>/results.json and writes <system>/report unless --results and
 
 import argparse
 import json
+import re
 import statistics
 import sys
 from pathlib import Path
@@ -41,10 +42,52 @@ def pct(xs, q):
     return xs[min(len(xs) - 1, round(q * (len(xs) - 1)))]
 
 
+# A version is the first word of a `--version` line that starts with a digit.
+VERSION = re.compile(r"(?<!\S)\d\S*")
+
+
+def short_version(text):
+    """The version number in a terminal's `--version` line, or the line itself."""
+    found = VERSION.search(text)
+    return found.group() if found else text.strip()
+
+
+def drawn(value, fmt):
+    """The length of `value`'s bar: none when its label reads zero, so a figure
+    shown as 0.0 never looks like more."""
+    try:
+        return 0.0 if float(fmt(value)) == 0 else value
+    except ValueError:
+        return value
+
+
 def number(value, spec):
     """`value` formatted by `spec`, with no sign when it rounds to zero."""
     text = f"{value:{spec}}"
     return text[1:] if text.startswith("-") and float(text) == 0 else text
+
+
+def heading(fig, ax, title, fontsize):
+    """Puts `title` at the figure's top left with the legend of `ax`'s bars under
+    it, in as many columns as fit the figure's width, and answers the share of
+    the figure's height the two take."""
+    height = fig.get_figheight()
+    fig.text(0.01, 1 - 0.12 / height, title, fontsize=12, color=INK, va="top")
+    used = 0.5
+    handles, labels = ax.get_legend_handles_labels()
+    if len(handles) > 1:
+        renderer = fig.canvas.get_renderer()
+        for ncol in range(len(handles), 0, -1):
+            legend = fig.legend(handles, labels, frameon=False, loc="upper left",
+                                bbox_to_anchor=(0.005, 1 - used / height), ncol=ncol,
+                                fontsize=fontsize, handlelength=1.2, columnspacing=1.2,
+                                borderaxespad=0.2)
+            box = legend.get_window_extent(renderer)
+            if box.x1 <= fig.bbox.x1 - 0.01 * fig.bbox.width or ncol == 1:
+                break
+            legend.remove()
+        used += box.height / fig.dpi + 0.05
+    return used / height
 
 
 def hbars(out, order, name, title, unit, series, fmt, note=None, extra=None, ends=None):
@@ -55,6 +98,7 @@ def hbars(out, order, name, title, unit, series, fmt, note=None, extra=None, end
     h = 0.8 / n
     fig, ax = plt.subplots(figsize=(8, 0.62 * len(order) * max(1, n * 0.75) + 1.3))
     ends = ends or [0] * len(order)
+    series = [(label, [drawn(v, fmt) for v in vals]) for label, vals in series]
     top = max([v for _, vals in series for v in vals] + ends) or 1
     for i, (label, vals) in enumerate(series):
         ys = [k + (i - (n - 1) / 2) * h for k in range(len(order))]
@@ -71,14 +115,11 @@ def hbars(out, order, name, title, unit, series, fmt, note=None, extra=None, end
     for side in ("top", "right", "left"):
         ax.spines[side].set_visible(False)
     ax.tick_params(axis="y", length=0)
-    ax.set_title(title, loc="left", fontsize=12, color=INK, pad=30 if n > 1 else 12)
-    if n > 1:
-        # Above the plot, where no bar can run under it.
-        ax.legend(frameon=False, loc="lower left", bbox_to_anchor=(0, 1.0), ncol=n, fontsize=9,
-                  handlelength=1.2, borderaxespad=0.2)
+    # Above the plot, where no bar can run under it.
+    top = heading(fig, ax, title, 9)
     if note:
         fig.text(0.01, 0.01, note, fontsize=8, color=MUTED)
-    fig.tight_layout(rect=(0, 0.03 if note else 0, 1, 1))
+    fig.tight_layout(rect=(0, 0.03 if note else 0, 1, 1 - top))
     fig.savefig(out / f"{name}.png", dpi=150)
     plt.close(fig)
 
@@ -104,11 +145,9 @@ def stacked(out, order, name, title, unit, parts, fmt, note):
     for side in ("top", "right", "left"):
         ax.spines[side].set_visible(False)
     ax.tick_params(axis="y", length=0)
-    ax.set_title(title, loc="left", fontsize=12, color=INK, pad=30)
-    ax.legend(frameon=False, loc="lower left", bbox_to_anchor=(0, 1.0), ncol=len(parts), fontsize=8,
-              handlelength=1.2, columnspacing=1.2, borderaxespad=0.2)
+    top = heading(fig, ax, title, 8)
     fig.text(0.01, 0.01, note, fontsize=8, color=MUTED)
-    fig.tight_layout(rect=(0, 0.03, 1, 1))
+    fig.tight_layout(rect=(0, 0.03, 1, 1 - top))
     fig.savefig(out / f"{name}.png", dpi=150)
     plt.close(fig)
 
@@ -124,6 +163,7 @@ def panels(out, order, name, title, parts, note):
                              squeeze=False)
     axes = axes[0]
     for ax, (label, unit, vals, fmt) in zip(axes, parts):
+        vals = [None if v is None else drawn(v, fmt) for v in vals]
         top = max(v for v in vals if v is not None) or 1
         measured = [(k, v) for k, v in enumerate(vals) if v is not None]
         ax.barh([k for k, _ in measured], [v for _, v in measured], height=0.6, color=PALETTE[0],
@@ -174,6 +214,12 @@ def main(argv=None):
     except json.JSONDecodeError as e:
         raise SystemExit(f"{a.results} is not valid JSON ({e}): take the results again with `{measure}`")
     meta = res.pop("_meta", {})
+    versions = meta.get("versions", {})
+
+    # Charts name each terminal with the version the run measured beneath it.
+    def ticks(terminals):
+        return [f"{t}\n{short_version(versions[t])}" if versions.get(t) else t for t in terminals]
+
     if meta.get("platform", PLATFORM[a.system]) != PLATFORM[a.system]:
         raise SystemExit(f"{a.results} holds results from {meta['platform']}, and this is the "
                          f"{a.system} report: name the system they were taken on")
@@ -227,7 +273,7 @@ def main(argv=None):
     def mbps(t, name):
         return MB / (med(res[t][f"tp_{name}"]) / 1000)
 
-    hbars(a.out, memory, "ram",
+    hbars(a.out, ticks(memory), "ram",
           f"Memory ({'physical footprint' if macos else 'PSS'}), idle and after 40 MiB of output",
           "MiB (lower is better)",
           [("Idle", [mem(t, "idle") for t in memory]),
@@ -253,7 +299,7 @@ def main(argv=None):
                ("X server pixmaps", lambda r: r.get("xserver", 0.0)),
                ("GPU memory", lambda r: r.get("vram", 0.0))]
     if split:
-        stacked(a.out, split, "ram-sources", "Where memory goes under load (after 40 MiB of output)",
+        stacked(a.out, ticks(split), "ram-sources", "Where memory goes under load (after 40 MiB of output)",
                 "MiB (lower is better)",
                 [(label, [heavy(t, pick) for t in split]) for label, pick in sources],
                 lambda v: f"{v:.1f}",
@@ -278,14 +324,14 @@ def main(argv=None):
     cpu_note = "User and system time of the terminal's processes; lower is better."
     if borrowed:
         cpu_note += " CPU seconds for terminals without a CPU run come from their heavy memory runs."
-    panels(a.out, cpus, "cpu", "CPU use",
+    panels(a.out, ticks(cpus), "cpu", "CPU use",
            [("Idle", "% of one core", [cpu(t, "cpu_idle") for t in cpus], lambda v: number(v, ".1f")),
             ("One colored line every 16 ms", "% of one core", [cpu(t, "cpu_lines") for t in cpus],
              lambda v: number(v, ".1f")),
             ("Printing 40 MiB", "seconds of CPU", [print_seconds(t) for t in cpus],
              lambda v: f"{v:.2f}")],
            note=cpu_note)
-    hbars(a.out, rates, "throughput", "Output throughput", "MB/s (higher is better)",
+    hbars(a.out, ticks(rates), "throughput", "Output throughput", "MB/s (higher is better)",
           [(label, [mbps(t, key) for t in rates])
            for label, key in (("Plain ASCII", "plain"), ("256-color SGR", "sgr"),
                               ("Unicode mix", "unicode"))],
@@ -298,7 +344,7 @@ def main(argv=None):
         gaps = streaming(t, "gaps")
         return 1000 * len(gaps) / sum(gaps) if gaps else 0.0
 
-    hbars(a.out, keys, "latency", "Keystroke to screen latency", "ms (lower is better)",
+    hbars(a.out, ticks(keys), "latency", "Keystroke to screen latency", "ms (lower is better)",
           [("Idle terminal", [med(res[t]["latency"]) for t in keys]),
            ("While output streams", [med(streaming(t, "latency") or [0]) for t in keys])],
           lambda v: f"{v:.1f}",
@@ -307,18 +353,17 @@ def main(argv=None):
     # Frame timing comes from X Damage, which macOS has no counterpart to.
     streams = [t for t in streams if streaming(t, "gaps")]
     if streams:
-        panels(a.out, streams, "smoothness", "Frames while colored output streams",
+        panels(a.out, ticks(streams), "smoothness", "Frames while colored output streams",
                [("Frames per second", "higher is better", [fps(t) for t in streams],
                  lambda v: f"{v:.0f}"),
                 ("99th percentile frame gap", "ms (lower is better)",
                  [pct(streaming(t, "gaps") or [0], 0.99) for t in streams], lambda v: f"{v:.0f}")],
                note="X Damage reports during 4 s of a flood, timed by the X server.")
-    hbars(a.out, starts, "startup", "Startup: launch to a screenful of text on screen",
+    hbars(a.out, ticks(starts), "startup", "Startup: launch to a screenful of text on screen",
           "ms (lower is better)", [("Median", [med(res[t]["startup"]) for t in starts])],
           lambda v: f"{v:.0f}", note="Median of 10 launches.")
 
     lines = ["# Terminal benchmark", ""]
-    versions = meta.get("versions", {})
     if "scrollback" not in meta:
         setup = "The results file records no details of its run."
     elif macos:

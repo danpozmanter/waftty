@@ -428,7 +428,7 @@ mod tests {
         assert(!toolkit.visible && toolkit.shortcuts.is_empty())
         let Some(ours) = offered.iter().find(|c| c.id == super::COMMAND_PALETTE) else { panic("the palette command is missing") }
         assert(ours.visible)
-        assert_eq(ours.shortcuts.map(shortcuts::spelled), #[if gui::input::platform_is_macos() { "Cmd+Shift+P" } else { "Ctrl+Shift+P" }])
+        assert_eq(ours.shortcuts.map(shortcuts::spelled), #[if gui::input::platform_is_macos() { "Shift+Cmd+P" } else { "Ctrl+Shift+P" }])
         let Some(undo) = offered.iter().find(|c| c.id == "edit.undo") else { panic("undo is missing") }
         assert(!undo.visible && !undo.shortcuts.is_empty())
     }

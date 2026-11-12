@@ -10,6 +10,9 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
+
+import matplotlib.axes
 
 import report
 
@@ -178,6 +181,41 @@ class Report(unittest.TestCase):
         with self.assertRaises(SystemExit) as caught:
             report.main(["mac", "--results", str(broken), "--out", str(self.out)])
         self.assertIn("not valid JSON", str(caught.exception))
+
+    def test_versions_name_each_chart_row_by_their_number(self):
+        self.assertEqual(report.short_version("kitty 0.32.2 created by Kovid Goyal"), "0.32.2")
+        self.assertEqual(report.short_version("xfce4-terminal 1.1.3 (Xfce 4.18)"), "1.1.3")
+        self.assertEqual(report.short_version("Guake Terminal: 3.10"), "3.10")
+        self.assertEqual(report.short_version("wezterm 20240203-110809-5046fc22"),
+                         "20240203-110809-5046fc22")
+        self.assertEqual(report.short_version("nightly"), "nightly")
+        rows = []
+        set_yticks = matplotlib.axes.Axes.set_yticks
+
+        def spy(ax, ticks, labels=None, **kw):
+            rows.append(list(labels or []))
+            return set_yticks(ax, ticks, labels, **kw)
+
+        results = {"one": linux_terminal(), "two": linux_terminal(),
+                   "_meta": {"versions": {"one": "one 1.2.3 (abc)"}}}
+        with mock.patch.object(matplotlib.axes.Axes, "set_yticks", spy):
+            self.run_report("linux", results)
+        self.assertIn(["one\n1.2.3", "two"], rows)
+
+    def test_a_figure_that_reads_zero_draws_no_bar(self):
+        widths = []
+        barh = matplotlib.axes.Axes.barh
+
+        def spy(ax, y, width, *args, **kw):
+            widths.append(list(width))
+            return barh(ax, y, width, *args, **kw)
+
+        quiet, busy = linux_terminal(), linux_terminal()
+        quiet["cpu_idle"], busy["cpu_idle"] = [0.0004], [0.25]
+        with mock.patch.object(matplotlib.axes.Axes, "barh", spy):
+            self.run_report("linux", {"quiet": quiet, "busy": busy})
+        self.assertIn([0.0, 0.25], widths)
+        self.assertEqual(report.drawn(0.000001, lambda v: report.number(v, ".1f")), 0.0)
 
 
 if __name__ == "__main__":
