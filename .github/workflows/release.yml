@@ -14,7 +14,7 @@ env:
   # The toolchain release waftty builds with. Its runtime targets glibc 2.39
   # (Ubuntu 24.04), the floor of the Linux packages, and its macos12 archives
   # target macOS 12, the floor of the macOS packages.
-  GOSSAMER_VERSION: v0.78.5
+  GOSSAMER_VERSION: v0.78.6
   # project.toml reaches the libraries at ../goose-libs/<name>. Set these
   # repository variables to tags or commits to release against a fixed set.
   WINDOWING_REF: ${{ vars.WINDOWING_REF || 'main' }}
@@ -248,9 +248,81 @@ jobs:
             dist/*.sha256
           if-no-files-found: error
 
+  # FreeBSD has no hosted runner, so the package builds in a FreeBSD VM. The
+  # Gossamer release for FreeBSD is built on FreeBSD 15, the package's floor.
+  build-freebsd:
+    name: FreeBSD x86_64
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: waftty
+      - uses: actions/checkout@v6
+        with:
+          repository: gossamer-lang/windowing-gos
+          ref: ${{ env.WINDOWING_REF }}
+          path: goose-libs/windowing-gos
+      - uses: actions/checkout@v6
+        with:
+          repository: gossamer-lang/gui-engine-gos
+          ref: ${{ env.ENGINE_REF }}
+          path: goose-libs/gui-engine-gos
+      - uses: actions/checkout@v6
+        with:
+          repository: gossamer-lang/gui-gos
+          ref: ${{ env.GUI_REF }}
+          path: goose-libs/gui-gos
+
+      - name: Read the version
+        run: |
+          version=$(awk -F'"' '/^version = / { print $2; exit }' waftty/project.toml)
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Check the tag names the project's version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          if [ "$GITHUB_REF_NAME" != "v$VERSION" ]; then
+            echo "tag $GITHUB_REF_NAME does not match project.toml version $VERSION" >&2
+            exit 1
+          fi
+
+      # The tarball as a user gets it, unpacked, installed and run.
+      - name: Build, package, install and run in FreeBSD
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: "15"
+          usesh: true
+          mem: 12288
+          envs: GOSSAMER_REPO GOSSAMER_VERSION RUSTUP_TOOLCHAIN VERSION
+          prepare: |
+            pkg install -y bash curl git cmake ninja pkgconf python3 llvm22 \
+              libX11 libXext libXrandr libXcursor libXi libXfixes libXScrnSaver libXtst \
+              libxkbcommon wayland wayland-protocols libdecor mesa-libs
+            curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "$RUSTUP_TOOLCHAIN"
+            curl -fsSL "https://raw.githubusercontent.com/${GOSSAMER_REPO}/main/scripts/install.sh" | sh
+          run: |
+            set -e
+            export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+            gos --version
+            sh goose-libs/gui-gos/tools/fetch.sh
+            (cd waftty && gos fetch)
+            bash waftty/scripts/package.sh dist
+            ls -la dist
+            mkdir try
+            tar -xzf dist/waftty-*-freebsd-x86_64.tar.gz -C try
+            PREFIX="$PWD/installed" sh try/waftty-*/install.sh
+            [ "$(installed/bin/waftty --version)" = "waftty $VERSION" ]
+      - uses: actions/upload-artifact@v4
+        with:
+          name: waftty-freebsd-x86_64
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+
   release:
     name: Create Release
-    needs: build
+    needs: [build, build-freebsd]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     permissions:

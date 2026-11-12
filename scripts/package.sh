@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Build waftty and package it for the host platform into OUT (default dist):
 #   Linux    waftty-VERSION-linux-ARCH.tar.gz, with install.sh inside
+#   FreeBSD  waftty-VERSION-freebsd-ARCH.tar.gz, with install.sh inside
 #   macOS    waftty-VERSION-macos-ARCH.zip: waftty.app and install.command
 #   Windows  waftty-VERSION-windows-ARCH.zip, and a -portable.zip whose user
 #            folder keeps the settings beside waftty.exe
@@ -47,6 +48,7 @@ version="$(awk -F'"' '/^version = / { print $2; exit }' "$root/project.toml")"
 
 case "$(uname -s)" in
     Linux) platform=linux ;;
+    FreeBSD) platform=freebsd ;;
     Darwin) platform=macos ;;
     MINGW* | MSYS* | CYGWIN*) platform=windows ;;
     *) die "unsupported OS: $(uname -s)" ;;
@@ -105,7 +107,7 @@ if [ "$platform" = linux ] && [ -f "$order" ]; then
     (cd "$root" && GOS_SYMBOL_ORDER="$stage/link-order.txt" \
         gos build --release . --out-dir "$stage/build" >&2)
 fi
-if [ "$platform" = linux ] && ldd "$binary" | grep -q "not found"; then
+if { [ "$platform" = linux ] || [ "$platform" = freebsd ]; } && ldd "$binary" | grep -q "not found"; then
     die "unresolved native libraries: $(ldd "$binary" | grep "not found")"
 fi
 
@@ -243,13 +245,13 @@ windows_installer() {
 }
 
 case "$platform" in
-    linux)
+    linux | freebsd)
         bundle="$stage/$base"
-        install -Dm755 "$binary" "$bundle/bin/$exe"
-        notices "$bundle/share/doc/$exe"
         size="$(od -An -tu1 -j16 -N4 "$icon" | awk '{ print $1 * 16777216 + $2 * 65536 + $3 * 256 + $4 }')"
-        install -Dm644 "$icon" "$bundle/share/icons/hicolor/${size}x${size}/apps/$app_id.png"
-        mkdir -p "$bundle/share/applications"
+        mkdir -p "$bundle/bin" "$bundle/share/icons/hicolor/${size}x${size}/apps" "$bundle/share/applications"
+        install -m755 "$binary" "$bundle/bin/$exe"
+        install -m644 "$icon" "$bundle/share/icons/hicolor/${size}x${size}/apps/$app_id.png"
+        notices "$bundle/share/doc/$exe"
         {
             echo "[Desktop Entry]"
             echo "Type=Application"
@@ -264,10 +266,10 @@ case "$platform" in
         if command -v desktop-file-validate >/dev/null 2>&1; then
             desktop-file-validate "$bundle/share/applications/$app_id.desktop"
         fi
-        install -m755 "$root/scripts/install-linux.sh" "$bundle/install.sh"
+        install -m755 "$root/scripts/install-xdg.sh" "$bundle/install.sh"
         tar -czf "$out/$base.tar.gz" -C "$stage" "$base"
         publish "$out/$base.tar.gz"
-        if [ "$installers" -eq 1 ]; then
+        if [ "$platform" = linux ] && [ "$installers" -eq 1 ]; then
             deb_package "$bundle"
             rpm_package "$bundle"
             appimage "$bundle"

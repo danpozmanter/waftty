@@ -119,7 +119,7 @@ impl Default for Settings {
     fn default() -> Settings {
         Settings {
             shell: "", directory: "", new_tabs: "current", encoding: encodings::DEFAULT, restore: false, columns: 90, rows: 28, remember_size: true, confirm_close: true
-            font: "", font_size: 10.0, font_weight: 400, ligatures: true, scheme: schemes::SYSTEM, cursor: "block", cursor_blink: true, bold_bright: false, legible: true, padding: 4, opacity: 100, line_spacing: 1.0, scrollbar: "always", scrollbar_side: "right", menu_bar: true, tab_bar: "several"
+            font: "", font_size: 10.0, font_weight: 400, ligatures: true, scheme: schemes::SYSTEM, cursor: "block", cursor_blink: false, bold_bright: false, legible: true, padding: 4, opacity: 100, line_spacing: 1.0, scrollbar: "always", scrollbar_side: "right", menu_bar: true, tab_bar: "several"
             scrollback: 1_000, scroll_on_output: false, scroll_on_keystroke: true, word_chars: WORD_CHARS, copy_on_select: false, confirm_paste: false, bell: "none", notifications: true, clipboard_write: true, editor: "", option_as_meta: false, input_method: "auto"
             drop_down_key: "F12", drop_down_position: "top", drop_down_width: 100, drop_down_height: 50
         }
@@ -530,6 +530,12 @@ mod tests {
         let changed = super::chosen_shortcuts({ "key:edit.settings": "Ctrl+,, Ctrl+Shift+,", "key:file.new-tab": ",, Ctrl+Shift+Y" }, registry)
         assert_eq(changed["edit.settings"], #["Ctrl+,", "Ctrl+Shift+,"])
         assert_eq(changed["file.new-tab"], #[",", "Ctrl+Shift+Y"])
+    }
+
+    #[test]
+    fn the_cursor_is_steady_unless_blinking_is_turned_on() {
+        assert(!super::view_options(Settings::default()).blink)
+        assert(super::view_options(super::with_values(Settings::default(), { "cursor_blink": "true" })).blink)
     }
 
     #[test]

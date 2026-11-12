@@ -125,6 +125,10 @@ pub fn journey() -> Result<(), errors::Error> {
     let config = fs::temp_dir("waftty-journey")?
     env::set_var("XDG_CONFIG_HOME", config)
     defer { let _ = fs::remove_dir_all(config) }
+    // sh prompts with "# " for the superuser; every shell the journey opens
+    // prompts with "$ " whoever runs it.
+    env::set_var("PS1", "$ ")
+    env::unset_var("ENV")
     let chosen = Settings { shell: "/bin/sh", ..Settings::default() }
     // The prompt carries the marks a shell integration script writes
     // (OSC 133), so the journey can move between prompts.

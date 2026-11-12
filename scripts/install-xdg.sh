@@ -4,7 +4,8 @@ here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 prefix=${PREFIX:-$HOME/.local}
 exe=waftty
 app_id=dev.gossamer.waftty
-install -Dm755 "$here/bin/$exe" "$prefix/bin/$exe"
+mkdir -p "$prefix/bin"
+install -m755 "$here/bin/$exe" "$prefix/bin/$exe"
 mkdir -p "$prefix/share/applications"
 escaped=$(printf '%s' "$prefix/bin/$exe" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\$/\\$/g; s/`/\\`/g; s/%/%%/g')
 while IFS= read -r line; do

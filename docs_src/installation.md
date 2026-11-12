@@ -1,6 +1,6 @@
 ---
 title: Installation - waftty
-description: Install waftty on Linux, macOS or Windows from a release package, or build it from source with the Gossamer toolchain.
+description: Install waftty on Linux, FreeBSD, macOS or Windows from a release package, or build it from source with the Gossamer toolchain.
 ---
 
 # Installation
@@ -16,6 +16,7 @@ Download the package for your platform from the
 | Fedora, openSUSE, RHEL | `waftty-VERSION-1.x86_64.rpm` | glibc 2.39 or newer (Fedora 40 and later) |
 | Any Linux x86_64 | `waftty-VERSION-x86_64.AppImage` | glibc 2.39 or newer; nothing to install |
 | Any Linux x86_64 | `waftty-VERSION-linux-x86_64.tar.gz` | glibc 2.39 or newer (Ubuntu 24.04 and later) |
+| FreeBSD x86_64 | `waftty-VERSION-freebsd-x86_64.tar.gz` | FreeBSD 15 or newer |
 | macOS, Apple Silicon | `waftty-VERSION-macos-aarch64.zip` | macOS 12 or newer on an M-series Mac |
 | macOS, Intel | `waftty-VERSION-macos-x86_64.zip` | macOS 12 or newer on an Intel Mac |
 | Windows x86_64 | `waftty-VERSION-x86_64-setup.exe` | Windows 10 or newer |
@@ -53,6 +54,20 @@ Not sure which Mac you have? Open the Apple menu and choose About This Mac:
     The installer places the binary in `PREFIX/bin`, a desktop entry in
     `PREFIX/share/applications`, and the icon in the hicolor theme, so waftty
     shows up in your application launcher.
+
+=== "FreeBSD"
+
+    Unpack the tarball and run its installer:
+
+    ```sh
+    tar -xzf waftty-*-freebsd-x86_64.tar.gz
+    cd waftty-*-freebsd-x86_64
+    ./install.sh                          # installs to ~/.local
+    sudo env PREFIX=/usr/local ./install.sh   # or system-wide
+    ```
+
+    It places the binary, desktop entry and icon as the Linux installer
+    does. waftty runs on X11 or Wayland.
 
 === "macOS"
 
@@ -100,12 +115,12 @@ packages, make the folder yourself:
 | Package | Where the `user` folder goes |
 |---|---|
 | Windows | beside `waftty.exe` |
-| Linux | beside the `waftty` program, in `bin/` of the unpacked package |
+| Linux, FreeBSD | beside the `waftty` program, in `bin/` of the unpacked package |
 | macOS | beside `waftty.app` |
 
 ## Building from Source
 
-waftty needs [Gossamer](https://github.com/gossamer-lang/gossamer) 0.76.0 or
+waftty needs [Gossamer](https://github.com/gossamer-lang/gossamer) 0.78.6 or
 newer, Rust 1.95.0 through rustup (`rustup toolchain install 1.95.0`), and
 LLVM for native builds. The GUI libraries are expected beside the checkout at
 `../goose-libs`.
@@ -128,7 +143,7 @@ gos run .                  # your shell
 gos run . -e htop          # a program in the first tab
 gos build --release        # a native binary in target/release
 ./install.sh               # build and install: ~/.local, or /Applications on macOS
-./install.sh --system      # Linux: build and install to /usr/local
+./install.sh --system      # Linux, FreeBSD: build and install to /usr/local
 ```
 
 On Linux, building SDL needs its usual development packages. On Ubuntu:
@@ -138,6 +153,14 @@ sudo apt-get install cmake ninja-build pkg-config llvm-18 \
   libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
   libxss-dev libxfixes-dev libxtst-dev libxkbcommon-dev libwayland-dev \
   wayland-protocols libegl-dev libgl-dev libdecor-0-dev
+```
+
+On FreeBSD:
+
+```sh
+pkg install bash cmake ninja pkgconf python3 llvm22 libX11 libXext libXrandr \
+  libXcursor libXi libXfixes libXScrnSaver libXtst libxkbcommon wayland \
+  wayland-protocols libdecor mesa-libs
 ```
 
 ## Command Line

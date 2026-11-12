@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.1 - Cursor blinking and FreeBSD support
+
+- The cursor no longer blinks by default; turn blinking on under Settings > Appearance.
+- FreeBSD 15 x86_64 release package.
+- Builds on Gossamer 0.78.6.
+
 ## 0.6.0 - Command palette, private sessions, shell history, cd history
 
 - A command palette: Ctrl+Shift+P (Cmd+Shift+P on macOS) finds and runs any command by part of its name.

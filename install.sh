@@ -3,8 +3,8 @@
 # Delegates building and packaging to scripts/package.sh.
 #
 # Usage: ./install.sh [--system]
-#   --system  Install system-wide to /usr/local (Linux only; requires sudo)
-#   Default:  Install to ~/.local (Linux) or /Applications (macOS)
+#   --system  Install system-wide to /usr/local (Linux and FreeBSD; requires sudo)
+#   Default:  Install to ~/.local (Linux, FreeBSD) or /Applications (macOS)
 #
 # Needs the Gossamer toolchain (gos), rustup with the Rust toolchain
 # rust-toolchain.toml names, and the libraries beside this checkout at
@@ -30,10 +30,10 @@ die() { echo "error: $*" >&2; exit 1; }
 command -v gos >/dev/null 2>&1 || die "gos is not on the PATH; install the Gossamer toolchain"
 os="$(uname)"
 case "$os" in
-    Linux | Darwin) ;;
+    Linux | FreeBSD | Darwin) ;;
     *) die "unsupported OS: $os (on Windows, use the release zip)" ;;
 esac
-[ "$system" -eq 0 ] || [ "$os" = Linux ] || die "--system is for Linux only"
+[ "$system" -eq 0 ] || [ "$os" != Darwin ] || die "--system is for Linux and FreeBSD only"
 
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
@@ -43,7 +43,7 @@ package="$(bash "$here/scripts/package.sh" "$stage/dist")"
 [ -f "$package" ] || die "the package was not built"
 
 case "$os" in
-    Linux)
+    Linux | FreeBSD)
         tar -xzf "$package" -C "$stage"
         installer="$stage/$(basename "$package" .tar.gz)/install.sh"
         if [ "$system" -eq 1 ]; then

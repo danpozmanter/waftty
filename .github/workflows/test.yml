@@ -12,7 +12,7 @@ permissions:
 env:
   GOSSAMER_REPO: gossamer-lang/gossamer
   # The toolchain release waftty requires.
-  GOSSAMER_VERSION: v0.78.5
+  GOSSAMER_VERSION: v0.78.6
   # project.toml reaches the libraries at ../goose-libs/<name>. Set these
   # repository variables to a tag or commit to check against a fixed set.
   WINDOWING_REF: ${{ vars.WINDOWING_REF || 'main' }}
@@ -122,7 +122,7 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: waftty
         run: |
-          for target in x86_64-pc-windows-msvc x86_64-apple-darwin aarch64-apple-darwin; do
+          for target in x86_64-pc-windows-msvc x86_64-apple-darwin aarch64-apple-darwin x86_64-unknown-freebsd; do
             echo "== $target"
             gos check --target "$target" .
           done
