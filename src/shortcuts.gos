@@ -152,13 +152,14 @@ pub fn problems(chosen: Map<String, Vec<String>>, registry: Vec<Command>) -> Vec
             if !why.is_empty() { out.push(f"{id}: {why}") }
         }
     }
-    // A chord set for two commands runs only one of them.
-    let mut seen: Map<String, String> = Map::new()
+    // A chord set for two commands of one scope runs only one of them; a
+    // scoped command takes its chord only while its widget has focus.
+    let mut seen: Map<(String, String), String> = Map::new()
     for c in apply(registry, chosen) {
         for chord in c.shortcuts.map(spelled) {
-            match seen.get(chord) {
+            match seen.get((c.scope, chord)) {
                 Some(other) => out.push(f"{chord} is set for both {other} and {c.label}")
-                None => seen[chord] = c.label
+                None => seen[(c.scope, chord)] = c.label
             }
         }
     }
@@ -222,6 +223,16 @@ mod tests {
         assert_eq(found.len(), 1, f"{found}")
         assert(found[0].contains("Ctrl+Alt key programs read"))
         assert_eq(super::problems({ "terminal.close-pane": #["Ctrl+Alt+Left"] }, registry), #[])
+    }
+
+    #[test]
+    fn a_scoped_command_shares_a_chord_only_with_commands_outside_its_scope() {
+        let apart = #[Command::new("terminal.find-close", "Close Find").key("Escape"), Command::new("view.close-command-palette", "Close Command Palette").key("Escape").in_scope("command-palette")]
+        assert_eq(super::problems(Map::new(), apart), #[])
+        let together = #[Command::new("a", "A").key("Escape").in_scope("p"), Command::new("b", "B").key("Escape").in_scope("p")]
+        let found = super::problems(Map::new(), together)
+        assert_eq(found.len(), 1, f"{found}")
+        assert(found[0].ends_with("is set for both A and B"))
     }
 
     #[test]

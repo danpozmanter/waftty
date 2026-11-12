@@ -396,7 +396,7 @@ pub fn dialog(s: Settings, fonts: Vec<String>, offered: Vec<schemes::Entry>, reg
 // system's menu bar.
 fn menu_bar_field(s: Settings, d: Settings) -> Vec<PreferenceField> {
     if gui::input::platform_is_macos() { return #[] }
-    #[toggle("menu_bar", "Show the menu bar", s.menu_bar, d.menu_bar, "Ctrl+Shift+M or the terminal's right-click menu brings it back.")]
+    #[toggle("menu_bar", "Show the menu bar", s.menu_bar, d.menu_bar, "Ctrl+Shift+M, the command palette or the terminal's right-click menu brings it back.")]
 }
 
 // One field per command that can be bound, holding its chords.

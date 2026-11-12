@@ -11,6 +11,7 @@ use icon
 use info
 use model
 use model::Model
+use recent
 use schemes
 use settings
 use settings::Settings
@@ -38,6 +39,7 @@ pub const QUICK_INSTANCE: String = "dev.gossamer.waftty.Quick"
 fn init(s: Settings, first: Command, first_tab: FirstTab, restore: bool, program_env: Vec<(String, String)>) -> Model {
     let mut m = model::new(s)
     m.program_env = program_env
+    m.recent_dirs = recent::load()
     m.desktop_font = settings::desktop_font()
     let found, scheme_problems = schemes::user()
     m.user_schemes = found
@@ -97,7 +99,7 @@ pub fn app(s: Settings, first: Command, first_tab: FirstTab, restore: bool, prog
         .transparent(s.opacity < 100)
         .remember_size(s.remember_size)
         .min_size(360, 220)
-        .window_commands(commands::registry)
+        .window_commands(commands::window_commands)
         .windows(view::window)
         .ask_before_close()
         .icon(icon::waftty(128))

@@ -1,0 +1,125 @@
+// The directories tabs have worked in, latest first, which Recent
+// Directories offers. Private tabs add none.
+
+use std::{fs, path}
+use std::encoding::json
+
+use gui::services
+
+use info
+
+/// The most directories the list keeps.
+pub const LIMIT: i64 = 50
+
+// The list as its file holds it.
+#[derive(Default)]
+struct Saved {
+    dirs: Vec<String>
+}
+
+fn file() -> String {
+    path::join(services::config_dir(info::APP_ID), "recent-directories.json")
+}
+
+/// The list saved last, or none when there is none to read.
+pub fn load() -> Vec<String> {
+    let Ok(text) = fs::read_to_string(file()) else { return #[] }
+    json::decode::<Saved>(text).map(|saved| saved.dirs).unwrap_or(#[])
+}
+
+/// Saves `dirs` as the list.
+pub fn save(dirs: Vec<String>) {
+    let _ = fs::create_dir_all(services::config_dir(info::APP_ID))
+    let _ = fs::write(file(), json::encode(Saved { dirs: dirs }).bytes())
+}
+
+/// Forgets every directory: the list is empty from here on.
+pub fn clear() {
+    let _ = fs::remove_file(file())
+}
+
+/// `dirs` with `dir` first, once, within the limit.
+pub fn visited(dirs: Vec<String>, dir: String) -> Vec<String> {
+    let mut out = #[dir]
+    for d in dirs {
+        if d != dir && out.len() < LIMIT { out.push(d) }
+    }
+    out
+}
+
+// Whether `dir` reads the same to every shell unquoted: letters, digits and
+// the punctuation paths use that no shell treats as special. Windows paths
+// add their backslash and drive colon, which PowerShell and cmd take as is.
+fn plain(dir: String, windows: bool) -> bool {
+    !dir.is_empty() && dir.chars().all(|c| c.is_alphanumeric() || "/._-+,@%=".contains(c.to_string()) || (windows && (c == '\\' || c == ':')))
+}
+
+/// What to type at the prompt of the shell named `shell` to move to `dir`,
+/// clearing what was typed there first: `cd dir`, quoted only when the
+/// folder's name needs it. None for a program that is not a shell waftty
+/// knows.
+pub fn cd_input(shell: String, dir: String) -> Option<String> {
+    match shell {
+        // Ctrl+E then Ctrl+U clear the line from its end.
+        "bash" | "zsh" | "sh" | "dash" | "ash" | "ksh" | "mksh" => {
+            let target = if plain(dir, false) { dir } else { f"'{dir.replace("'", "'\\''")}'" }
+            Some(f"\u{5}\u{15}cd {target}\r")
+        }
+        // nushell's double-quoted strings take backslash escapes.
+        "nu" => {
+            let target = if plain(dir, false) { dir } else { f"\"{dir.replace("\\", "\\\\").replace("\"", "\\\"")}\"" }
+            Some(f"\u{5}\u{15}cd {target}\r")
+        }
+        // fish's single quotes, and xonsh's (a Python string literal), take
+        // a backslash before a quote or a backslash.
+        "fish" | "xonsh" => {
+            let target = if plain(dir, false) { dir } else { f"'{dir.replace("\\", "\\\\").replace("'", "\\'")}'" }
+            Some(f"\u{5}\u{15}cd {target}\r")
+        }
+        // Ctrl+C cancels the line PSReadLine is editing; a quoted path goes
+        // in literally, since `cd` reads brackets as a wildcard.
+        "pwsh" | "powershell" => {
+            let target = if plain(dir, true) { dir } else { f"-LiteralPath '{dir.replace("'", "''")}'" }
+            Some(f"\u{3}cd {target}\r")
+        }
+        // Escape clears cmd's line; /d also changes the drive. A Windows path
+        // holds no double quote.
+        "cmd" => {
+            let target = if plain(dir, true) { dir } else { f"\"{dir}\"" }
+            Some(f"\u{1b}cd /d {target}\r")
+        }
+        _ => None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_visit_moves_the_directory_first_once_within_the_limit() {
+        let mut dirs = #[]
+        for n in 0..60 { dirs = super::visited(dirs, f"/d{n}") }
+        assert_eq(dirs.len(), super::LIMIT)
+        assert_eq(dirs[0], "/d59")
+        let again = super::visited(dirs, "/d30")
+        assert_eq(again[0], "/d30")
+        assert_eq(again.filter(|d| d == "/d30").len(), 1)
+        assert_eq(again.len(), super::LIMIT)
+    }
+
+    #[test]
+    fn each_shell_gets_a_cd_it_reads_whatever_the_folder_holds() {
+        assert_eq(super::cd_input("bash", "/home/me/dev/waftty"), Some("\u{5}\u{15}cd /home/me/dev/waftty\r"))
+        assert_eq(super::cd_input("bash", "/tmp/it's here"), Some("\u{5}\u{15}cd '/tmp/it'\\''s here'\r"))
+        assert_eq(super::cd_input("zsh", "/tmp/$HOME"), Some("\u{5}\u{15}cd '/tmp/$HOME'\r"))
+        assert_eq(super::cd_input("fish", "/srv/web"), Some("\u{5}\u{15}cd /srv/web\r"))
+        assert_eq(super::cd_input("fish", "/tmp/a'b"), Some("\u{5}\u{15}cd '/tmp/a\\'b'\r"))
+        assert_eq(super::cd_input("xonsh", "/tmp/a'b"), Some("\u{5}\u{15}cd '/tmp/a\\'b'\r"))
+        assert_eq(super::cd_input("nu", "/srv/web"), Some("\u{5}\u{15}cd /srv/web\r"))
+        assert_eq(super::cd_input("nu", "/tmp/a \"b\""), Some("\u{5}\u{15}cd \"/tmp/a \\\"b\\\"\"\r"))
+        assert_eq(super::cd_input("pwsh", "C:\\Users\\me"), Some("\u{3}cd C:\\Users\\me\r"))
+        assert_eq(super::cd_input("pwsh", "C:\\it's"), Some("\u{3}cd -LiteralPath 'C:\\it''s'\r"))
+        assert_eq(super::cd_input("cmd", "C:\\x y"), Some("\u{1b}cd /d \"C:\\x y\"\r"))
+        assert_eq(super::cd_input("cmd", "D:\\src"), Some("\u{1b}cd /d D:\\src\r"))
+        assert_eq(super::cd_input("htop", "/tmp"), None)
+    }
+}

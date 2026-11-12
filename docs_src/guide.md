@@ -1,6 +1,6 @@
 ---
 title: User Guide - waftty
-description: How to use waftty - shortcuts, tabs, find, shell integration, links, character encodings, settings, color schemes and custom shortcuts.
+description: How to use waftty - shortcuts, the command palette, recent directories, private tabs, tabs, find, shell integration, links, character encodings, settings, color schemes and custom shortcuts.
 ---
 
 # User Guide
@@ -18,6 +18,7 @@ the menu bar. **Edit > Settings > Shortcuts** changes any of them.
 
 | Command | Linux and Windows | macOS |
 |---|---|---|
+| Command Palette | ++ctrl+shift+p++ | ++cmd+shift+p++ |
 | New Tab / New Window | ++ctrl+shift+t++ / ++ctrl+shift+n++ | ++cmd+t++ / ++cmd+n++ |
 | Close Tab / Close Window | ++ctrl+shift+w++ / (the window's close button) | ++cmd+w++ / ++cmd+shift+w++ |
 | Quit | ++ctrl+shift+q++ | ++cmd+q++ |
@@ -35,7 +36,8 @@ the menu bar. **Edit > Settings > Shortcuts** changes any of them.
 | Scroll Up / Down a Page | ++shift+page-up++ / ++shift+page-down++ | the same |
 | Scroll to Top / Bottom | ++ctrl+shift+home++ / ++ctrl+shift+end++ | ++cmd+home++ / ++cmd+end++ |
 | Clear Scrollback | ++ctrl+shift+k++ | ++cmd+k++ |
-| Reset and Clear | ++ctrl+shift+r++ | ++cmd+option+k++ |
+| Reset and Clear | (none; the Terminal menu or the palette) | ++cmd+option+k++ |
+| Recent Directories | ++ctrl+shift+r++ | ++cmd+shift+r++ |
 | Next Tab / Previous Tab | ++ctrl+tab++ / ++ctrl+shift+tab++ (also ++ctrl+page-down++ / ++ctrl+page-up++) | the same, or ++cmd+shift+bracket-right++ / ++cmd+shift+bracket-left++ |
 | Tab 1 to 8 / Last Tab | ++alt+1++ to ++alt+8++ / ++alt+9++ | ++cmd+1++ to ++cmd+8++ / ++cmd+9++ |
 | Switch to Last Tab | ++ctrl+shift+l++ | ++cmd+shift+l++ |
@@ -45,13 +47,29 @@ the menu bar. **Edit > Settings > Shortcuts** changes any of them.
 | Close Pane | ++ctrl+shift+j++ | ++cmd+option+w++ |
 
 A right click on the terminal offers the link entries, Copy, Paste, Select
-All, New Tab, Split Right, Split Down, Close Pane, Find, Clear Scrollback,
-Send Signal, Zoom, Show Menu Bar and Settings.
+All, New Tab, Split Right, Split Down, Close Pane, Recent Directories, Find, Clear Scrollback,
+Send Signal, Zoom, Command Palette, Show Menu Bar and Settings.
+
+## Command Palette
+
+++ctrl+shift+p++ (++cmd+shift+p++ on macOS) opens the command palette. It
+lists every command, named with its group, as in "Terminal: Split Right".
+Typing narrows the list to the commands holding what you type anywhere in
+their name: "pri" finds New Private Tab and New Private Window. ++up++ and ++down++ move the highlight, ++tab++ completes the
+search to the highlighted command, and ++enter++ or a click runs it.
+++escape++ clears the search, and closes the palette once it is empty.
+
+The palette reaches every command, so the menu bar can stay hidden: **View >
+Show Menu Bar** (++ctrl+shift+m++) hides it, and the palette's Show Menu Bar
+brings it back.
 
 ## Tabs
 
-- A tab is named for its program until the program sets a title; its tooltip
-  adds the folder it works in.
+- A tab is named for the command in front and the folder it works in, as
+  `claude: ~/dev/waftty` while Claude Code runs or `bash: ~/dev/waftty` at the
+  prompt; the window title shows the same. A command that prints nothing yet
+  shows once it prints or ends. The tab's tooltip adds the title the program
+  set, and `--title` names a tab whatever runs in it.
 - Drag a tab to reorder it. The Tabs menu and a right click on a tab pin it,
   close the others, or close the tabs to its right. Pinned tabs sit first and
   stay open.
@@ -67,6 +85,46 @@ Send Signal, Zoom, Show Menu Bar and Settings.
   it anyway; **Cancel** (++c++ or ++escape++) keeps it. Every dialog's buttons
   answer the letter underlined in their labels, and the arrow keys move
   between them.
+
+## Recent Directories
+
+waftty remembers the folders its tabs work in, latest first, the last 50 of
+them. ++ctrl+shift+r++ (++cmd+shift+r++ on macOS) lists them, without the
+one the tab is in and any that are gone. Type part of a folder's path to
+narrow the list, ++tab++ completes the search to the highlighted folder, and
+++enter++ or a click goes there: at a shell's prompt waftty clears the line
+and types the `cd`, and while a command runs it opens a new tab in the
+folder instead. Private tabs add nothing to the list, and **Terminal > Clear
+Recent Directories** (or the palette) forgets every folder on it.
+
+## Private Tabs and Windows
+
+Private windows and tabs let you work in a temporary directory or run
+dangerous commands without history pollution. **File > New Private Tab** and
+**File > New Private Window** open tabs whose shell writes nothing to its
+history file. bash, zsh, fish and PowerShell keep the session's own history,
+so ++up++ still brings back earlier lines; nushell and xonsh keep none at all.
+waftty records nothing of a private tab either: its folders stay out of
+Recent Directories, and it is left out of the windows reopened at the next
+start. A private tab says "(private)" after its name; every tab and pane a
+private window opens is private, and so is a pane split off a private tab.
+
+waftty can do this for these shells:
+
+| Shell | How |
+|---|---|
+| bash | starts it with a startup file that runs your usual ones, then unsets `HISTFILE` |
+| zsh | starts it with a `ZDOTDIR` that hands startup back to your own files and unsets `HISTFILE` before each prompt |
+| fish | `fish --private` |
+| nushell | `nu --no-history`, which also leaves no history to recall in the session |
+| xonsh | runs a startup file before yours that turns history off (`XONSH_HISTORY_BACKEND = 'dummy'`) once yours have run |
+| sh | dash keeps no history; bash running as `sh` gets an empty `HISTFILE` |
+| PowerShell | `Set-PSReadLineOption -HistorySaveStyle SaveNothing` after your profile |
+| cmd | keeps its history in memory only |
+
+For any other shell waftty says it cannot keep the history private and opens
+no tab. Programs you run inside the tab, such as a Python prompt or `psql`,
+keep their own history as they always do.
 
 ## Split Panes
 
@@ -172,8 +230,8 @@ ends:
 - **Select Last Command Output** selects everything the last command printed.
 - New tabs and windows open in the folder the shell is in.
 
-waftty carries the scripts that do this for bash, zsh, fish and PowerShell;
-`waftty --shell-integration SHELL` prints one. Add the line for your shell to
+waftty carries the scripts that do this for bash, zsh, fish, nushell, xonsh
+and PowerShell; `waftty --shell-integration SHELL` prints one. Add the line for your shell to
 its startup file. Each runs only in waftty and leaves your prompt as it is.
 
 === "bash"
@@ -195,6 +253,25 @@ its startup file. Each runs only in waftty and leaves your prompt as it is.
     ```fish
     # ~/.config/fish/config.fish
     test "$TERM_PROGRAM" = waftty; and waftty --shell-integration fish | source
+    ```
+
+=== "nushell"
+
+    Nushell writes the marks and the folder itself, and has them on unless
+    your config turns them off. `waftty --shell-integration nu` prints the
+    two settings; in config.nu:
+
+    ```nu
+    $env.config.shell_integration.osc133 = true
+    $env.config.shell_integration.osc7 = true
+    ```
+
+=== "xonsh"
+
+    ```python
+    # ~/.xonshrc
+    if ${...}.get('TERM_PROGRAM') == 'waftty':
+        execx($(waftty --shell-integration xonsh))
     ```
 
 === "PowerShell"

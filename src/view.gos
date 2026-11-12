@@ -2,6 +2,8 @@
 // active tab's terminal, with a tab strip joined between them as the
 // settings ask, and the find bar under the terminal while it is open.
 
+use std::fs
+
 use gui
 use gui::{Axis, Color, Edge, TabItem, ThemeOverride, Widget}
 
@@ -49,8 +51,27 @@ pub fn window(m: Model, key: String) -> Widget {
         Some(change) => Widget::column(rows, 0).grow(1).themed(change)
         None => Widget::column(rows, 0).grow(1)
     }
-    let content = Widget::column(#[chrome, win.find.view()], 0)
+    let mut content = Widget::column(#[chrome, win.find.view()], 0)
+    let menu_bar = m.settings.menu_bar && !m.drop_down
+    if win.palette { content = Widget::stack(#[content, hanging(Widget::command_palette(commands::PALETTE_FIELD), menu_bar)]) }
+    if win.recent { content = Widget::stack(#[content, hanging(recent(m, w), menu_bar)]) }
     if m.drop_down && win.key == "main" { edged(content.grow(1), drop_down::position(m.settings, m.quick_position)) } else { content }
+}
+
+// `list` (the command palette or Recent Directories) hanging from the top
+// of the window, under the menu bar when it shows, over the terminal; a
+// click beside it reaches the terminal.
+fn hanging(list: Widget, menu_bar: bool) -> Widget {
+    list.width(560).margin_sides(0, if menu_bar { 36 } else { 8 }, 0, 0).align(0.5, 0.0).pass_through()
+}
+
+// Recent Directories for window `w`: the directories tabs worked in, latest
+// first, without the one the window shows or any that is gone.
+fn recent(m: Model, w: i64) -> Widget {
+    let here = match m.windows[w].current() { Some(t) => t.cwd, None => "" }
+    let dirs = m.recent_dirs.filter(|d| d != here && fs::exists(d))
+    let items = Widget::items(dirs.map(|d| (d, model::shortened(d))))
+    Widget::quick_pick(commands::recent_field(m.windows[w].key), items, "Recent directories", "No recent directories")
 }
 
 // The quick terminal has no frame, so a rule marks its edge facing the rest
@@ -116,10 +137,7 @@ pub fn split_of(id: String) -> Option<(String, String, String)> {
     Some((parts[0], parts[1], parts[2]))
 }
 
-// The tab's title and, when known, the folder its program works in.
+// The tab's label and, when its program set one, the program's own title.
 fn tooltip(t: model::Tab) -> String {
-    match t.terminal.cwd() {
-        Ok(dir) if !dir.is_empty() && dir != t.label() => f"{t.label()}\n{dir}"
-        _ => t.label()
-    }
+    if !t.title.is_empty() && t.title != t.label() { f"{t.label()}\n{t.title}" } else { t.label() }
 }

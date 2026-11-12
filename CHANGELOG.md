@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.0 - Command palette
+
+- A command palette: Ctrl+Shift+P (Cmd+Shift+P on macOS) finds and runs any command by part of its name.
+- Tabs and the window title name the command in front and its folder, as "claude: ~/dev/waftty".
+- Recent Directories: Ctrl+Shift+R (Cmd+Shift+R on macOS) goes back to a folder a tab worked in; Terminal > Clear Recent Directories forgets them.
+- Private windows and tabs to work in a temporary directory or run dangerous commands without history pollution.
+- Private tabs work with bash, zsh, fish, nushell, xonsh, PowerShell, sh and cmd.
+- Shell integration for nushell and xonsh.
+- Reset and Clear has no shortcut on Linux and Windows; Ctrl+Shift+R opens Recent Directories.
+- Closing a tab or window, or quitting, no longer loses bash history.
+- The menu bar can be hidden (View > Show Menu Bar); it shows by default.
+- A shell's first prompt no longer flickers at startup, in new tabs or in split panes.
+- Builds on gui-engine-gos 0.2.14 and gui-gos 0.2.5.
+
 ## 0.5.16 - Cursor blinks without repaint
 
 - macOS: a blinking cursor no longer repaints the window and uses less of a core.

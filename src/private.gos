@@ -1,0 +1,139 @@
+// Private tabs: shells started so they write no history, for the shells that
+// can be told to. Each keeps the session's own history in memory, so earlier
+// lines stay a keypress away, and none of it reaches the history file.
+
+use std::{env, errors, fs, os, path}
+
+use gui::services
+use gui::terminal::Command
+
+use info
+
+// Bash reads this in place of ~/.bashrc: the user's own startup, then no
+// history file.
+const BASH_RC: String = """
+[ -f ~/.bashrc ] && . ~/.bashrc
+unset HISTFILE
+"""
+
+// The same for a login shell, which reads the profile files instead.
+const BASH_LOGIN_RC: String = """
+[ -f /etc/profile ] && . /etc/profile
+for __waftty_profile in ~/.bash_profile ~/.bash_login ~/.profile; do
+    if [ -f "$__waftty_profile" ]; then . "$__waftty_profile"; break; fi
+done
+unset __waftty_profile HISTFILE
+"""
+
+// Zsh starts from this folder's .zshenv, which hands the rest of startup
+// back to the user's own files, then drops the history file before each
+// prompt, after those files set it.
+const ZSHENV: String = """
+ZDOTDIR=${WAFTTY_USER_ZDOTDIR:-$HOME}
+unset WAFTTY_USER_ZDOTDIR
+[[ -f $ZDOTDIR/.zshenv ]] && builtin source $ZDOTDIR/.zshenv
+if [[ -o interactive ]]; then
+    __waftty_private() { unset HISTFILE; SAVEHIST=0 }
+    precmd_functions=(__waftty_private $precmd_functions)
+fi
+"""
+
+// xonsh reads this before the user's own startup files; once they have run
+// it turns history off, so a backend they choose gives way.
+const XONSHRC: String = """
+@events.on_post_rc
+def __waftty_private(**_):
+    $XONSH_HISTORY_BACKEND = 'dummy'
+"""
+
+/// The shells a private tab can run, as a sentence names them.
+pub const SHELLS: String = "bash, zsh, fish, nushell, xonsh, PowerShell, sh and cmd"
+
+// Writes `text` to file `name` in the folder private shells start from,
+// answering its path.
+fn startup_file(folder: String, name: String, text: String) -> Result<String, errors::Error> {
+    let dir = path::join(services::cache_dir(info::APP_ID), folder)
+    fs::create_dir_all(dir)?
+    let file = path::join(dir, name)
+    fs::write(file, text.bytes())?
+    Ok(dir)
+}
+
+/// `command`, whose program is named `name` ("bash" for /bin/bash), started
+/// so its shell writes no history; an error for a shell waftty cannot ask
+/// for that.
+pub fn launch(command: Command, name: String) -> Result<Command, errors::Error> {
+    let mut out = command
+    match name {
+        "bash" => {
+            let login = command.args.any(|a| a == "-l" || a == "--login")
+            let dir = startup_file("private-bash", if login { "login.bashrc" } else { "bashrc" }, if login { BASH_LOGIN_RC } else { BASH_RC })?
+            let mut args = #["--rcfile", path::join(dir, if login { "login.bashrc" } else { "bashrc" }), "-i"]
+            for a in command.args { if a != "-l" && a != "--login" { args.push(a) } }
+            out.args = args
+        }
+        "zsh" => {
+            let dir = startup_file("private-zsh", ".zshenv", ZSHENV)?
+            let declared = command.env.iter().find(|kv| kv.0 == "ZDOTDIR").map(|kv| kv.1)
+            if let Some(own) = declared.or(env::var("ZDOTDIR")) { out.env.push(("WAFTTY_USER_ZDOTDIR", own)) }
+            out.env.push(("ZDOTDIR", dir))
+        }
+        "fish" | "nu" => {
+            let mut args = #[if name == "fish" { "--private" } else { "--no-history" }]
+            for a in command.args { args.push(a) }
+            out.args = args
+        }
+        "xonsh" => {
+            let dir = startup_file("private-xonsh", "private.xsh", XONSHRC)?
+            let windows = os::family() == "windows"
+            let separator = if windows { ";" } else { ":" }
+            // xonsh's own list when the environment names none.
+            let defaults = if windows { "C:\\ProgramData\\xonsh\\xonshrc;~/.config/xonsh/rc.xsh;~/.xonshrc" } else { "/etc/xonsh/xonshrc:~/.config/xonsh/rc.xsh:~/.xonshrc" }
+            let declared = command.env.iter().find(|kv| kv.0 == "XONSHRC").map(|kv| kv.1)
+            let theirs = declared.or(env::var("XONSHRC")).unwrap_or(defaults)
+            out.env.push(("XONSHRC", f"{path::join(dir, "private.xsh")}{separator}{theirs}"))
+        }
+        // dash and ash keep no history file; bash running as sh honours an
+        // empty HISTFILE.
+        "sh" | "dash" | "ash" => out.env.push(("HISTFILE", ""))
+        "pwsh" | "powershell" => {
+            for a in #["-NoExit", "-Command", "Set-PSReadLineOption -HistorySaveStyle SaveNothing"] { out.args.push(a) }
+        }
+        // cmd keeps its history in memory only.
+        "cmd" => ()
+        _ => return Err(errors::new(f"waftty can keep the history private for {SHELLS}, not for {name}"))
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use gui::terminal::Command
+
+    fn shell(program: String, args: Vec<String>) -> Command {
+        Command { program: program, args: args, cwd: "", env: #[] }
+    }
+
+    #[test]
+    fn each_known_shell_starts_without_its_history_file() {
+        let Ok(bash) = super::launch(shell("/bin/bash", #[]), "bash") else { panic("bash refused") }
+        assert_eq(bash.args[0], "--rcfile")
+        assert(bash.args[1].ends_with("bashrc") && bash.args[2] == "-i", f"{bash.args}")
+        let Ok(login) = super::launch(shell("/bin/bash", #["-l"]), "bash") else { panic("bash -l refused") }
+        assert(login.args[1].ends_with("login.bashrc") && !login.args.contains("-l"), f"{login.args}")
+        let Ok(zsh) = super::launch(shell("/bin/zsh", #["-l"]), "zsh") else { panic("zsh refused") }
+        assert(zsh.env.any(|kv| kv.0 == "ZDOTDIR" && kv.1.ends_with("private-zsh")), f"{zsh.env}")
+        assert_eq(zsh.args, #["-l"])
+        let Ok(fish) = super::launch(shell("/usr/bin/fish", #[]), "fish") else { panic("fish refused") }
+        assert_eq(fish.args, #["--private"])
+        let Ok(nu) = super::launch(shell("/usr/bin/nu", #["-l"]), "nu") else { panic("nu refused") }
+        assert_eq(nu.args, #["--no-history", "-l"])
+        let Ok(xonsh) = super::launch(shell("/usr/bin/xonsh", #[]), "xonsh") else { panic("xonsh refused") }
+        assert(xonsh.env.any(|kv| kv.0 == "XONSHRC" && kv.1.contains("private.xsh") && kv.1.contains(".xonshrc")), f"{xonsh.env}")
+        let Ok(sh) = super::launch(shell("/bin/sh", #[]), "sh") else { panic("sh refused") }
+        assert(sh.env.contains(("HISTFILE", "")))
+        let Ok(pwsh) = super::launch(shell("pwsh.exe", #[]), "pwsh") else { panic("pwsh refused") }
+        assert_eq(pwsh.args[2], "Set-PSReadLineOption -HistorySaveStyle SaveNothing")
+        assert(super::launch(shell("/bin/tcsh", #[]), "tcsh").is_err())
+    }
+}

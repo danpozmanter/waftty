@@ -1,6 +1,6 @@
 ---
 title: waftty - a light, tabbed terminal for Linux, macOS and Windows
-description: waftty is a tabbed terminal emulator for Linux, macOS and Windows. About 20 MB of memory and no CPU at idle, with find in scrollback, shell integration, links, color schemes and 36 character sets.
+description: waftty is a tabbed terminal emulator for Linux, macOS and Windows. About 20 MB of memory and no CPU at idle, with a command palette, private windows and tabs, find in scrollback, shell integration, links, color schemes and 36 character sets.
 ---
 
 <div class="hero" markdown>
@@ -64,6 +64,22 @@ Display images directly in your terminal with support for modern graphics protoc
 ### Keyboard-First Navigation
 
 Copy text with Vim-style keyboard navigation, jump directly to links and file paths, and search your scrollback without reaching for the mouse.
+
+</div>
+
+<div class="feature" markdown>
+
+### Command Palette
+
+Ctrl+Shift+P (Cmd+Shift+P on macOS) runs any command by typing the start of its name, and Ctrl+Shift+R goes back to a recent directory. The menu bar can stay hidden.
+
+</div>
+
+<div class="feature" markdown>
+
+### Private Windows and Tabs
+
+Open a private window or tab to work in a temporary directory or run dangerous commands without history pollution.
 
 </div>
 

@@ -16,6 +16,8 @@ use signals
 
 pub const NEW_TAB: String = "file.new-tab"
 pub const NEW_WINDOW: String = "file.new-window"
+pub const NEW_PRIVATE_TAB: String = "file.new-private-tab"
+pub const NEW_PRIVATE_WINDOW: String = "file.new-private-window"
 pub const CLOSE_TAB: String = "file.close-tab"
 pub const CLOSE_WINDOW: String = "file.close-window"
 pub const QUIT: String = "file.quit"
@@ -37,6 +39,8 @@ pub const ZOOM_OUT: String = "view.zoom-out"
 pub const NORMAL_SIZE: String = "view.normal-size"
 pub const MENU_BAR: String = "view.menu-bar"
 pub const RESET_WINDOW_SIZE: String = "view.reset-window-size"
+pub const COMMAND_PALETTE: String = "view.command-palette"
+pub const CLOSE_PALETTE: String = "view.close-command-palette"
 pub const FIND: String = "terminal.find"
 pub const FIND_NEXT: String = "terminal.find-next"
 pub const FIND_PREVIOUS: String = "terminal.find-previous"
@@ -52,6 +56,9 @@ pub const SCROLL_BOTTOM: String = "terminal.scroll-bottom"
 pub const CLEAR_SCROLLBACK: String = "terminal.clear-scrollback"
 pub const RESET: String = "terminal.reset"
 pub const RESET_AND_CLEAR: String = "terminal.reset-and-clear"
+pub const RECENT_DIRS: String = "terminal.recent-directories"
+pub const CLOSE_RECENT: String = "terminal.close-recent-directories"
+pub const CLEAR_RECENT: String = "terminal.clear-recent-directories"
 pub const NEXT_TAB: String = "tabs.next"
 pub const PREVIOUS_TAB: String = "tabs.previous"
 pub const LAST_TAB: String = "tabs.last-active"
@@ -76,6 +83,22 @@ pub const ZOOM_STEP: f64 = 1.0
 /// Where the guide and its shortcut list live.
 pub const GUIDE_URL: String = "https://danpozmanter.github.io/waftty/guide/"
 pub const SHORTCUTS_URL: String = "https://danpozmanter.github.io/waftty/guide/#shortcuts"
+
+/// The command palette's search field, in whichever window shows it.
+pub const PALETTE_FIELD: String = "command-palette"
+
+/// The search field of Recent Directories in window `window`.
+pub fn recent_field(window: String) -> String {
+    f"recent-directories:{window}"
+}
+
+/// The window whose Recent Directories field `id` names, if it names one.
+pub fn recent_window_of(id: String) -> Option<String> {
+    suffix(id, "recent-directories:")
+}
+
+// The toolkit's own palette, a dialog, which waftty's replaces.
+const TOOLKIT_PALETTE: String = "gui.command-palette"
 
 const SIGNAL_PREFIX: String = "terminal.signal:"
 const ENCODING_PREFIX: String = "terminal.encoding:"
@@ -174,9 +197,15 @@ pub fn registry(m: Model, key: String) -> Vec<Command> {
         paste = paste.key("Ctrl+V")
         select_all = select_all.key("Ctrl+A")
     }
+    // Ctrl+Shift+R opens Recent Directories, so Reset and Clear keeps a
+    // shortcut on macOS only.
+    let mut reset_and_clear = Command::new(RESET_AND_CLEAR, "Reset and Clear").category("Terminal").enabled(has_tab)
+    if mac { reset_and_clear = reset_and_clear.key("Cmd+Option+K") }
     let mut out = #[
         Command::new(NEW_TAB, "New Tab").key(chord("Ctrl+Shift+T", "Cmd+T")).category("File")
         Command::new(NEW_WINDOW, "New Window").key(chord("Ctrl+Shift+N", "Cmd+N")).category("File")
+        Command::new(NEW_PRIVATE_TAB, "New Private Tab").category("File")
+        Command::new(NEW_PRIVATE_WINDOW, "New Private Window").category("File")
         Command::new(CLOSE_TAB, "Close Tab").key(chord("Ctrl+Shift+W", "Cmd+W")).category("File").enabled(has_tab && !pinned)
         close_window
         Command::new(QUIT, "Quit").key(chord("Ctrl+Shift+Q", "Cmd+Q")).category("File")
@@ -198,6 +227,8 @@ pub fn registry(m: Model, key: String) -> Vec<Command> {
         Command::new(NORMAL_SIZE, "Reset Zoom").key(chord("Ctrl+0", "Cmd+0")).category("View").enabled(window.zoom != 0.0)
         Command::new(MENU_BAR, "Show Menu Bar").key(chord("Ctrl+Shift+M", "Cmd+Shift+M")).category("View").checked(m.settings.menu_bar).enabled(!m.drop_down)
         Command::new(RESET_WINDOW_SIZE, "Reset Window Size").category("View").enabled(!window.fullscreen)
+        Command::new(COMMAND_PALETTE, "Command Palette…").key(chord("Ctrl+Shift+P", "Cmd+Shift+P")).category("View")
+        Command::new(CLOSE_PALETTE, "Close Command Palette").key("Escape").category("View").in_scope(PALETTE_FIELD).visible(false)
         Command::new(FIND, "Find…").key(chord("Ctrl+Shift+F", "Cmd+F")).category("Terminal").enabled(has_tab)
         Command::new(FIND_NEXT, "Find Next").key(chord("Ctrl+Shift+G", "Cmd+G")).category("Terminal").enabled(searchable)
         Command::new(FIND_PREVIOUS, "Find Previous").key(chord("Ctrl+Shift+H", "Cmd+Shift+G")).category("Terminal").enabled(searchable)
@@ -217,7 +248,10 @@ pub fn registry(m: Model, key: String) -> Vec<Command> {
         Command::new(NEXT_PANE, "Next Pane").key(chord("Ctrl+Shift+]", "Cmd+]")).category("Terminal").enabled(split)
         Command::new(PREVIOUS_PANE, "Previous Pane").key(chord("Ctrl+Shift+[", "Cmd+[")).category("Terminal").enabled(split)
         Command::new(CLOSE_PANE, "Close Pane").key(chord("Ctrl+Shift+J", "Cmd+Option+W")).category("Terminal").enabled(split)
-        Command::new(RESET_AND_CLEAR, "Reset and Clear").key(chord("Ctrl+Shift+R", "Cmd+Option+K")).category("Terminal").enabled(has_tab)
+        reset_and_clear
+        Command::new(RECENT_DIRS, "Recent Directories…").key(chord("Ctrl+Shift+R", "Cmd+Shift+R")).category("Terminal").enabled(has_tab)
+        Command::new(CLEAR_RECENT, "Clear Recent Directories").category("Terminal").enabled(!m.recent_dirs.is_empty())
+        Command::new(CLOSE_RECENT, "Close Recent Directories").key("Escape").category("Terminal").in_scope(recent_field(key)).visible(false)
         Command::new(PREVIOUS_TAB, "Previous Tab").key("Ctrl+Shift+Tab").key(chord("Ctrl+PageUp", "Cmd+Shift+[")).category("Tabs").enabled(tabs > 1)
         Command::new(NEXT_TAB, "Next Tab").key("Ctrl+Tab").key(chord("Ctrl+PageDown", "Cmd+Shift+]")).category("Tabs").enabled(tabs > 1)
         Command::new(LAST_TAB, "Switch to Last Tab").key(chord("Ctrl+Shift+L", "Cmd+Shift+L")).category("Tabs").enabled(window.index_of(window.previous).is_some())
@@ -250,6 +284,19 @@ pub fn registry(m: Model, key: String) -> Vec<Command> {
     shortcuts::apply(out, m.shortcuts)
 }
 
+/// The commands window `key` gives the toolkit: `registry`, and the
+/// toolkit's own commands kept off the palette and the menus, since a
+/// terminal window has no use for them. Their keys still reach text fields,
+/// except the toolkit palette's, which opens waftty's.
+pub fn window_commands(m: Model, key: String) -> Vec<Command> {
+    let mut out = registry(m, key)
+    for c in gui::commands::standard_commands() {
+        if out.any(|o| o.id == c.id) { continue }
+        out.push(if c.id == TOOLKIT_PALETTE { Command::new(c.id, c.label).visible(false) } else { c.visible(false) })
+    }
+    out
+}
+
 // The Send Signal submenu: the signals people send by hand, then the rest.
 fn signal_menu() -> MenuItem {
     let mut common = #[]
@@ -271,9 +318,9 @@ pub fn context_menu(drop_down: bool) -> Vec<MenuItem> {
     let mut items = #[
         menus::item(OPEN_LINK), menus::item(COPY_LINK), menus::item(COPY_EMAIL), MenuItem::Separator
         menus::item(COPY), menus::item(PASTE), menus::item(SELECT_ALL), MenuItem::Separator
-        menus::item(NEW_TAB), menus::item(SPLIT_RIGHT), menus::item(SPLIT_DOWN), menus::item(CLOSE_PANE), MenuItem::Separator
+        menus::item(NEW_TAB), menus::item(SPLIT_RIGHT), menus::item(SPLIT_DOWN), menus::item(CLOSE_PANE), menus::item(RECENT_DIRS), MenuItem::Separator
         menus::item(FIND), menus::item(CLEAR_SCROLLBACK), MenuItem::Separator
-        signal_menu(), zoom_menu()
+        signal_menu(), zoom_menu(), menus::item(COMMAND_PALETTE)
     ]
     // The quick terminal has no menu bar, so its menu reaches what the bar
     // would: About, updates and Quit.
@@ -302,7 +349,7 @@ pub fn menu_bar(m: Model, key: String) -> gui::Widget {
     }
     gui::Widget::joined_menu_bar("menu", #[
         Menu::new("&File", #[
-            menus::item(NEW_TAB), menus::item(NEW_WINDOW), MenuItem::Separator
+            menus::item(NEW_TAB), menus::item(NEW_WINDOW), menus::item(NEW_PRIVATE_TAB), menus::item(NEW_PRIVATE_WINDOW), MenuItem::Separator
             menus::item(SAVE_SCROLLBACK), menus::item(SAVE_SELECTION), menus::item(EDIT_SCROLLBACK), MenuItem::Separator
             menus::item(CLOSE_TAB), menus::item(CLOSE_WINDOW), MenuItem::Separator
             menus::item(QUIT)
@@ -312,10 +359,10 @@ pub fn menu_bar(m: Model, key: String) -> gui::Widget {
             menus::item(OPEN_LINK_HINT), menus::item(COPY_LINK_HINT), MenuItem::Separator
             menus::item(SETTINGS)
         ])
-        Menu::new("&View", #[menus::item(FULLSCREEN), menus::item(MENU_BAR), MenuItem::Separator, zoom_menu(), menus::item(RESET_WINDOW_SIZE)])
+        Menu::new("&View", #[menus::item(COMMAND_PALETTE), MenuItem::Separator, menus::item(FULLSCREEN), menus::item(MENU_BAR), MenuItem::Separator, zoom_menu(), menus::item(RESET_WINDOW_SIZE)])
         Menu::new("&Terminal", #[
             menus::item(FIND), menus::item(FIND_NEXT), menus::item(FIND_PREVIOUS), MenuItem::Separator
-            menus::item(PREVIOUS_PROMPT), menus::item(NEXT_PROMPT), menus::item(SELECT_OUTPUT), MenuItem::Separator
+            menus::item(PREVIOUS_PROMPT), menus::item(NEXT_PROMPT), menus::item(SELECT_OUTPUT), menus::item(RECENT_DIRS), menus::item(CLEAR_RECENT), MenuItem::Separator
             menus::item(COPY_MODE), MenuItem::Separator
             menus::item(SPLIT_RIGHT), menus::item(SPLIT_DOWN), menus::item(NEXT_PANE), menus::item(PREVIOUS_PANE), menus::item(CLOSE_PANE), MenuItem::Separator
             menus::item(SCROLL_TOP), menus::item(SCROLL_BOTTOM), menus::item(CLEAR_SCROLLBACK), MenuItem::Separator
@@ -353,7 +400,7 @@ mod tests {
     #[test]
     fn the_link_entries_show_only_over_a_link_and_the_email_entry_over_an_address() {
         let mut m = model::new(Settings::default())
-        m.windows[0].tabs.push(model::Tab { key: "tab-1", terminal: Terminal { id: 0 }, title: "", name: "", encoding: "", pinned: false, link: "", attention: false, fixed_title: "", hold: false, group: "" })
+        m.windows[0].tabs.push(model::Tab { key: "tab-1", terminal: Terminal { id: 0 }, title: "", name: "", encoding: "", pinned: false, link: "", attention: false, fixed_title: "", hold: false, group: "", job: "", cwd: "", private: false })
         m.windows[0].active = "tab-1"
         assert(!shown(m, super::OPEN_LINK) && !shown(m, super::COPY_LINK) && !shown(m, super::COPY_EMAIL))
         m.windows[0].tabs[0].link = "https://example.org/"
@@ -369,6 +416,21 @@ mod tests {
         assert_eq(super::email_of("mailto:me@example.org?subject=hi"), Some("me@example.org"))
         assert_eq(super::email_of("mailto:"), None)
         assert_eq(super::email_of("https://example.org/"), None)
+    }
+
+    #[test]
+    fn the_palette_takes_the_toolkits_chord_and_the_toolkits_own_commands_stay_off_it() {
+        let offered = super::window_commands(model::new(Settings::default()), "main")
+        for c in gui::commands::standard_commands() {
+            assert_eq(offered.filter(|o| o.id == c.id).len(), 1, c.id)
+        }
+        let Some(toolkit) = offered.iter().find(|c| c.id == "gui.command-palette") else { panic("the toolkit palette is missing") }
+        assert(!toolkit.visible && toolkit.shortcuts.is_empty())
+        let Some(ours) = offered.iter().find(|c| c.id == super::COMMAND_PALETTE) else { panic("the palette command is missing") }
+        assert(ours.visible)
+        assert_eq(ours.shortcuts.map(shortcuts::spelled), #[if gui::input::platform_is_macos() { "Cmd+Shift+P" } else { "Ctrl+Shift+P" }])
+        let Some(undo) = offered.iter().find(|c| c.id == "edit.undo") else { panic("undo is missing") }
+        assert(!undo.visible && !undo.shortcuts.is_empty())
     }
 
     #[test]

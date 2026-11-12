@@ -342,6 +342,41 @@ pub fn journey() -> Result<(), errors::Error> {
     require(s.window_size(0) == framed, f"leaving fullscreen made the window {s.window_size(0)}")?
     println(f"view: the menus run File to Help; Zoom In and Out changed {normal} columns to {zoomed} and back, Reset Zoom restored them; Fullscreen's shortcut went fullscreen and back")
 
+    let terminal = s.focused()
+    shortcut(&mut s, commands::COMMAND_PALETTE)?
+    s.flush()?
+    require(s.focused() == commands::PALETTE_FIELD, f"the palette left focus at {s.focused()}")?
+    s.type_text("zoom in")?
+    s.press(Key::Return, Mods::default())?
+    s.flush()?
+    require(columns(s) < normal, "the palette's Zoom In did not zoom")?
+    require(s.focused() == terminal, f"running a command left focus at {s.focused()}")?
+    shortcut(&mut s, commands::NORMAL_SIZE)?
+    shortcut(&mut s, commands::COMMAND_PALETTE)?
+    s.type_text("x")?
+    s.press(Key::Escape, Mods::default())?
+    s.flush()?
+    require(s.focused() == commands::PALETTE_FIELD, "Escape closed the palette before clearing its search")?
+    s.press(Key::Escape, Mods::default())?
+    s.flush()?
+    require(s.focused() == terminal && columns(s) == normal, f"Escape left focus at {s.focused()}")?
+    println("palette: its shortcut focused the search, Zoom In ran from it and gave focus back, and Escape cleared the search, then closed it")
+
+    shortcut(&mut s, commands::RECENT_DIRS)?
+    s.flush()?
+    require(s.focused() == commands::recent_field("main"), f"Recent Directories left focus at {s.focused()}")?
+    s.press(Key::Escape, Mods::default())?
+    s.flush()?
+    require(s.focused() == terminal, f"Escape left focus at {s.focused()}")?
+    s.run_command(0, commands::NEW_PRIVATE_TAB)
+    s.flush()?
+    await_text(&mut s, 0, "(private)")?
+    shortcut(&mut s, commands::CLOSE_TAB)?
+    while s.semantics(0).dump().contains("(private)") {
+        require(s.step()?, "the session ended before the private tab closed")?
+    }
+    println("recent and private: Recent Directories' shortcut focused its search and Escape gave focus back; New Private Tab opened a tab marked private, which closed")
+
     s.press(Key::F10, Mods { shift: true, ..Mods::default() })?
     s.flush()?
     require(s.popup_owners().any(|p| p.0.starts_with("terminal-menu:main:")), f"Shift+F10 opened {s.popup_owners()}")?

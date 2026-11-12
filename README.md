@@ -9,7 +9,11 @@
 
 A tabbed terminal emulator written in [Gossamer](https://github.com/gossamer-lang/gossamer)
 on gui-gos - built on Rust and SDL 3. A window is its menu bar and its terminal, with a slim tab strip
-between them once it holds more than one tab. The window title names the tab
+between them once it holds more than one tab. A command palette
+(Ctrl+Shift+P, Cmd+Shift+P on macOS) reaches every command, so the menu bar
+can also be hidden. Ctrl+Shift+R goes back to a recent folder, and private
+windows and tabs let you work in a temporary directory or run dangerous
+commands without history pollution. The window title names the tab
 it shows. Each tab runs your shell and reads and writes its own character
 encoding, and splits into panes side by side or one above the other.
 `waftty --quick` runs it as a quick terminal, hung from any edge of the

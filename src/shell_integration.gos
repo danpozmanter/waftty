@@ -5,7 +5,7 @@
 // startup file can evaluate the one for the waftty it runs in.
 
 /// The shells there is a script for, as a sentence names them.
-pub const SHELLS: String = "bash, zsh, fish and powershell"
+pub const SHELLS: String = "bash, zsh, fish, nu, xonsh and powershell"
 
 const BASH: String = """
 # waftty shell integration for bash: prompt and output marks (OSC 133)
@@ -108,12 +108,56 @@ if (Get-Module PSReadLine) {
 }
 """
 
+// Nushell writes the marks and the folder itself; the script makes sure
+// they are on.
+const NU: String = """
+# waftty shell integration for nushell: prompt and output marks (OSC 133)
+# and the working folder (OSC 7), which nushell writes itself once these are
+# on (they are by default). In config.nu:
+#   $env.config.shell_integration.osc133 = true
+#   $env.config.shell_integration.osc7 = true
+$env.config.shell_integration.osc133 = true
+$env.config.shell_integration.osc7 = true
+"""
+
+const XONSH: String = """
+# waftty shell integration for xonsh: prompt and output marks (OSC 133)
+# and the working folder (OSC 7). In ~/.xonshrc:
+#   if ${...}.get('TERM_PROGRAM') == 'waftty':
+#       execx($(waftty --shell-integration xonsh))
+import sys as __waftty_sys
+import socket as __waftty_socket
+
+__waftty_ran = [False]
+
+def __waftty_write(text):
+    __waftty_sys.stdout.write(text)
+    __waftty_sys.stdout.flush()
+
+@events.on_pre_prompt
+def __waftty_pre_prompt(**_):
+    __waftty_write(f'\\x1b]7;file://{__waftty_socket.gethostname()}{$PWD}\\x07\\x1b]133;A\\x07')
+
+@events.on_precommand
+def __waftty_precommand(cmd, **_):
+    __waftty_ran[0] = True
+    __waftty_write('\\x1b]133;C\\x07')
+
+@events.on_postcommand
+def __waftty_postcommand(cmd, rtn, **_):
+    if __waftty_ran[0]:
+        __waftty_ran[0] = False
+        __waftty_write(f'\\x1b]133;D;{rtn}\\x07')
+"""
+
 /// The integration script for `shell`, or `None` for a shell without one.
 pub fn script(shell: String) -> Option<String> {
     match shell.to_lowercase() {
         "bash" => Some(BASH)
         "zsh" => Some(ZSH)
         "fish" => Some(FISH)
+        "nu" | "nushell" => Some(NU)
+        "xonsh" => Some(XONSH)
         "powershell" | "pwsh" => Some(POWERSHELL)
         _ => None
     }
@@ -123,13 +167,15 @@ pub fn script(shell: String) -> Option<String> {
 mod tests {
     #[test]
     fn each_shell_has_a_script_that_marks_prompts_and_output() {
-        for shell in ["bash", "zsh", "fish", "powershell", "pwsh", "Bash"] {
+        for shell in ["bash", "zsh", "fish", "xonsh", "powershell", "pwsh", "Bash"] {
             let Some(text) = super::script(shell) else { panic(f"no script for {shell}") }
             assert(text.contains("133;A"), f"{shell} marks no prompt")
             assert(text.contains("133;C"), f"{shell} marks no output")
             assert(text.contains("133;D"), f"{shell} marks no command's end")
             assert(text.contains("]7;file://"), f"{shell} reports no folder")
         }
+        let Some(nu) = super::script("nu") else { panic("no script for nu") }
+        assert(nu.contains("osc133 = true") && nu.contains("osc7 = true"), nu)
         assert_eq(super::script("tcsh"), None)
     }
 }

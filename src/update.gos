@@ -20,6 +20,7 @@ use info
 use model
 use model::Model
 use prompts
+use recent
 use releases
 use releases::Release
 use schemes
@@ -35,6 +36,13 @@ pub fn update(m: Model, msg: UiMsg) -> Model {
     if search::message(&mut n, msg) { return n }
     match msg {
         UiMsg::Command(id) => command(&mut n, "main", id)
+        UiMsg::Chosen(id, dir) if commands::recent_window_of(id).is_some() => {
+            let window = commands::recent_window_of(id).unwrap_or("")
+            if let Some(w) = model::window_index(n, window) {
+                close_overlays(&mut n, w)
+                go_to(&mut n, w, dir)
+            }
+        }
         UiMsg::WindowCommand(window, id) => command(&mut n, window, id)
         UiMsg::Terminal(id, event) => terminal_event(&mut n, id, event)
         UiMsg::TabSelected(strip, key) => {
@@ -187,6 +195,42 @@ fn release_checked(m: &mut Model, release: Release) {
 }
 
 // Runs command `id` in window `window`.
+// Shows the command palette over window `w`'s terminal, its search field
+// focused.
+fn open_palette(m: &mut Model, w: i64) {
+    m.windows[w].recent = false
+    m.windows[w].palette = true
+    gui::perform(Effect::FocusInWindow(m.windows[w].key, commands::PALETTE_FIELD))
+}
+
+// Shows Recent Directories over window `w`'s terminal, its search field
+// focused.
+fn open_recent(m: &mut Model, w: i64) {
+    m.windows[w].palette = false
+    m.windows[w].recent = true
+    gui::perform(Effect::FocusInWindow(m.windows[w].key, commands::recent_field(m.windows[w].key)))
+}
+
+// Hides the palette and Recent Directories over window `w`'s terminal and
+// gives the terminal back its focus.
+fn close_overlays(m: &mut Model, w: i64) {
+    m.windows[w].palette = false
+    m.windows[w].recent = false
+    if let Some(tab) = m.windows[w].current() { gui::perform(Effect::FocusInWindow(m.windows[w].key, tab.view_id())) }
+}
+
+// Moves window `w`'s terminal to `dir`: a cd typed at an idle shell's
+// prompt, or else a new tab there.
+fn go_to(m: &mut Model, w: i64, dir: String) {
+    let window = m.windows[w].key
+    if let Some(tab) = m.windows[w].current() && !tab.busy() && let Some(text) = recent::cd_input(tab.name, dir) {
+        if let Err(why) = tab.terminal.input(text) { model::report(window, "Couldn't change the directory", why) }
+        return
+    }
+    let command = gui::terminal::Command { cwd: dir, ..model::shell(*m) }
+    if let Err(why) = model::open_tab(m, w, command) { model::report(window, "Couldn't open a tab", why) }
+}
+
 fn command(m: &mut Model, window: String, id: String) {
     let Some(w) = model::window_index(*m, window) else { return }
     if let Some(number) = commands::signal_of(id) {
@@ -205,8 +249,24 @@ fn command(m: &mut Model, window: String, id: String) {
         if at < tabs.len() { model::activate(m, w, tabs[at].key) }
         return
     }
+    // The palette and Recent Directories close for any command they do not
+    // open, the palette's own choice included.
+    if (m.windows[w].palette && id != commands::COMMAND_PALETTE) || (m.windows[w].recent && id != commands::RECENT_DIRS) { close_overlays(m, w) }
     let tab = m.windows[w].current()
     match id {
+        commands::COMMAND_PALETTE => if m.windows[w].palette { close_overlays(m, w) } else { open_palette(m, w) }
+        commands::RECENT_DIRS => if m.windows[w].recent { close_overlays(m, w) } else { open_recent(m, w) }
+        commands::CLEAR_RECENT => {
+            m.recent_dirs = #[]
+            recent::clear()
+            gui::perform(Effect::Announce("Recent directories cleared"))
+        }
+        commands::NEW_PRIVATE_TAB => {
+            if let Err(why) = model::open_tab(m, w, model::shell_here(*m, w), private: true) { model::report(window, "Couldn't open a private tab", why) }
+        }
+        commands::NEW_PRIVATE_WINDOW => {
+            if let Err(why) = model::open_window(m, model::shell_here(*m, w), private: true) { model::report(window, "Couldn't open a private window", why) }
+        }
         commands::NEW_TAB => {
             if let Err(why) = model::open_tab(m, w, model::shell_here(*m, w)) { model::report(window, "Couldn't open a tab", why) }
         }
@@ -499,11 +559,28 @@ fn terminal_event(m: &mut Model, id: i64, event: Event) {
             model::close_tab(m, w, t)
             if model::window_index(*m, window).is_some() { model::report(window, "waftty lost track of the program in this tab", errors::new(why)) }
         }
+        Event::NotStarted(why) => {
+            model::close_tab(m, w, t)
+            if model::window_index(*m, window).is_some() { model::report(window, "The program in this tab couldn't start", errors::new(why)) }
+        }
         Event::Refused(why) => model::report(window, "The terminal couldn't do that", errors::new(why))
         Event::LinkPointed(uri) => m.windows[w].tabs[t].link = uri
         Event::LinkActivated(uri) => gui::perform(Effect::OpenUrl(uri))
+        Event::Foreground(job, cwd) => {
+            m.windows[w].tabs[t].job = job
+            m.windows[w].tabs[t].cwd = cwd
+            if !m.windows[w].tabs[t].private && !cwd.is_empty() && m.recent_dirs.first() != Some(cwd) {
+                m.recent_dirs = recent::visited(m.recent_dirs, cwd)
+                recent::save(m.recent_dirs)
+            }
+            model::retitle(m, w)
+        }
         Event::Focused => {
             if m.windows[w].active != m.windows[w].tabs[t].key { model::focus_pane(m, w, m.windows[w].tabs[t].key) }
+            // A click that gives a terminal the focus leaves the palette
+            // and Recent Directories.
+            m.windows[w].palette = false
+            m.windows[w].recent = false
         }
     }
 }
@@ -603,6 +680,53 @@ fn built_on() -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::fs
+
+    use gui::UiMsg
+    use gui::services
+
+    use commands
+    use model
+    use recent
+    use settings::Settings
+
+    #[test]
+    fn the_palette_toggles_on_its_command_and_closes_for_the_command_it_runs() {
+        let mut m = model::new(Settings::default())
+        m = super::update(m, UiMsg::Command(commands::COMMAND_PALETTE))
+        assert(m.windows[0].palette)
+        m = super::update(m, UiMsg::Command(commands::COMMAND_PALETTE))
+        assert(!m.windows[0].palette)
+        m = super::update(m, UiMsg::Command(commands::COMMAND_PALETTE))
+        m = super::update(m, UiMsg::Command(commands::ZOOM_IN))
+        assert(!m.windows[0].palette)
+        assert_eq(m.windows[0].zoom, commands::ZOOM_STEP)
+        m = super::update(m, UiMsg::Command(commands::COMMAND_PALETTE))
+        m = super::update(m, UiMsg::Command(commands::CLOSE_PALETTE))
+        assert(!m.windows[0].palette)
+    }
+
+    #[test]
+    fn clearing_recent_directories_empties_the_list_and_disables_itself() {
+        // The command deletes the list's file, so it runs against a folder of
+        // the test's own, never the user's configuration.
+        let Ok(root) = fs::temp_dir("waftty-recent-") else { panic("no temporary folder") }
+        services::set_config_root(root)
+        defer {
+            services::set_config_root("")
+            let _ = fs::remove_dir_all(root)
+        }
+        recent::save(#["/tmp"])
+        let mut m = model::new(Settings::default())
+        m.recent_dirs = #["/tmp", "/srv"]
+        let enabled = |m: model::Model| commands::registry(m, "main").iter().find(|c| c.id == commands::CLEAR_RECENT).map(|c| c.enabled)
+        assert_eq(enabled(m), Some(true))
+        m = super::update(m, UiMsg::Command(commands::CLEAR_RECENT))
+        assert(m.recent_dirs.is_empty())
+        assert(recent::load().is_empty())
+        assert_eq(enabled(m), Some(false))
+    }
+
     #[test]
     fn built_on_names_the_toolchain_and_not_waftty() {
         let lines = super::built_on().split("\n")

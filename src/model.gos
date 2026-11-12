@@ -3,7 +3,7 @@
 // operation queues the effects that keep titles and focus in step. Closing
 // what still runs a program's job asks first.
 
-use std::{errors, fs, path}
+use std::{env, errors, fs, path}
 use std::encoding::json
 
 use gui
@@ -16,6 +16,7 @@ use gui::widgets::find::FindBar
 use encodings
 use info
 use panes
+use private
 use panes::Layout
 use schemes
 use settings
@@ -49,6 +50,14 @@ pub struct Tab {
     /// For a pane split off a tab, the key of the tab the strip shows it
     /// under; empty for a tab of its own.
     pub group: String
+    /// The program name of the job in front of the tab's shell; empty while
+    /// the shell itself is in front.
+    pub job: String
+    /// The directory the tab works in; empty until the terminal reports it.
+    pub cwd: String
+    /// The tab's shell writes no history, and waftty records nothing of the
+    /// tab: no recent directories, no place in the saved session.
+    pub private: bool
 }
 
 impl Tab {
@@ -57,9 +66,21 @@ impl Tab {
         f"term-{self.key}"
     }
 
-    /// What the tab strip, the window title and the Tabs menu call the tab.
+    /// What the tab strip, the window title and the Tabs menu call the tab:
+    /// the command in front and the directory, as "claude: ~/dev/waftty",
+    /// unless the command line named it. Before the terminal reports a
+    /// directory, the program's title or name.
     pub fn label(&self) -> String {
-        if !self.fixed_title.is_empty() { self.fixed_title } else if !self.title.is_empty() { self.title } else if !self.name.is_empty() { self.name } else { "Terminal" }
+        if self.private { f"{self.named()} (private)" } else { self.named() }
+    }
+
+    fn named(&self) -> String {
+        if !self.fixed_title.is_empty() { return self.fixed_title }
+        if !self.cwd.is_empty() {
+            let command = if self.job.is_empty() { self.name } else { self.job }
+            return if command.is_empty() { shortened(self.cwd) } else { f"{command}: {shortened(self.cwd)}" }
+        }
+        if !self.title.is_empty() { self.title } else if !self.name.is_empty() { self.name } else { "Terminal" }
     }
 
     /// Whether a job other than the shell runs in the tab, which closing
@@ -96,6 +117,12 @@ pub struct Window {
     pub focused: bool
     /// The find bar under the window's terminal.
     pub find: FindBar
+    /// Whether the command palette shows over the window's terminal.
+    pub palette: bool
+    /// Whether Recent Directories shows over the window's terminal.
+    pub recent: bool
+    /// Every tab the window opens is private.
+    pub private: bool
     /// How each split tab, by key, divides between its panes; a tab with
     /// one pane has none.
     pub layouts: Map<String, Layout>
@@ -162,7 +189,7 @@ impl Window {
 
 /// A window `key` with no tabs yet.
 pub fn window(key: String) -> Window {
-    Window { key: key, tabs: #[], active: "", previous: "", fullscreen: false, zoom: 0.0, focused: true, find: FindBar::new(f"find-{key}"), layouts: Map::new(), pane_focus: Map::new() }
+    Window { key: key, tabs: #[], active: "", previous: "", fullscreen: false, zoom: 0.0, focused: true, find: FindBar::new(f"find-{key}"), palette: false, recent: false, private: false, layouts: Map::new(), pane_focus: Map::new() }
 }
 
 /// The match the last search selected, and the tab it is in.
@@ -212,6 +239,8 @@ pub struct Model {
     /// The edge `--quick-position` named for this run; empty for the one
     /// Settings names.
     pub quick_position: String
+    /// The directories tabs have worked in, latest first.
+    pub recent_dirs: Vec<String>
 }
 
 /// A model with one window, "main", and no tabs yet.
@@ -236,6 +265,7 @@ pub fn new(s: Settings) -> Model {
         drop_down: false
         drop_down_hidden: false
         quick_position: ""
+        recent_dirs: #[]
     }
 }
 
@@ -277,9 +307,10 @@ pub fn tab_location(m: Model, key: String) -> Option<(i64, i64)> {
     None
 }
 
-/// Opens a tab running `command` at the end of window `w` and shows it.
-pub fn open_tab(m: &mut Model, w: i64, command: gui::terminal::Command) -> Result<(), errors::Error> {
-    let tab = start(m, command, "")?
+/// Opens a tab running `command` at the end of window `w` and shows it;
+/// a private tab when `private` is set or the window is private.
+pub fn open_tab(m: &mut Model, w: i64, command: gui::terminal::Command, private: bool = false) -> Result<(), errors::Error> {
+    let tab = start(m, command, "", private || m.windows[w].private)?
     m.windows[w].tabs.push(tab)
     activate(m, w, tab.key)
     Ok(())
@@ -291,7 +322,8 @@ pub fn open_pane(m: &mut Model, w: i64, command: gui::terminal::Command, across:
     let target = m.windows[w].active
     let leader = m.windows[w].leader_of(target)
     if m.windows[w].index_of(target).is_none() { return Ok(()) }
-    let tab = start(m, command, leader)?
+    let split_private = m.windows[w].tabs.any(|t| t.key == target && t.private)
+    let tab = start(m, command, leader, m.windows[w].private || split_private)?
     let members = m.windows[w].members(leader)
     let last = m.windows[w].index_of(members[members.len() - 1]).unwrap_or(m.windows[w].tabs.len() - 1)
     let _ = m.windows[w].tabs.insert(last + 1, tab)
@@ -303,8 +335,10 @@ pub fn open_pane(m: &mut Model, w: i64, command: gui::terminal::Command, across:
 }
 
 // A terminal running `command` with the settings' options, as a tab of
-// `group` ("" for a tab of its own).
-fn start(m: &mut Model, command: gui::terminal::Command, group: String) -> Result<Tab, errors::Error> {
+// `group` ("" for a tab of its own); a private one starts its shell so it
+// writes no history.
+fn start(m: &mut Model, command: gui::terminal::Command, group: String, private: bool) -> Result<Tab, errors::Error> {
+    let command = if private { private::launch(command, program_name(command.program))? } else { command }
     let s = m.settings
     let terminal = Terminal::open(Options { scrollback: s.scrollback, ..Options::default() })?
     let started = if s.encoding == encodings::DEFAULT { Ok(()) } else { terminal.set_encoding(s.encoding) }
@@ -319,7 +353,15 @@ fn start(m: &mut Model, command: gui::terminal::Command, group: String) -> Resul
     }
     let key = f"tab-{m.next}"
     m.next += 1
-    Ok(Tab { key: key, terminal: terminal, title: "", name: program_name(command.program), encoding: s.encoding, pinned: false, link: "", attention: false, fixed_title: "", hold: false, group: group })
+    Ok(Tab { key: key, terminal: terminal, title: "", name: program_name(command.program), encoding: s.encoding, pinned: false, link: "", attention: false, fixed_title: "", hold: false, group: group, job: "", cwd: "", private: private })
+}
+
+/// `dir` with the home folder written as `~`.
+pub fn shortened(dir: String) -> String {
+    let home = env::home_dir().unwrap_or("")
+    if home.is_empty() || !dir.starts_with(home) { return dir }
+    let rest = dir.substring(home.byte_len(), dir.byte_len())
+    if rest.is_empty() { "~" } else if rest.starts_with("/") || rest.starts_with("\\") { f"~{rest}" } else { dir }
 }
 
 /// The name a program's path gives it: "zsh" for /bin/zsh, "pwsh" for
@@ -347,10 +389,13 @@ pub fn free_window_key(m: Model) -> String {
     f"window-{n}"
 }
 
-/// Opens a window with one tab running `command`.
-pub fn open_window(m: &mut Model, command: gui::terminal::Command) -> Result<(), errors::Error> {
+/// Opens a window with one tab running `command`; with `private`, every tab
+/// it opens is private.
+pub fn open_window(m: &mut Model, command: gui::terminal::Command, private: bool = false) -> Result<(), errors::Error> {
     let key = free_window_key(*m)
-    m.windows.push(window(key))
+    let mut opened = window(key)
+    opened.private = private
+    m.windows.push(opened)
     let w = m.windows.len() - 1
     let width, height = window_size(m.settings, m.settings.font_size)
     gui::perform(Effect::OpenWindow { key: key, title: info::NAME, width: width, height: height })
@@ -766,7 +811,9 @@ fn save_session(m: Model) {
         let _ = fs::remove_file(session_file())
         return
     }
-    let saved = Session { windows: m.windows.map(|w| SavedWindow { folders: w.strip().map(|t| t.terminal.cwd().unwrap_or("")) }) }
+    // Private windows and tabs leave no trace in the session.
+    let kept = m.windows.filter(|w| !w.private).map(|w| SavedWindow { folders: w.strip().filter(|t| !t.private).map(|t| t.terminal.cwd().unwrap_or("")) })
+    let saved = Session { windows: kept.filter(|w| !w.folders.is_empty()) }
     let _ = fs::create_dir_all(services::config_dir(info::APP_ID))
     let _ = fs::write(session_file(), json::encode(saved).bytes())
 }
@@ -824,6 +871,25 @@ pub fn scheme(m: Model) -> schemes::Entry {
 
 #[cfg(test)]
 mod tests {
+    use std::env
+
+    #[test]
+    fn a_tab_is_named_for_the_command_in_front_and_its_directory() {
+        let home = env::home_dir().unwrap_or("/home/someone")
+        let mut tab = super::Tab { key: "tab-1", terminal: gui::terminal::Terminal { id: 0 }, title: "user@host: ~", name: "bash", encoding: "", pinned: false, link: "", attention: false, fixed_title: "", hold: false, group: "", job: "", cwd: "", private: false }
+        assert_eq(tab.label(), "user@host: ~")
+        tab.cwd = f"{home}/dev/waftty"
+        assert_eq(tab.label(), "bash: ~/dev/waftty")
+        tab.job = "claude"
+        assert_eq(tab.label(), "claude: ~/dev/waftty")
+        tab.cwd = "/srv"
+        assert_eq(tab.label(), "claude: /srv")
+        tab.fixed_title = "build"
+        assert_eq(tab.label(), "build")
+        assert_eq(super::shortened(home), "~")
+        assert_eq(super::shortened(f"{home}-other"), f"{home}-other")
+    }
+
     #[test]
     fn a_label_becomes_a_file_name_without_the_characters_file_systems_refuse() {
         assert_eq(super::file_name("vim: a/b.txt"), "vim- a-b.txt")
