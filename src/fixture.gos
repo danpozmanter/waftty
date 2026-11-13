@@ -129,6 +129,10 @@ pub fn journey() -> Result<(), errors::Error> {
     // prompts with "$ " whoever runs it.
     env::set_var("PS1", "$ ")
     env::unset_var("ENV")
+    // The journey draws offscreen, whose clipboard stays inside the process,
+    // so the desktop it runs on, its focus and its clipboard, never reach it,
+    // and it leaves the user's clipboard alone.
+    env::set_var("SDL_VIDEO_DRIVER", "offscreen")
     let chosen = Settings { shell: "/bin/sh", ..Settings::default() }
     // The prompt carries the marks a shell integration script writes
     // (OSC 133), so the journey can move between prompts.

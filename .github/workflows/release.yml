@@ -14,12 +14,13 @@ env:
   # The toolchain release waftty builds with. Its runtime targets glibc 2.39
   # (Ubuntu 24.04), the floor of the Linux packages, and its macos12 archives
   # target macOS 12, the floor of the macOS packages.
-  GOSSAMER_VERSION: v0.78.6
-  # project.toml reaches the libraries at ../goose-libs/<name>. Set these
-  # repository variables to tags or commits to release against a fixed set.
-  WINDOWING_REF: ${{ vars.WINDOWING_REF || 'main' }}
-  ENGINE_REF: ${{ vars.ENGINE_REF || 'main' }}
-  GUI_REF: ${{ vars.GUI_REF || 'main' }}
+  GOSSAMER_VERSION: v0.78.7
+  # project.toml reaches the libraries at ../goose-libs/<name>. CI checks out
+  # these releases; a waftty release changes them with its "Builds on" line,
+  # and test.yml and release.yml name the same ones.
+  WINDOWING_REF: v0.1.20
+  ENGINE_REF: v0.2.17
+  GUI_REF: v0.2.6
   RUSTUP_TOOLCHAIN: 1.95.0
   APPIMAGETOOL_VERSION: "1.9.0"
 

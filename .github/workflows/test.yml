@@ -12,12 +12,13 @@ permissions:
 env:
   GOSSAMER_REPO: gossamer-lang/gossamer
   # The toolchain release waftty requires.
-  GOSSAMER_VERSION: v0.78.6
-  # project.toml reaches the libraries at ../goose-libs/<name>. Set these
-  # repository variables to a tag or commit to check against a fixed set.
-  WINDOWING_REF: ${{ vars.WINDOWING_REF || 'main' }}
-  ENGINE_REF: ${{ vars.ENGINE_REF || 'main' }}
-  GUI_REF: ${{ vars.GUI_REF || 'main' }}
+  GOSSAMER_VERSION: v0.78.7
+  # project.toml reaches the libraries at ../goose-libs/<name>. CI checks out
+  # these releases; a waftty release changes them with its "Builds on" line,
+  # and test.yml and release.yml name the same ones.
+  WINDOWING_REF: v0.1.20
+  ENGINE_REF: v0.2.17
+  GUI_REF: v0.2.6
   RUSTUP_TOOLCHAIN: 1.95.0
   # The journey draws into SDL's offscreen driver; no display is needed.
   SDL_VIDEO_DRIVER: offscreen
@@ -112,6 +113,20 @@ jobs:
           sh goose-libs/gui-gos/tools/fetch.sh
           (cd waftty && gos fetch)
 
+      - name: Library releases agree between workflows
+        if: runner.os == 'Linux'
+        working-directory: waftty
+        run: |
+          refs() { grep -E '^  (WINDOWING|ENGINE|GUI)_REF: ' "$1"; }
+          refs .github/workflows/test.yml
+          if ! refs .github/workflows/test.yml | diff - <(refs .github/workflows/release.yml); then
+            echo "test.yml and release.yml name different library releases" >&2
+            exit 1
+          fi
+          if refs .github/workflows/test.yml | grep -vE ': v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "a library ref is not a release tag" >&2
+            exit 1
+          fi
       - name: Format and lint
         if: runner.os == 'Linux'
         working-directory: waftty

@@ -122,7 +122,7 @@ packages, make the folder yourself:
 
 ## Building from Source
 
-waftty needs [Gossamer](https://github.com/gossamer-lang/gossamer) 0.78.6 or
+waftty needs [Gossamer](https://github.com/gossamer-lang/gossamer) 0.78.7 or
 newer, Rust 1.95.0 through rustup (`rustup toolchain install 1.95.0`), and
 LLVM for native builds. The GUI libraries are expected beside the checkout at
 `../goose-libs`.

@@ -29,7 +29,7 @@ gos build --release
 ./install.sh --system      # Linux, FreeBSD: build and install to /usr/local
 ```
 
-Building requires Gossamer 0.78.6 or newer and Rust 1.95.0 through rustup.
+Building requires Gossamer 0.78.7 or newer and Rust 1.95.0 through rustup.
 
 Release packages are built for Linux x86_64 (glibc 2.39 or newer, as on
 Ubuntu 24.04) as a .deb, an .rpm, an AppImage and a tarball; for Windows

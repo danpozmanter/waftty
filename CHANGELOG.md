@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.3 - Quits on SIGTERM on macOS
+
+- macOS: an idle waftty quits on SIGTERM or SIGINT, so `kill`, `pkill` and logout end it again.
+- Builds on Gossamer 0.78.7 and windowing-gos 0.1.20.
+
 ## 0.6.2 - System font from the first frame, cleaner macOS install, dependency updates
 
 - Text draws in the configured or desktop font from the first frame, instead of switching to it just after the window opens.
