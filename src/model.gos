@@ -3,7 +3,7 @@
 // operation queues the effects that keep titles and focus in step. Closing
 // what still runs a program's job asks first.
 
-use std::{env, errors, fs, path}
+use std::{env, errors, fs, path, time}
 use std::encoding::json
 
 use gui
@@ -13,12 +13,15 @@ use gui::services
 use gui::terminal::{Options, Span, Terminal}
 use gui::widgets::find::FindBar
 
+use alerts
 use encodings
 use info
 use panes
 use private
 use panes::Layout
+use processes
 use schemes
+use sessions
 use settings
 use settings::Settings
 
@@ -58,6 +61,12 @@ pub struct Tab {
     /// The tab's shell writes no history, and waftty records nothing of the
     /// tab: no recent directories, no place in the saved session.
     pub private: bool
+    /// When the agent in front of the tab's shell started, in milliseconds
+    /// since the Unix epoch; 0 while no agent runs there.
+    pub agent_since: i64
+    /// When the job in front of the tab's shell came there, in milliseconds
+    /// since the Unix epoch; 0 while the shell is in front.
+    pub job_since: i64
 }
 
 impl Tab {
@@ -121,6 +130,10 @@ pub struct Window {
     pub palette: bool
     /// Whether Recent Directories shows over the window's terminal.
     pub recent: bool
+    /// Whether Recent Sessions shows over the window's terminal.
+    pub sessions: bool
+    /// Whether Processes shows over the window's terminal.
+    pub processes: bool
     /// Every tab the window opens is private.
     pub private: bool
     /// How each split tab, by key, divides between its panes; a tab with
@@ -189,7 +202,7 @@ impl Window {
 
 /// A window `key` with no tabs yet.
 pub fn window(key: String) -> Window {
-    Window { key: key, tabs: #[], active: "", previous: "", fullscreen: false, zoom: 0.0, focused: true, find: FindBar::new(f"find-{key}"), palette: false, recent: false, private: false, layouts: Map::new(), pane_focus: Map::new() }
+    Window { key: key, tabs: #[], active: "", previous: "", fullscreen: false, zoom: 0.0, focused: true, find: FindBar::new(f"find-{key}"), palette: false, recent: false, sessions: false, processes: false, private: false, layouts: Map::new(), pane_focus: Map::new() }
 }
 
 /// The match the last search selected, and the tab it is in.
@@ -241,6 +254,34 @@ pub struct Model {
     pub quick_position: String
     /// The directories tabs have worked in, latest first.
     pub recent_dirs: Vec<String>
+    /// The agent sessions tabs have run, latest first.
+    pub recent_sessions: Vec<sessions::Session>
+    /// What Processes and the status bar show.
+    pub monitor: Monitor
+    /// What alerts know of each tab's agent, by tab key.
+    pub watches: Map<String, alerts::Watch>
+    /// Whether the agents' screens are being looked at.
+    pub watching: bool
+}
+
+/// The processes waftty runs, as Processes and the status bar show them.
+#[derive(Default)]
+pub struct Monitor {
+    /// Milliseconds between samples, 0 while none are taken.
+    pub interval: i64
+    /// The last sample, which the next one's rates are measured from.
+    pub last: Option<processes::Sample>
+    pub rows: Vec<processes::Row>
+    /// The column Processes is sorted by and whether ascending.
+    pub sort: (String, bool)
+    /// The process chosen in Processes, 0 for none.
+    pub selected: i64
+    /// The signal Processes sends.
+    pub signal: i64
+    /// Each tab's program's process id, by tab key, once known.
+    pub tab_pids: Map<String, i64>
+    /// Counts the samples, so the table redraws for each.
+    pub revision: i64
 }
 
 /// A model with one window, "main", and no tabs yet.
@@ -266,6 +307,10 @@ pub fn new(s: Settings) -> Model {
         drop_down_hidden: false
         quick_position: ""
         recent_dirs: #[]
+        recent_sessions: #[]
+        monitor: Monitor { sort: (s.process_sort, s.process_order == "ascending"), signal: 15, ..Monitor::default() }
+        watches: Map::new()
+        watching: false
     }
 }
 
@@ -353,7 +398,7 @@ fn start(m: &mut Model, command: gui::terminal::Command, group: String, private:
     }
     let key = f"tab-{m.next}"
     m.next += 1
-    Ok(Tab { key: key, terminal: terminal, title: "", name: program_name(command.program), encoding: s.encoding, pinned: false, link: "", attention: false, fixed_title: "", hold: false, group: group, job: "", cwd: "", private: private })
+    Ok(Tab { key: key, terminal: terminal, title: "", name: program_name(command.program), encoding: s.encoding, pinned: false, link: "", attention: false, fixed_title: "", hold: false, group: group, job: "", cwd: "", private: private, agent_since: if sessions::is_agent(program_name(command.program)) { time::unix_ms() - sessions::START_SLACK_MS } else { 0 }, job_since: 0 })
 }
 
 /// `dir` with the home folder written as `~`.
@@ -600,6 +645,32 @@ fn reorder(m: &mut Model, w: i64, leaders: Vec<String>) {
     m.windows[w].tabs = tabs
 }
 
+/// The agent in front of `tab`: a job of its shell, or the tab's own
+/// program; "" when none is.
+pub fn agent_of(tab: Tab) -> String {
+    if sessions::is_agent(tab.job) { return tab.job }
+    if tab.job.is_empty() && sessions::is_agent(tab.name) { return tab.name }
+    ""
+}
+
+/// Records in the recent sessions the session of the agent in front of
+/// `tab`'s shell, when one is and the tab is not private.
+pub fn finish_agent(m: &mut Model, tab: Tab) {
+    if tab.private || tab.agent_since == 0 { return }
+    // The agent runs as a job of the tab's shell, or is the tab's program.
+    let agent = if sessions::is_agent(tab.job) { tab.job } else if sessions::is_agent(tab.name) { tab.name } else { return }
+    note_session(m, agent, tab.cwd, tab.agent_since)
+}
+
+/// Records in the recent sessions the last session agent `agent` kept for
+/// folder `dir` since `since`, when it kept one.
+pub fn note_session(m: &mut Model, agent: String, dir: String, since: i64) {
+    let Some(found) = sessions::latest(agent, dir, since) else { return }
+    m.recent_sessions = sessions::used(m.recent_sessions, found)
+    // A list that can't be saved still serves this run.
+    if let Err(why) = sessions::save(m.recent_sessions) { eprintln(f"{info::NAME}: couldn't save the recent sessions: {why}") }
+}
+
 /// Closes tab `t` of window `w` and its program; a window left without
 /// tabs closes too.
 pub fn close_tab(m: &mut Model, w: i64, t: i64) {
@@ -608,6 +679,7 @@ pub fn close_tab(m: &mut Model, w: i64, t: i64) {
     if let Some(layout) = m.windows[w].layouts.get(leader) {
         return close_pane(m, w, t, leader, layout)
     }
+    finish_agent(m, tab)
     tab.terminal.close()
     let _ = m.windows[w].tabs.remove(t)
     if m.windows[w].tabs.is_empty() {
@@ -631,6 +703,7 @@ pub fn close_tab(m: &mut Model, w: i64, t: i64) {
 // left.
 fn close_pane(m: &mut Model, w: i64, t: i64, leader: String, layout: Layout) {
     let tab = m.windows[w].tabs[t]
+    finish_agent(m, tab)
     tab.terminal.close()
     let _ = m.windows[w].tabs.remove(t)
     let rest = panes::remove(layout, tab.key).unwrap_or(Layout::Pane(leader))
@@ -663,7 +736,10 @@ fn close_pane(m: &mut Model, w: i64, t: i64, leader: String, layout: Layout) {
 pub fn close_window(m: &mut Model, w: i64) {
     if m.windows.len() == 1 && !m.quitting { save_session(*m) }
     let window = m.windows[w]
-    for tab in window.tabs { tab.terminal.close() }
+    for tab in window.tabs {
+        finish_agent(m, tab)
+        tab.terminal.close()
+    }
     let _ = m.windows.remove(w)
     if m.windows.is_empty() {
         gui::perform(Effect::Quit)
@@ -871,12 +947,43 @@ pub fn scheme(m: Model) -> schemes::Entry {
 
 #[cfg(test)]
 mod tests {
-    use std::env
+    use std::{env, fs, path}
+
+    use settings::Settings
+
+    fn agent_tab(name: String, job: String, dir: String, private: bool) -> super::Tab {
+        super::Tab { key: "tab-1", terminal: gui::terminal::Terminal { id: 0 }, title: "", name: name, encoding: "", pinned: false, link: "", attention: false, fixed_title: "", hold: false, group: "", job: job, cwd: dir, private: private, agent_since: 1, job_since: 0 }
+    }
+
+    #[test]
+    fn a_finished_agent_is_recorded_whether_a_job_of_the_shell_or_the_tabs_program() {
+        let Ok(root) = fs::temp_dir("waftty-agents-") else { panic("no temporary folder") }
+        env::set_var("XDG_CONFIG_HOME", root)
+        env::set_var("CLAUDE_CONFIG_DIR", root)
+        let dir = path::join(root, "work")
+        let _ = fs::create_dir_all(dir)
+        let folder = path::join(path::join(root, "projects"), dir.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_string() } else { "-" }).collect::<Vec<String>>().join(""))
+        let _ = fs::create_dir_all(folder)
+        let line = f"{{\"type\":\"user\",\"cwd\":\"{dir}\",\"message\":{{\"content\":\"Tidy the logs\"}}}}\n"
+        let _ = fs::write(path::join(folder, "0f0e0d0c-0000-4000-8000-000000000001.jsonl"), line.bytes())
+        let mut m = super::new(Settings::default())
+        super::finish_agent(&mut m, agent_tab("bash", "claude", dir, false))
+        assert_eq(m.recent_sessions.map(|s| s.title), #["Tidy the logs"])
+        let mut direct = super::new(Settings::default())
+        super::finish_agent(&mut direct, agent_tab("claude", "", dir, false))
+        assert_eq(direct.recent_sessions.len(), 1)
+        let mut hidden = super::new(Settings::default())
+        super::finish_agent(&mut hidden, agent_tab("claude", "", dir, true))
+        super::finish_agent(&mut hidden, agent_tab("bash", "vim", dir, false))
+        assert(hidden.recent_sessions.is_empty())
+        env::unset_var("CLAUDE_CONFIG_DIR")
+        let _ = fs::remove_dir_all(root)
+    }
 
     #[test]
     fn a_tab_is_named_for_the_command_in_front_and_its_directory() {
         let home = env::home_dir().unwrap_or("/home/someone")
-        let mut tab = super::Tab { key: "tab-1", terminal: gui::terminal::Terminal { id: 0 }, title: "user@host: ~", name: "bash", encoding: "", pinned: false, link: "", attention: false, fixed_title: "", hold: false, group: "", job: "", cwd: "", private: false }
+        let mut tab = super::Tab { key: "tab-1", terminal: gui::terminal::Terminal { id: 0 }, title: "user@host: ~", name: "bash", encoding: "", pinned: false, link: "", attention: false, fixed_title: "", hold: false, group: "", job: "", cwd: "", private: false, agent_since: 0, job_since: 0 }
         assert_eq(tab.label(), "user@host: ~")
         tab.cwd = f"{home}/dev/waftty"
         assert_eq(tab.label(), "bash: ~/dev/waftty")

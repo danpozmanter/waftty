@@ -2,17 +2,22 @@
 // active tab's terminal, with a tab strip joined between them as the
 // settings ask, and the find bar under the terminal while it is open.
 
-use std::fs
+use std::{fs, process, time}
 
 use gui
 use gui::{Axis, Color, Edge, TabItem, ThemeOverride, Widget}
+use gui::text::layout::TextAlign
+use gui::widgets::collections::{Collection, Column, Row}
 
 use commands
 use drop_down
 use model
 use model::Model
 use panes::Layout
+use processes
+use sessions
 use settings
+use signals
 
 /// The main window.
 pub fn main(m: Model) -> Widget {
@@ -51,10 +56,14 @@ pub fn window(m: Model, key: String) -> Widget {
         Some(change) => Widget::column(rows, 0).grow(1).themed(change)
         None => Widget::column(rows, 0).grow(1)
     }
-    let mut content = Widget::column(#[chrome, win.find.view()], 0)
+    let mut parts = #[chrome, win.find.view()]
+    if m.settings.status_bar { parts.push(status_bar(m)) }
+    let mut content = Widget::column(parts, 0)
     let menu_bar = m.settings.menu_bar && !m.drop_down
     if win.palette { content = Widget::stack(#[content, hanging(Widget::command_palette(commands::PALETTE_FIELD), menu_bar)]) }
     if win.recent { content = Widget::stack(#[content, hanging(recent(m, w), menu_bar)]) }
+    if win.sessions { content = Widget::stack(#[content, hanging(sessions(m, w), menu_bar)]) }
+    if win.processes { content = Widget::stack(#[content, processes_panel(m, w).width(780).margin_sides(0, if menu_bar { 36 } else { 8 }, 0, 0).align(0.5, 0.0).pass_through()]) }
     if m.drop_down && win.key == "main" { edged(content.grow(1), drop_down::position(m.settings, m.quick_position)) } else { content }
 }
 
@@ -72,6 +81,62 @@ fn recent(m: Model, w: i64) -> Widget {
     let dirs = m.recent_dirs.filter(|d| d != here && fs::exists(d))
     let items = Widget::items(dirs.map(|d| (d, model::shortened(d))))
     Widget::quick_pick(commands::recent_field(m.windows[w].key), items, "Recent directories", "No recent directories")
+}
+
+// The status bar: what waftty and everything its tabs started use.
+fn status_bar(m: Model) -> Widget {
+    let text = if m.monitor.rows.is_empty() { "" } else { processes::status_text(processes::totals(m.monitor.rows)) }
+    Widget::muted(text).margin_sides(8, 2, 8, 3)
+}
+
+// Processes for window `w`: waftty and every process its tabs started, in
+// a table sorted as asked, with a signal to send the chosen one.
+fn processes_panel(m: Model, w: i64) -> Widget {
+    let key = m.windows[w].key
+    let sort, ascending = m.monitor.sort
+    let rows = processes::sorted(m.monitor.rows, sort, ascending)
+    let number = |title: String, column: String, width: i64| Column { align: TextAlign::End, ..Column::new(column, title, width) }
+    let columns = #[
+        Column::new("name", "Process", 170), number("PID", "pid", 70), Column::new("tab", "Tab", 190), number("CPU", "cpu", 70)
+        number("Memory", "memory", 80), number("Read", "read", 80), number("Written", "written", 80)
+    ]
+    let table = Collection::new(commands::processes_table(key), rows.len(), |i| {
+        let r = rows[i]
+        let name = if r.pid == process::id() { f"{r.name} (waftty)" } else { r.name }
+        Row { cells: #[name, f"{r.pid}", r.tab, processes::cpu_text(r.cpu), processes::size_text(r.memory), processes::rate_text(r.read), processes::rate_text(r.written)], ..Row::new(f"{r.pid}", name) }
+    }).columns(columns).sorted_by(sort, ascending).selected(if m.monitor.selected > 0 { #[f"{m.monitor.selected}"] } else { #[] })
+        .revision(m.monitor.revision, #[]).rows(12).label("Processes").empty_text("Reading processes…")
+    let chosen = rows.iter().find(|r| r.pid == m.monitor.selected)
+    // waftty itself quits from its own menu, not from here.
+    let sendable = chosen.map(|r| r.pid != process::id()).unwrap_or(false)
+    let mut actions = #[]
+    if signals::supported() {
+        let offered = Widget::items(signals::table().map(|s| (f"{s.number}", signals::label(s))))
+        actions.push(Widget::select(commands::processes_signal(key), offered, f"{m.monitor.signal}", "Signal").width(240))
+        actions.push(Widget::button(commands::processes_send(key), "Send Signal").disabled(!sendable))
+    } else {
+        actions.push(Widget::button(commands::processes_send(key), "End Process").disabled(!sendable))
+    }
+    actions.push(Widget::stretch())
+    actions.push(Widget::button(commands::processes_close(key), "Close"))
+    Widget::card(Widget::column(#[Widget::heading("Processes"), Widget::collection(table), Widget::row(actions, 8)], 8))
+}
+
+// Recent Sessions for window `w`: the agent sessions tabs ran, latest first,
+// without any whose folder is gone.
+fn sessions(m: Model, w: i64) -> Widget {
+    let shown = m.recent_sessions.filter(|s| fs::is_dir(s.dir))
+    let items = Widget::items(shown.map(|s| (s.id, session_label(s))))
+    Widget::quick_pick(commands::sessions_field(m.windows[w].key), items, "Recent sessions", "No recent sessions")
+}
+
+// "claude · Login page fix · ~/dev/site · 11/13/26 1:20PM": the agent, the
+// session's title, its folder, and when it began.
+fn session_label(s: sessions::Session) -> String {
+    let title = if s.title.is_empty() { "Untitled session" } else { s.title }
+    let label = f"{s.agent} \u{b7} {title} \u{b7} {model::shortened(s.dir)}"
+    let started = sessions::started_text(s, time::Location::local())
+    if started.is_empty() { label } else { f"{label} \u{b7} {started}" }
 }
 
 // The quick terminal has no frame, so a rule marks its edge facing the rest

@@ -59,6 +59,12 @@ pub const RESET_AND_CLEAR: String = "terminal.reset-and-clear"
 pub const RECENT_DIRS: String = "terminal.recent-directories"
 pub const CLOSE_RECENT: String = "terminal.close-recent-directories"
 pub const CLEAR_RECENT: String = "terminal.clear-recent-directories"
+pub const RECENT_SESSIONS: String = "terminal.recent-sessions"
+pub const CLOSE_SESSIONS: String = "terminal.close-recent-sessions"
+pub const CLEAR_SESSIONS: String = "terminal.clear-recent-sessions"
+pub const PROCESSES: String = "view.processes"
+pub const CLOSE_PROCESSES: String = "view.close-processes"
+pub const STATUS_BAR: String = "view.status-bar"
 pub const NEXT_TAB: String = "tabs.next"
 pub const PREVIOUS_TAB: String = "tabs.previous"
 pub const LAST_TAB: String = "tabs.last-active"
@@ -97,6 +103,16 @@ pub fn recent_window_of(id: String) -> Option<String> {
     suffix(id, "recent-directories:")
 }
 
+/// The search field of Recent Sessions in window `window`.
+pub fn sessions_field(window: String) -> String {
+    f"recent-sessions:{window}"
+}
+
+/// The window whose Recent Sessions field `id` names, if it names one.
+pub fn sessions_window_of(id: String) -> Option<String> {
+    suffix(id, "recent-sessions:")
+}
+
 // The toolkit's own palette, a dialog, which waftty's replaces.
 const TOOLKIT_PALETTE: String = "gui.command-palette"
 
@@ -122,6 +138,36 @@ pub fn show_command(key: String) -> String {
 
 /// The command that shows the tab at position `n` (1 to 8), or the last tab
 /// for 9.
+/// The table of Processes in window `window`.
+pub fn processes_table(window: String) -> String {
+    f"processes:{window}"
+}
+
+/// The signal choice of Processes in window `window`.
+pub fn processes_signal(window: String) -> String {
+    f"processes-signal:{window}"
+}
+
+/// The button of Processes in window `window` that sends the chosen signal.
+pub fn processes_send(window: String) -> String {
+    f"processes-send:{window}"
+}
+
+/// The button that closes Processes in window `window`.
+pub fn processes_close(window: String) -> String {
+    f"processes-close:{window}"
+}
+
+/// The window whose Processes control `id` is, and which control:
+/// "table", "signal", "send" or "close".
+pub fn processes_control(id: String) -> Option<(String, String)> {
+    for part in #["table", "signal", "send", "close"] {
+        let prefix = if part == "table" { "processes:" } else { f"processes-{part}:" }
+        if let Some(window) = suffix(id, prefix) { return Some((window, part)) }
+    }
+    None
+}
+
 pub fn number_command(n: i64) -> String {
     f"{NUMBER_PREFIX}{n}"
 }
@@ -252,6 +298,12 @@ pub fn registry(m: Model, key: String) -> Vec<Command> {
         Command::new(RECENT_DIRS, "Recent Directories…").key(chord("Ctrl+Shift+R", "Cmd+Shift+R")).category("Terminal").enabled(has_tab)
         Command::new(CLEAR_RECENT, "Clear Recent Directories").category("Terminal").enabled(!m.recent_dirs.is_empty())
         Command::new(CLOSE_RECENT, "Close Recent Directories").key("Escape").category("Terminal").in_scope(recent_field(key)).visible(false)
+        Command::new(RECENT_SESSIONS, "Recent Sessions…").key(chord("Ctrl+Shift+.", "Cmd+Shift+.")).category("Terminal")
+        Command::new(CLEAR_SESSIONS, "Clear Recent Sessions").category("Terminal").enabled(!m.recent_sessions.is_empty())
+        Command::new(CLOSE_SESSIONS, "Close Recent Sessions").key("Escape").category("Terminal").in_scope(sessions_field(key)).visible(false)
+        Command::new(PROCESSES, "Processes…").key(chord("Ctrl+Shift+\\", "Cmd+Shift+\\")).category("View")
+        Command::new(CLOSE_PROCESSES, "Close Processes").key("Escape").category("View").in_scope(processes_table(key)).visible(false)
+        Command::new(STATUS_BAR, "Show Status Bar").category("View").checked(m.settings.status_bar)
         Command::new(PREVIOUS_TAB, "Previous Tab").key("Ctrl+Shift+Tab").key(chord("Ctrl+PageUp", "Cmd+Shift+[")).category("Tabs").enabled(tabs > 1)
         Command::new(NEXT_TAB, "Next Tab").key("Ctrl+Tab").key(chord("Ctrl+PageDown", "Cmd+Shift+]")).category("Tabs").enabled(tabs > 1)
         Command::new(LAST_TAB, "Switch to Last Tab").key(chord("Ctrl+Shift+L", "Cmd+Shift+L")).category("Tabs").enabled(window.index_of(window.previous).is_some())
@@ -318,7 +370,7 @@ pub fn context_menu(drop_down: bool) -> Vec<MenuItem> {
     let mut items = #[
         menus::item(OPEN_LINK), menus::item(COPY_LINK), menus::item(COPY_EMAIL), MenuItem::Separator
         menus::item(COPY), menus::item(PASTE), menus::item(SELECT_ALL), MenuItem::Separator
-        menus::item(NEW_TAB), menus::item(SPLIT_RIGHT), menus::item(SPLIT_DOWN), menus::item(CLOSE_PANE), menus::item(RECENT_DIRS), MenuItem::Separator
+        menus::item(NEW_TAB), menus::item(SPLIT_RIGHT), menus::item(SPLIT_DOWN), menus::item(CLOSE_PANE), menus::item(RECENT_DIRS), menus::item(RECENT_SESSIONS), MenuItem::Separator
         menus::item(FIND), menus::item(CLEAR_SCROLLBACK), MenuItem::Separator
         signal_menu(), zoom_menu(), menus::item(COMMAND_PALETTE)
     ]
@@ -359,10 +411,11 @@ pub fn menu_bar(m: Model, key: String) -> gui::Widget {
             menus::item(OPEN_LINK_HINT), menus::item(COPY_LINK_HINT), MenuItem::Separator
             menus::item(SETTINGS)
         ])
-        Menu::new("&View", #[menus::item(COMMAND_PALETTE), MenuItem::Separator, menus::item(FULLSCREEN), menus::item(MENU_BAR), MenuItem::Separator, zoom_menu(), menus::item(RESET_WINDOW_SIZE)])
+        Menu::new("&View", #[menus::item(COMMAND_PALETTE), menus::item(PROCESSES), MenuItem::Separator, menus::item(FULLSCREEN), menus::item(MENU_BAR), menus::item(STATUS_BAR), MenuItem::Separator, zoom_menu(), menus::item(RESET_WINDOW_SIZE)])
         Menu::new("&Terminal", #[
             menus::item(FIND), menus::item(FIND_NEXT), menus::item(FIND_PREVIOUS), MenuItem::Separator
-            menus::item(PREVIOUS_PROMPT), menus::item(NEXT_PROMPT), menus::item(SELECT_OUTPUT), menus::item(RECENT_DIRS), menus::item(CLEAR_RECENT), MenuItem::Separator
+            menus::item(PREVIOUS_PROMPT), menus::item(NEXT_PROMPT), menus::item(SELECT_OUTPUT), MenuItem::Separator
+            menus::item(RECENT_DIRS), menus::item(CLEAR_RECENT), menus::item(RECENT_SESSIONS), menus::item(CLEAR_SESSIONS), MenuItem::Separator
             menus::item(COPY_MODE), MenuItem::Separator
             menus::item(SPLIT_RIGHT), menus::item(SPLIT_DOWN), menus::item(NEXT_PANE), menus::item(PREVIOUS_PANE), menus::item(CLOSE_PANE), MenuItem::Separator
             menus::item(SCROLL_TOP), menus::item(SCROLL_BOTTOM), menus::item(CLEAR_SCROLLBACK), MenuItem::Separator
@@ -400,7 +453,7 @@ mod tests {
     #[test]
     fn the_link_entries_show_only_over_a_link_and_the_email_entry_over_an_address() {
         let mut m = model::new(Settings::default())
-        m.windows[0].tabs.push(model::Tab { key: "tab-1", terminal: Terminal { id: 0 }, title: "", name: "", encoding: "", pinned: false, link: "", attention: false, fixed_title: "", hold: false, group: "", job: "", cwd: "", private: false })
+        m.windows[0].tabs.push(model::Tab { key: "tab-1", terminal: Terminal { id: 0 }, title: "", name: "", encoding: "", pinned: false, link: "", attention: false, fixed_title: "", hold: false, group: "", job: "", cwd: "", private: false, agent_since: 0, job_since: 0 })
         m.windows[0].active = "tab-1"
         assert(!shown(m, super::OPEN_LINK) && !shown(m, super::COPY_LINK) && !shown(m, super::COPY_EMAIL))
         m.windows[0].tabs[0].link = "https://example.org/"

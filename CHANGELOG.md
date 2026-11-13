@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.0 - Recent sessions, processes, alerts
+
+- Recent Sessions (Ctrl+Shift+. or Cmd+Shift+.) lists the Claude Code, Codex and pi sessions tabs ran, by title, folder and start time, and resumes one in a new tab in its folder.
+- Processes (`Ctrl+Shift+\` or `Cmd+Shift+\`) lists waftty and everything its tabs started, with CPU, memory and disk use, sorts by any column, and sends a signal to the selected process.
+- An optional status bar shows their total CPU, memory and disk use and the number of subprocesses, refreshed every 2 seconds by default (1 to 3600 in Settings).
+- A tab out of view is marked, with a desktop notification, when a long command finishes in it or an agent in it stops to wait for you; on by default.
+- A tab names a job that writes nothing, such as `sleep`, as soon as it starts.
+- Builds on gui-gos 0.2.7, gui-engine-gos 0.2.19 and windowing-gos 0.1.21.
+
 ## 0.6.3 - Quits on SIGTERM on macOS
 
 - macOS: an idle waftty quits on SIGTERM or SIGINT, so `kill`, `pkill` and logout end it again.

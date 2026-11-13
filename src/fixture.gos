@@ -14,6 +14,7 @@ use windowing::{Key, Mods}
 use application
 use commands
 use model
+use sessions
 use settings::Settings
 
 fn require(value: bool, why: String) -> Result<(), errors::Error> {
@@ -133,7 +134,17 @@ pub fn journey() -> Result<(), errors::Error> {
     // so the desktop it runs on, its focus and its clipboard, never reach it,
     // and it leaves the user's clipboard alone.
     env::set_var("SDL_VIDEO_DRIVER", "offscreen")
-    let chosen = Settings { shell: "/bin/sh", ..Settings::default() }
+    // Alerts' desktop notifications find no bus, so none reaches the
+    // desktop; the tabs' marks show them. Agents keep no records here.
+    env::set_var("DBUS_SESSION_BUS_ADDRESS", f"unix:path={config}/no-bus")
+    env::set_var("CLAUDE_CONFIG_DIR", config)
+    // A resumed session types an agent's command; no agent the user has
+    // installed may run from the journey.
+    env::set_var("PATH", "/usr/bin:/bin")
+    let session = sessions::Session { agent: "claude", id: "7d3f8a2e-1b4c-4d5e-9f60-a1b2c3d4e5f6", dir: config, title: "Release notes draft", used: 1, started: 1_794_594_011_000 }
+    sessions::save(#[session])?
+    // Alerts come after a second, so the journey need not wait ten.
+    let chosen = Settings { shell: "/bin/sh", alert_after: 1, ..Settings::default() }
     // The prompt carries the marks a shell integration script writes
     // (OSC 133), so the journey can move between prompts.
     let first = Command { program: "/bin/sh", args: #[], cwd: "", env: #[("PS1", "\u{1b}]133;A\u{7}ready$ \u{1b}]133;I\u{7}")] }
@@ -384,6 +395,71 @@ pub fn journey() -> Result<(), errors::Error> {
         require(s.step()?, "the session ended before the private tab closed")?
     }
     println("recent and private: Recent Directories' shortcut focused its search and Escape gave focus back; New Private Tab opened a tab marked private, which closed")
+
+    shortcut(&mut s, commands::RECENT_SESSIONS)?
+    s.flush()?
+    require(s.focused() == commands::sessions_field("main"), f"Recent Sessions left focus at {s.focused()}")?
+    s.type_text("release notes")?
+    s.press(Key::Return, Mods::default())?
+    s.flush()?
+    await_text(&mut s, 0, f"claude --resume {session.id}")?
+    shortcut(&mut s, commands::CLOSE_TAB)?
+    while s.semantics(0).dump().contains(f"claude --resume {session.id}") {
+        require(s.step()?, "the session ended before the resumed tab closed")?
+    }
+    println("sessions: Recent Sessions' shortcut focused its search, a recorded session found by its title resumed in a tab of its own, typing claude --resume at the prompt")
+
+    enter(&mut s, "sleep 301 & echo pid:$!")?
+    await_text(&mut s, 0, "\npid:")?
+    let pid = screen_rows(s).filter_map(|l| l.strip_prefix("pid:")).last().unwrap_or("")
+    require(pid.to_i64().is_some(), f"no process id in {screen_rows(s)}")?
+    shortcut(&mut s, commands::PROCESSES)?
+    s.flush()?
+    require(s.focused() == commands::processes_table("main"), f"Processes left focus at {s.focused()}")?
+    await_text(&mut s, 0, "(waftty)")?
+    await_text(&mut s, 0, "\"sleep\"")?
+    s.emit(gui::UiMsg::Selected(commands::processes_table("main"), pid))
+    s.emit(gui::UiMsg::Selected(commands::processes_signal("main"), "15"))
+    s.emit(gui::UiMsg::Clicked(commands::processes_send("main")))
+    s.flush()?
+    await_spoken(&mut s, f"Sent SIGTERM to sleep ({pid})")?
+    s.press(Key::Escape, Mods::default())?
+    s.flush()?
+    require(s.focused() == terminal, f"Escape left focus at {s.focused()}")?
+    enter(&mut s, f"wait {pid}; echo reaped:$?")?
+    await_text(&mut s, 0, "reaped:143")?
+    println("processes: its shortcut listed waftty and a job the shell started, and its Send Signal ended the job with SIGTERM")
+
+    s.run_command(0, commands::STATUS_BAR)
+    s.flush()?
+    // The second sample gives the rates.
+    await_text(&mut s, 0, "% \u{b7} Memory")?
+    await_text(&mut s, 0, "subprocess")?
+    s.run_command(0, commands::STATUS_BAR)
+    s.flush()?
+    require(!s.semantics(0).dump().contains("subprocess"), "the status bar stayed")?
+    println("status bar: Show Status Bar showed waftty's CPU, memory and subprocesses, and hid them again")
+
+    enter(&mut s, "sleep 2; echo napped")?
+    shortcut(&mut s, commands::NEW_TAB)?
+    await_text(&mut s, 0, "needs attention")?
+    shortcut(&mut s, commands::CLOSE_TAB)?
+    await_text(&mut s, 0, "\nnapped")?
+    println("alerts: a command that ran past the alert time marked its tab once it finished out of view")
+
+    // A program named claude stands in for the agent: it works, its screen
+    // changing, then waits for a line. It works long enough for two looks
+    // at agents' screens to see it change.
+    let bin = f"{config}/bin"
+    fs::create_dir_all(bin)?
+    enter(&mut s, f"cp /bin/sh {bin}/claude && {bin}/claude -c 'for i in 1 2 3 4 5 6 7 8; do echo working $i; sleep 0.5; done; read x; echo answered'")?
+    await_text(&mut s, 0, "\nworking 1")?
+    shortcut(&mut s, commands::NEW_TAB)?
+    await_text(&mut s, 0, "needs attention")?
+    shortcut(&mut s, commands::CLOSE_TAB)?
+    s.press(Key::Return, Mods::default())?
+    await_text(&mut s, 0, "\nanswered")?
+    println("alerts: an agent that worked, then stopped to wait in a tab out of view, marked it")
 
     s.press(Key::F10, Mods { shift: true, ..Mods::default() })?
     s.flush()?

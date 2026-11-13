@@ -16,9 +16,9 @@ env:
   # project.toml reaches the libraries at ../goose-libs/<name>. CI checks out
   # these releases; a waftty release changes them with its "Builds on" line,
   # and test.yml and release.yml name the same ones.
-  WINDOWING_REF: v0.1.20
-  ENGINE_REF: v0.2.17
-  GUI_REF: v0.2.6
+  WINDOWING_REF: v0.1.21
+  ENGINE_REF: v0.2.19
+  GUI_REF: v0.2.7
   RUSTUP_TOOLCHAIN: 1.95.0
   # The journey draws into SDL's offscreen driver; no display is needed.
   SDL_VIDEO_DRIVER: offscreen
@@ -106,6 +106,8 @@ jobs:
           Add-Content $env:GITHUB_ENV "GOS_LLVM_OPT=C:\msys64\mingw64\bin\opt.exe"
           Add-Content $env:GITHUB_ENV "GOS_LLC=C:\msys64\mingw64\bin\llc.exe"
       - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: rustfmt, clippy
       - run: gos --version
 
       - name: Fetch the dependencies
@@ -141,6 +143,9 @@ jobs:
             echo "== $target"
             gos check --target "$target" .
           done
+      - name: Process sampler
+        working-directory: waftty
+        run: sh scripts/check-rust.sh
       - name: Unit tests
         working-directory: waftty
         run: gos test

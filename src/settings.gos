@@ -17,6 +17,7 @@ use windowing
 use encodings
 use info
 use input_method
+use processes
 use schemes
 use shortcuts
 
@@ -92,6 +93,21 @@ pub struct Settings {
     pub bell: String
     /// Whether programs' notifications (OSC 9 and 777) reach the desktop.
     pub notifications: bool
+    /// Whether a tab not in front alerts when a command that ran a while
+    /// finishes or an agent stops to wait.
+    pub alerts: bool
+    /// How long a command or an agent works before its end alerts, in
+    /// seconds.
+    pub alert_after: i64
+    /// Whether a bar under the terminal shows waftty's CPU, memory and disk
+    /// use, its processes' included.
+    pub status_bar: bool
+    /// How often the status bar reads the processes, in seconds.
+    pub status_every: i64
+    /// The column Processes opens sorted by, "cpu" or "memory", and its
+    /// order, "descending" or "ascending".
+    pub process_sort: String
+    pub process_order: String
     /// Whether programs may write the clipboard (OSC 52); they can never
     /// read it.
     pub clipboard_write: bool
@@ -120,11 +136,17 @@ impl Default for Settings {
         Settings {
             shell: "", directory: "", new_tabs: "current", encoding: encodings::DEFAULT, restore: false, columns: 90, rows: 28, remember_size: true, confirm_close: true
             font: "", font_size: 10.0, font_weight: 400, ligatures: true, scheme: schemes::SYSTEM, cursor: "block", cursor_blink: false, bold_bright: false, legible: true, padding: 4, opacity: 100, line_spacing: 1.0, scrollbar: "always", scrollbar_side: "right", menu_bar: true, tab_bar: "several"
-            scrollback: 1_000, scroll_on_output: false, scroll_on_keystroke: true, word_chars: WORD_CHARS, copy_on_select: false, confirm_paste: false, bell: "none", notifications: true, clipboard_write: true, editor: "", option_as_meta: false, input_method: "auto"
+            scrollback: 1_000, scroll_on_output: false, scroll_on_keystroke: true, word_chars: WORD_CHARS, copy_on_select: false, confirm_paste: false, bell: "none", notifications: true, alerts: true, alert_after: 10, status_bar: false, status_every: 2, process_sort: "cpu", process_order: "descending", clipboard_write: true, editor: "", option_as_meta: false, input_method: "auto"
             drop_down_key: "F12", drop_down_position: "top", drop_down_width: 100, drop_down_height: 50
         }
     }
 }
+
+/// The longest wait before an alert, in seconds: a day.
+pub const ALERT_AFTER_MAX: i64 = 86_400
+
+/// The longest wait between the status bar's readings, in seconds: an hour.
+pub const STATUS_EVERY_MAX: i64 = 3_600
 
 /// The edges the quick terminal can hang from.
 pub const POSITIONS: [String; 4] = ["top", "bottom", "left", "right"]
@@ -207,6 +229,7 @@ fn values(s: Settings) -> Vec<(String, String)> {
         ("scrollback", f"{s.scrollback}"), ("scroll_on_output", flag(s.scroll_on_output)), ("scroll_on_keystroke", flag(s.scroll_on_keystroke))
         ("word_chars", s.word_chars), ("copy_on_select", flag(s.copy_on_select)), ("confirm_paste", flag(s.confirm_paste))
         ("bell", s.bell), ("notifications", flag(s.notifications)), ("clipboard_write", flag(s.clipboard_write))
+        ("alerts", flag(s.alerts)), ("alert_after", f"{s.alert_after}"), ("status_bar", flag(s.status_bar)), ("status_every", f"{s.status_every}"), ("process_sort", s.process_sort), ("process_order", s.process_order)
         ("editor", s.editor), ("option_as_meta", flag(s.option_as_meta)), ("input_method", s.input_method)
         ("drop_down_key", s.drop_down_key), ("drop_down_position", s.drop_down_position), ("drop_down_width", f"{s.drop_down_width}"), ("drop_down_height", f"{s.drop_down_height}")
     ]
@@ -271,6 +294,12 @@ pub fn with_values(s: Settings, values: Map<String, String>) -> Settings {
     if let Some(v) = one_of(values, "bell", ["none", "flash", "sound"]) { out.bell = v }
     if let Some(v) = values.get("notifications").and_then(flag_of) { out.notifications = v }
     if let Some(v) = values.get("clipboard_write").and_then(flag_of) { out.clipboard_write = v }
+    if let Some(v) = values.get("alerts").and_then(flag_of) { out.alerts = v }
+    if let Some(v) = values.get("alert_after").and_then(|v| number_in(v, 1, ALERT_AFTER_MAX)) { out.alert_after = v }
+    if let Some(v) = values.get("status_bar").and_then(flag_of) { out.status_bar = v }
+    if let Some(v) = values.get("status_every").and_then(|v| number_in(v, 1, STATUS_EVERY_MAX)) { out.status_every = v }
+    if let Some(v) = one_of(values, "process_sort", processes::SORTS) { out.process_sort = v }
+    if let Some(v) = one_of(values, "process_order", processes::ORDERS) { out.process_order = v }
     if let Some(v) = text("editor") { out.editor = v }
     if let Some(v) = values.get("option_as_meta").and_then(flag_of) { out.option_as_meta = v }
     if let Some(v) = one_of(values, "input_method", input_method::CHOICES) { out.input_method = v }
@@ -335,6 +364,10 @@ pub fn dialog(s: Settings, fonts: Vec<String>, offered: Vec<schemes::Entry>, reg
         toggle("confirm_paste", "Ask before pasting several lines", s.confirm_paste, d.confirm_paste, "Also asks before pasting control characters.")
         field("bell", "Bell", PreferenceKind::Choice(bells), s.bell, d.bell, "A tab that rings while hidden is always marked.")
         toggle("notifications", "Show notifications from programs", s.notifications, d.notifications, "")
+        toggle("alerts", "Alert when a long command finishes or an agent waits", s.alerts, d.alerts, "For a tab you are not looking at: a desktop notification, and a mark on the tab.")
+        field("alert_after", "Alert after", PreferenceKind::Integer(1, ALERT_AFTER_MAX), f"{s.alert_after}", f"{d.alert_after}", "Seconds a command or an agent works before its end alerts.")
+        field("process_sort", "Sort processes by", PreferenceKind::Choice(#[("cpu", "CPU"), ("memory", "Memory")]), s.process_sort, d.process_sort, "How Processes opens; click a column to sort by it.")
+        field("process_order", "Process order", PreferenceKind::Choice(#[("descending", "Highest first"), ("ascending", "Lowest first")]), s.process_order, d.process_order, "")
         toggle("clipboard_write", "Let programs copy to the clipboard", s.clipboard_write, d.clipboard_write, "Programs can never read it.")
         field("editor", "Editor for file paths", PreferenceKind::Text, s.editor, d.editor, "Ctrl+click on a path runs it, as in vim +{line} {path}. Leave empty to open files with the desktop.")
     ]
@@ -366,6 +399,8 @@ pub fn dialog(s: Settings, fonts: Vec<String>, offered: Vec<schemes::Entry>, reg
         field("scrollbar", "Scrollbar", PreferenceKind::Choice(scrollbars), s.scrollbar, d.scrollbar, "")
         field("scrollbar_side", "Scrollbar side", PreferenceKind::Choice(sides), s.scrollbar_side, d.scrollbar_side, "")
         field("tab_bar", "Tab bar", PreferenceKind::Choice(tab_bars), s.tab_bar, d.tab_bar, "")
+        toggle("status_bar", "Show the status bar", s.status_bar, d.status_bar, "waftty's CPU, memory and disk use, with everything its tabs started, under the terminal.")
+        field("status_every", "Status bar refresh", PreferenceKind::Integer(1, STATUS_EVERY_MAX), f"{s.status_every}", f"{d.status_every}", "Seconds between the status bar's readings; each one costs a little CPU.")
     ]
     for f in menu_bar_field(s, d) { appearance.push(f) }
     request::preferences("settings", "Settings", #[
@@ -546,7 +581,7 @@ mod tests {
 
     #[test]
     fn values_out_of_range_keep_the_setting_they_would_replace() {
-        let s = super::with_values(Settings::default(), { "font_size": "200", "scrollback": "-5", "encoding": "UTF-16LE", "scheme": "dark", "new_tabs": "elsewhere", "clipboard_write": "maybe", "cursor": "star", "padding": "99", "bell": "sound", "font_weight": "350", "drop_down_position": "middle" })
+        let s = super::with_values(Settings::default(), { "font_size": "200", "scrollback": "-5", "encoding": "UTF-16LE", "scheme": "dark", "new_tabs": "elsewhere", "clipboard_write": "maybe", "cursor": "star", "padding": "99", "bell": "sound", "font_weight": "350", "drop_down_position": "middle", "status_every": "3601", "alert_after": "0" })
         assert_eq(s.font_size, 10.0)
         assert_eq(s.scrollback, 1_000)
         assert_eq(s.encoding, "UTF-8")
@@ -558,6 +593,8 @@ mod tests {
         assert_eq(s.bell, "sound")
         assert_eq(s.font_weight, 400)
         assert_eq(s.drop_down_position, "top")
+        assert_eq(s.status_every, 2)
+        assert_eq(s.alert_after, 10)
     }
 
     #[test]
@@ -569,7 +606,7 @@ mod tests {
 
     #[test]
     fn stored_values_read_back_as_the_same_settings() {
-        let s = Settings { shell: "/bin/zsh -l", directory: "/tmp", encoding: "KOI8-R", font: "Mono", font_size: 12.5, font_weight: 300, ligatures: false, scrollback: 9000, scheme: "user:night", new_tabs: "configured", clipboard_write: false, editor: "vim +{line} {path}", cursor: "bar", scrollbar: "always", tab_bar: "always", bell: "flash", restore: true, columns: 120, rows: 40, drop_down_position: "left", drop_down_width: 30, drop_down_height: 80, ..Settings::default() }
+        let s = Settings { shell: "/bin/zsh -l", directory: "/tmp", encoding: "KOI8-R", font: "Mono", font_size: 12.5, font_weight: 300, ligatures: false, scrollback: 9000, scheme: "user:night", new_tabs: "configured", clipboard_write: false, editor: "vim +{line} {path}", cursor: "bar", scrollbar: "always", tab_bar: "always", bell: "flash", restore: true, columns: 120, rows: 40, drop_down_position: "left", drop_down_width: 30, drop_down_height: 80, alerts: false, alert_after: 45, status_bar: true, status_every: 3600, process_sort: "memory", process_order: "ascending", ..Settings::default() }
         let mut map: Map<String, String> = Map::new()
         for (k, v) in super::values(s) { map[k] = v }
         assert_eq(super::with_values(Settings::default(), map), s)

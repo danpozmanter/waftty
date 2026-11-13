@@ -1,0 +1,294 @@
+// The processes waftty runs: itself and everything its tabs started, with
+// the CPU, memory and storage each uses. Processes and the status bar show
+// them; samples are taken only while one of those is open.
+
+use std::{errors, process, time}
+use std::encoding::json
+
+use waftty_processes
+
+/// How often the processes are sampled while shown, in milliseconds.
+pub const INTERVAL_MS: i64 = 2_000
+
+/// The timer that samples them.
+pub const TIMER: String = "processes"
+
+/// The one-off timer that takes a second sample soon after the first, so
+/// rates show without waiting a long interval.
+pub const SECOND: String = "processes-second"
+
+/// The orders Processes can open in: the column, then the direction.
+pub const SORTS: [String; 2] = ["cpu", "memory"]
+pub const ORDERS: [String; 2] = ["descending", "ascending"]
+
+/// One process and its counters when sampled: CPU time used so far (user and
+/// system) in nanoseconds, resident memory in bytes, and the bytes it has
+/// read from and written to storage, None where the system does not count
+/// them per process (FreeBSD). Windows counts every read and write, devices
+/// and pipes included.
+#[derive(Default, PartialEq)]
+pub struct ProcessSample {
+    pub pid: i64
+    /// The process that started it, 0 when the system names none.
+    pub parent: i64
+    pub name: String
+    pub cpu_ns: i64
+    pub memory: i64
+    pub disk_read: Option<i64>
+    pub disk_written: Option<i64>
+}
+
+// The tree as the binding sends it.
+#[derive(Default)]
+struct Tree {
+    processes: Vec<ProcessSample>
+}
+
+/// One sample of the tree: when it was taken and the processes' counters
+/// then.
+pub struct Sample {
+    pub at: time::Instant
+    pub processes: Vec<ProcessSample>
+}
+
+/// One process as Processes lists it, its rates over the time since the
+/// sample before; None until there are two samples, and for storage where
+/// the system does not count it per process.
+#[derive(Default, PartialEq)]
+pub struct Row {
+    pub pid: i64
+    pub parent: i64
+    pub name: String
+    /// The tab whose shell started it, or "" for waftty and anything outside
+    /// a tab.
+    pub tab: String
+    /// Percent of one core.
+    pub cpu: Option<f64>
+    /// Resident memory in bytes.
+    pub memory: i64
+    /// Bytes per second read from and written to storage.
+    pub read: Option<f64>
+    pub written: Option<f64>
+    /// Whether the system counts its storage use.
+    pub counts_disk: bool
+}
+
+/// What the status bar sums up: every row's use, and how many processes
+/// besides waftty run.
+#[derive(Default, PartialEq)]
+pub struct Totals {
+    pub cpu: Option<f64>
+    pub memory: i64
+    pub read: Option<f64>
+    pub written: Option<f64>
+    /// Whether the system counts storage use for any of them.
+    pub counts_disk: bool
+    pub subprocesses: i64
+}
+
+/// The tree under waftty now.
+pub fn sample() -> Sample {
+    let tree = json::decode::<Tree>(waftty_processes::tree(process::id())).map(|t| t.processes).unwrap_or(#[])
+    Sample { at: time::Instant::now(), processes: tree }
+}
+
+/// Sends signal `signum` to process `pid`; on Windows, ends it.
+pub fn signal(pid: i64, signum: i64) -> Result<(), errors::Error> {
+    waftty_processes::signal(pid, signum).map_err(|e| errors::new(f"{e}"))
+}
+
+/// The rows `now` shows, with rates from the change since `before`, each
+/// named for its tab by `tab_of` (a pid to the label of the tab whose shell
+/// it is, if it is one).
+pub fn rows(before: Option<Sample>, now: Sample, tab_of: Map<i64, String>) -> Vec<Row> {
+    let mut parents = Map::new()
+    for p in now.processes { parents[p.pid] = p.parent }
+    let mut earlier = Map::new()
+    let mut span = 0
+    if let Some(b) = before {
+        span = now.at.duration_since(b.at).as_nanos()
+        for p in b.processes { earlier[p.pid] = p }
+    }
+    now.processes.map(|p| {
+        let prior = if span > 0 { earlier.get(p.pid) } else { None }
+        let per_second = |was: Option<i64>, is: Option<i64>| -> Option<f64> {
+            let Some(old) = prior else { return None }
+            let Some(a) = was else { return None }
+            let Some(b) = is else { return None }
+            Some((b - a).max(0) as f64 * 1_000_000_000.0 / span as f64)
+        }
+        let cpu = prior.map(|old| (p.cpu_ns - old.cpu_ns).max(0) as f64 * 100.0 / span as f64)
+        Row {
+            pid: p.pid, parent: p.parent, name: p.name, tab: tab_for(p.pid, parents, tab_of), cpu: cpu, memory: p.memory
+            read: per_second(prior.and_then(|o| o.disk_read), p.disk_read), written: per_second(prior.and_then(|o| o.disk_written), p.disk_written)
+            counts_disk: p.disk_read.is_some() || p.disk_written.is_some()
+        }
+    })
+}
+
+// The label of the tab whose shell `pid` is or descends from, "" for none.
+fn tab_for(pid: i64, parents: Map<i64, i64>, tab_of: Map<i64, String>) -> String {
+    let mut at = pid
+    // The tree is waftty's, so a walk up it ends at waftty within its size.
+    for _ in 0..parents.len() {
+        if let Some(label) = tab_of.get(at) { return label }
+        let Some(up) = parents.get(at) else { return "" }
+        at = up
+    }
+    ""
+}
+
+/// The use of every row together.
+pub fn totals(rows: Vec<Row>) -> Totals {
+    let add = |a: Option<f64>, b: Option<f64>| -> Option<f64> {
+        match (a, b) {
+            (Some(x), Some(y)) => Some(x + y)
+            (Some(x), None) => Some(x)
+            (None, y) => y
+        }
+    }
+    let mut t = Totals { subprocesses: (rows.len() - 1).max(0), ..Totals::default() }
+    for r in rows {
+        t.cpu = add(t.cpu, r.cpu)
+        t.memory += r.memory
+        t.read = add(t.read, r.read)
+        t.written = add(t.written, r.written)
+        t.counts_disk = t.counts_disk || r.counts_disk
+    }
+    t
+}
+
+/// `rows` sorted by `column` ("name", "pid", "tab", "cpu", "memory", "read"
+/// or "written"), ascending or not; equal rows keep process id order.
+pub fn sorted(rows: Vec<Row>, column: String, ascending: bool) -> Vec<Row> {
+    let mut out = rows
+    out.sort_by(|a, b| {
+        let order = match column {
+            "name" => compare_text(a.name, b.name)
+            "pid" => compare(a.pid as f64, b.pid as f64)
+            "tab" => compare_text(a.tab, b.tab)
+            "memory" => compare(a.memory as f64, b.memory as f64)
+            "read" => compare(a.read.unwrap_or(-1.0), b.read.unwrap_or(-1.0))
+            "written" => compare(a.written.unwrap_or(-1.0), b.written.unwrap_or(-1.0))
+            _ => compare(a.cpu.unwrap_or(-1.0), b.cpu.unwrap_or(-1.0))
+        }
+        let directed = if ascending { order } else { -order }
+        if directed != 0 { directed } else { compare(a.pid as f64, b.pid as f64) }
+    })
+    out
+}
+
+fn compare(a: f64, b: f64) -> i64 {
+    if a < b { -1 } else if a > b { 1 } else { 0 }
+}
+
+fn compare_text(a: String, b: String) -> i64 {
+    let x = a.to_lowercase()
+    let y = b.to_lowercase()
+    if x < y { -1 } else if x > y { 1 } else { 0 }
+}
+
+/// `bytes` as people read a size: "512 B", "4.0 KB", "38 MB", "1.2 GB".
+pub fn size_text(bytes: i64) -> String {
+    let units = ["B", "KB", "MB", "GB", "TB"]
+    let mut value = bytes.max(0) as f64
+    let mut unit = 0
+    while value >= 1024.0 && unit < units.len() - 1 {
+        value /= 1024.0
+        unit += 1
+    }
+    if unit == 0 { f"{bytes.max(0)} B" } else if value < 10.0 { f"{value:.1} {units[unit]}" } else { f"{value.round() as i64} {units[unit]}" }
+}
+
+/// A rate in bytes per second, or a dash before there is one.
+pub fn rate_text(rate: Option<f64>) -> String {
+    match rate {
+        Some(r) => f"{size_text(r.round() as i64)}/s"
+        None => "\u{2013}"
+    }
+}
+
+/// A share of one core, or a dash before there is one.
+pub fn cpu_text(cpu: Option<f64>) -> String {
+    match cpu {
+        Some(c) => f"{c:.1}%"
+        None => "\u{2013}"
+    }
+}
+
+/// The status bar's line: "CPU 3.2% · Memory 412 MB · Disk 0 B/s read,
+/// 12 KB/s written · 9 subprocesses".
+pub fn status_text(t: Totals) -> String {
+    let disk = if t.counts_disk { f" \u{b7} Disk {rate_text(t.read)} read, {rate_text(t.written)} written" } else { "" }
+    let count = if t.subprocesses == 1 { "1 subprocess" } else { f"{t.subprocesses} subprocesses" }
+    f"CPU {cpu_text(t.cpu)} \u{b7} Memory {size_text(t.memory)}{disk} \u{b7} {count}"
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{process, time}
+
+    use super::{ProcessSample, Row, Sample, Totals}
+
+    fn process(pid: i64, parent: i64, name: String, cpu_ns: i64, memory: i64, read: i64) -> ProcessSample {
+        ProcessSample { pid: pid, parent: parent, name: name, cpu_ns: cpu_ns, memory: memory, disk_read: Some(read), disk_written: Some(0) }
+    }
+
+    #[test]
+    fn rates_come_from_the_change_between_two_samples() {
+        let start = time::Instant::now()
+        let before = Sample { at: start, processes: #[process(1, 0, "waftty", 0, 100, 0), process(2, 1, "bash", 0, 10, 0)] }
+        // Two seconds later: bash used one second of CPU and read 4 KiB.
+        let now = Sample { at: start + time::Duration::from_secs(2), processes: #[process(1, 0, "waftty", 200_000_000, 100, 0), process(2, 1, "bash", 1_000_000_000, 10, 4_096), process(3, 2, "make", 5, 20, 7)] }
+        let rows = super::rows(Some(before), now, { 2: "bash: ~/dev" })
+        assert_eq(rows.map(|r| r.cpu), #[Some(10.0), Some(50.0), None])
+        assert_eq(rows.map(|r| r.read), #[Some(0.0), Some(2_048.0), None])
+        assert_eq(rows.map(|r| r.tab), #["", "bash: ~/dev", "bash: ~/dev"])
+        let t = super::totals(rows)
+        assert_eq(t, Totals { cpu: Some(60.0), memory: 130, read: Some(2_048.0), written: Some(0.0), counts_disk: true, subprocesses: 2 })
+    }
+
+    #[test]
+    fn a_first_sample_has_no_rates_yet() {
+        let now = Sample { at: time::Instant::now(), processes: #[process(1, 0, "waftty", 9, 100, 3)] }
+        let rows = super::rows(None, now, Map::new())
+        assert_eq(rows.map(|r| r.cpu), #[None])
+        assert_eq(super::status_text(super::totals(rows)), "CPU \u{2013} \u{b7} Memory 100 B \u{b7} Disk \u{2013} read, \u{2013} written \u{b7} 0 subprocesses")
+    }
+
+    #[test]
+    fn rows_sort_by_any_column_either_way_with_unknown_rates_last_when_descending() {
+        let rows = #[
+            Row { pid: 1, name: "waftty", cpu: Some(2.0), memory: 300, ..Row::default() }
+            Row { pid: 2, name: "bash", cpu: Some(9.0), memory: 10, ..Row::default() }
+            Row { pid: 3, name: "Make", cpu: None, memory: 50, ..Row::default() }
+        ]
+        assert_eq(super::sorted(rows, "cpu", false).map(|r| r.pid), #[2, 1, 3])
+        assert_eq(super::sorted(rows, "cpu", true).map(|r| r.pid), #[3, 1, 2])
+        assert_eq(super::sorted(rows, "memory", false).map(|r| r.pid), #[1, 3, 2])
+        assert_eq(super::sorted(rows, "name", true).map(|r| r.pid), #[2, 3, 1])
+    }
+
+    #[test]
+    fn sizes_and_rates_read_in_the_nearest_unit() {
+        assert_eq(super::size_text(512), "512 B")
+        assert_eq(super::size_text(4_096), "4.0 KB")
+        assert_eq(super::size_text(40_000_000), "38 MB")
+        assert_eq(super::size_text(1_288_490_189), "1.2 GB")
+        assert_eq(super::rate_text(Some(12_288.0)), "12 KB/s")
+        assert_eq(super::rate_text(None), "\u{2013}")
+        assert_eq(super::cpu_text(Some(3.25)), "3.2%")
+    }
+
+    #[test]
+    fn the_status_bar_counts_one_subprocess_in_the_singular() {
+        let t = Totals { cpu: Some(1.0), memory: 2_048, read: None, written: None, counts_disk: false, subprocesses: 1 }
+        assert_eq(super::status_text(t), "CPU 1.0% \u{b7} Memory 2.0 KB \u{b7} 1 subprocess")
+    }
+
+    #[test]
+    fn this_process_samples_as_the_root_of_its_tree() {
+        let s = super::sample()
+        assert_eq(s.processes.first().map(|p| p.pid), Some(process::id()))
+    }
+}

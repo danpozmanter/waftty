@@ -5,7 +5,7 @@
 
 **[Documentation](https://danpozmanter.github.io/waftty/)** | **[Releases](https://github.com/danpozmanter/waftty/releases)**
 
-![waftty with two tabs, the first split into two panes: git log on the left, neofetch and ls on the right](docs_src/assets/screenshot.png)
+![waftty in ~/dev/waftty after ls -l, with Recent Directories open over the terminal and the status bar showing CPU, memory, disk use and subprocesses](docs_src/assets/screenshot.png)
 
 A tabbed terminal emulator written in [Gossamer](https://github.com/gossamer-lang/gossamer)
 on gui-gos - built on Rust and SDL 3. A window is its menu bar and its terminal, with a slim tab strip

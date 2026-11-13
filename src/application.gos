@@ -13,6 +13,7 @@ use model
 use model::Model
 use recent
 use schemes
+use sessions
 use settings
 use settings::Settings
 use shortcuts
@@ -40,6 +41,7 @@ fn init(s: Settings, first: Command, first_tab: FirstTab, restore: bool, program
     let mut m = model::new(s)
     m.program_env = program_env
     m.recent_dirs = recent::load()
+    m.recent_sessions = sessions::load()
     m.desktop_font = settings::desktop_font()
     // The terminals' family is read now, so the first frame already draws in it.
     let _ = gui::text::fonts::preload(model::font(m))

@@ -1,0 +1,107 @@
+// Alerts for a tab that is not in front: a command that ran a while has
+// finished, or an agent that was working has stopped to wait for the user.
+// An agent shows it works by changing its screen (a spinner, a timer, its
+// output), so one whose screen stays still after a stretch of work is
+// waiting.
+
+/// How often agents' screens are looked at, in milliseconds.
+pub const INTERVAL_MS: i64 = 1_500
+
+/// The timer that looks at them.
+pub const TIMER: String = "agents"
+
+/// How long an agent's screen stays still before it counts as waiting.
+pub const QUIET_MS: i64 = 3_000
+
+/// What is known of one agent's screen.
+#[derive(Default, PartialEq)]
+pub struct Watch {
+    /// The screen when last looked at.
+    pub screen: String
+    /// When its screen began changing, in milliseconds since the Unix epoch;
+    /// 0 while it is still.
+    pub busy_since: i64
+    /// When its screen last changed.
+    pub changed_at: i64
+}
+
+/// Whether a job that came to the front at `since` and left at `now`, both
+/// in milliseconds since the Unix epoch, ran at least `after_ms`.
+pub fn ran_long(since: i64, now: i64, after_ms: i64) -> bool {
+    since > 0 && now - since >= after_ms
+}
+
+/// `watch` once the agent's screen reads `screen` at `now`, and whether the
+/// agent has just stopped after working at least `after_ms`.
+pub fn looked(watch: Watch, screen: String, now: i64, after_ms: i64) -> (Watch, bool) {
+    if screen != watch.screen {
+        let since = if watch.busy_since == 0 { now } else { watch.busy_since }
+        return (Watch { screen: screen, busy_since: since, changed_at: now }, false)
+    }
+    if watch.busy_since > 0 && now - watch.changed_at >= QUIET_MS {
+        let worked = watch.changed_at - watch.busy_since >= after_ms
+        return (Watch { busy_since: 0, ..watch }, worked)
+    }
+    (watch, false)
+}
+
+/// How long `ms` milliseconds is, as an alert says it: "45s", "2m 05s",
+/// "1h 03m".
+pub fn duration_text(ms: i64) -> String {
+    let s = ms.max(0) / 1000
+    if s < 60 { return f"{s}s" }
+    if s < 3600 { return f"{s / 60}m {s % 60:02}s" }
+    f"{s / 3600}h {s / 60 % 60:02}m"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{QUIET_MS, Watch, looked}
+
+    #[test]
+    fn a_job_counts_as_long_from_the_threshold_on() {
+        assert(super::ran_long(1_000, 11_000, 10_000))
+        assert(!super::ran_long(1_000, 10_999, 10_000))
+        assert(!super::ran_long(0, 50_000, 10_000))
+    }
+
+    #[test]
+    fn an_agent_that_worked_long_enough_then_went_still_is_waiting_once() {
+        let mut w = Watch::default()
+        // It works for twelve seconds, its screen changing every tick.
+        let mut now = 1_000_000
+        for i in 0..9 {
+            let r = looked(w, f"working {i}", now, 10_000)
+            w = r.0
+            assert(!r.1)
+            now += 1_500
+        }
+        let last_change = now - 1_500
+        // Then it is still: once the quiet has lasted, it waits.
+        while now - last_change < QUIET_MS {
+            let r = looked(w, "working 8", now, 10_000)
+            w = r.0
+            assert(!r.1)
+            now += 1_500
+        }
+        let r = looked(w, "working 8", now, 10_000)
+        w = r.0
+        assert(r.1)
+        // Still afterwards, it does not wait again.
+        assert(!looked(w, "working 8", now + 1_500, 10_000).1)
+    }
+
+    #[test]
+    fn a_short_burst_of_work_is_not_waiting() {
+        let started = looked(Watch::default(), "start", 0, 10_000).0
+        let answered = looked(started, "answer", 1_500, 10_000).0
+        assert(!looked(answered, "answer", 1_500 + QUIET_MS, 10_000).1)
+    }
+
+    #[test]
+    fn durations_read_in_seconds_minutes_or_hours() {
+        assert_eq(super::duration_text(45_400), "45s")
+        assert_eq(super::duration_text(125_000), "2m 05s")
+        assert_eq(super::duration_text(3_780_000), "1h 03m")
+    }
+}

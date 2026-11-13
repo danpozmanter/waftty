@@ -1,0 +1,677 @@
+// The agent sessions tabs have run, latest first, which Recent Sessions
+// offers to resume. An agent keeps its own record of each session; this
+// reads the session's id, folder and title from it when the agent leaves a
+// tab's foreground. Private tabs add none.
+
+use std::{env, errors, fs, path, strconv, time}
+use std::encoding::json
+
+use gui::services
+
+use info
+
+/// The most sessions the list keeps.
+pub const LIMIT: i64 = 20
+
+/// How long before an agent is seen to start its session file may already
+/// be written, as file times are coarser than a millisecond.
+pub const START_SLACK_MS: i64 = 2000
+
+// How much of a session's file is read for its folder and title; sessions
+// run to megabytes, and what is needed comes first.
+const HEAD_BYTES: i64 = 256 * 1024
+
+/// One agent session a tab ran.
+#[derive(Default, PartialEq)]
+pub struct Session {
+    /// The agent's program name, as the tab's job named it ("claude").
+    pub agent: String
+    pub id: String
+    /// The folder the session worked in, which resuming it opens.
+    pub dir: String
+    /// The session's title, or its first prompt; empty when neither is known.
+    pub title: String
+    /// When the session was last used, in milliseconds since the Unix epoch.
+    pub used: i64
+    /// When the session began, in milliseconds since the Unix epoch; 0 when
+    /// its record does not say.
+    #[default]
+    pub started: i64
+}
+
+// The list as its file holds it.
+#[derive(Default)]
+struct Saved {
+    sessions: Vec<Session>
+}
+
+fn file() -> String {
+    path::join(services::config_dir(info::APP_ID), "recent-sessions.json")
+}
+
+/// The list saved last, or none when there is none to read.
+pub fn load() -> Vec<Session> {
+    let Ok(text) = fs::read_to_string(file()) else { return #[] }
+    json::decode::<Saved>(text).map(|saved| saved.sessions).unwrap_or(#[])
+}
+
+/// Saves `sessions` as the list.
+pub fn save(sessions: Vec<Session>) -> Result<(), errors::Error> {
+    fs::create_dir_all(services::config_dir(info::APP_ID))?
+    fs::write(file(), json::encode(Saved { sessions: sessions }).bytes())?
+    Ok(())
+}
+
+/// Forgets every session: the list is empty from here on.
+pub fn clear() {
+    if fs::exists(file()) { let _ = fs::remove_file(file()) }
+}
+
+/// `sessions` with `session` first, once by id, within the limit.
+pub fn used(sessions: Vec<Session>, session: Session) -> Vec<Session> {
+    let mut out = #[session]
+    for s in sessions {
+        if s.id != session.id && out.len() < LIMIT { out.push(s) }
+    }
+    out
+}
+
+/// When `session` began, as Recent Sessions shows it in `location`
+/// ("11/13/26 1:20PM"); empty when its record does not say.
+pub fn started_text(session: Session, location: time::Location) -> String {
+    if session.started <= 0 { return "" }
+    let Ok(c) = location.civil(session.started) else { return "" }
+    let hour = if c.hour % 12 == 0 { 12 } else { c.hour % 12 }
+    let half = if c.hour < 12 { "AM" } else { "PM" }
+    f"{c.month}/{c.day}/{c.year % 100:02} {hour}:{c.minute:02}{half}"
+}
+
+// The instant an RFC 3339 timestamp names, in milliseconds since the Unix
+// epoch; 0 for text that is not one.
+fn instant(text: String) -> i64 {
+    time::parse_rfc3339(text).unwrap_or(0)
+}
+
+/// Whether program `job` is an agent whose sessions can be resumed.
+pub fn is_agent(job: String) -> bool {
+    job == "claude" || job == "codex" || job == "pi"
+}
+
+/// What to type at a shell prompt to resume `session`; None for an agent
+/// waftty does not know or an id that is not a session id.
+pub fn resume_input(session: Session) -> Option<String> {
+    if session.id.is_empty() || !session.id.chars().all(|c| c.is_ascii_hexdigit() || c == '-') { return None }
+    match session.agent {
+        "claude" => Some(f"claude --resume {session.id}\r")
+        "codex" => Some(f"codex resume {session.id}\r")
+        "pi" => Some(f"pi --session {session.id}\r")
+        _ => None
+    }
+}
+
+/// The session agent `agent` kept for folder `dir` that was written last,
+/// at `since` (milliseconds since the Unix epoch) or later; None when there
+/// is none or its record does not read.
+pub fn latest(agent: String, dir: String, since: i64) -> Option<Session> {
+    match agent {
+        "claude" => claude_latest(claude_root(), dir, since)
+        "codex" => codex_latest(codex_root(), dir, since)
+        "pi" => pi_latest(pi_sessions(dir), dir, since)
+        _ => None
+    }
+}
+
+fn home() -> String {
+    env::var("HOME").or(env::var("USERPROFILE")).unwrap_or("")
+}
+
+fn claude_root() -> String {
+    env::var("CLAUDE_CONFIG_DIR").unwrap_or(path::join(home(), ".claude"))
+}
+
+fn codex_root() -> String {
+    env::var("CODEX_HOME").unwrap_or(path::join(home(), ".codex"))
+}
+
+// The folder pi keeps folder `dir`'s sessions in: the one its environment
+// names for every session, else one per folder under its agent folder.
+fn pi_sessions(dir: String) -> String {
+    if let Some(shared) = env::var("PI_CODING_AGENT_SESSION_DIR") { return shared }
+    let agent = env::var("PI_CODING_AGENT_DIR").unwrap_or(path::join(path::join(home(), ".pi"), "agent"))
+    path::join(path::join(agent, "sessions"), pi_folder(dir))
+}
+
+// pi names a folder's session folder by its path without the leading slash,
+// slashes and colons made dashes, between double dashes.
+fn pi_folder(dir: String) -> String {
+    let trimmed = if dir.starts_with("/") || dir.starts_with("\\") { dir.substring(1, dir.byte_len()) } else { dir }
+    let mut out = "--"
+    for c in trimmed.chars() {
+        if c == '/' || c == '\\' || c == ':' { out += "-" } else { out.push_char(c) }
+    }
+    out + "--"
+}
+
+// Claude Code keeps a folder's sessions under its path with every character
+// but letters and digits made a dash.
+fn claude_folder(dir: String) -> String {
+    dir.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_string() } else { "-" }).collect::<Vec<String>>().join("")
+}
+
+// The newest `.jsonl` file in `folder` written at `since` or later whose
+// name passes `wanted`: its path, name and modification time.
+fn written(folder: String, since: i64, wanted: Fn(String) -> bool) -> Vec<(String, String, i64)> {
+    let Ok(entries) = fs::read_dir(folder) else { return #[] }
+    let mut found = #[]
+    for e in entries {
+        if e.is_file && e.name.ends_with(".jsonl") && e.modified_ms >= since && wanted(e.name) { found.push((e.path, e.name, e.modified_ms)) }
+    }
+    // Only the latest few are read: a session that ended while the agent
+    // ran is among them.
+    found.sort_by_key(|f| Reverse(f.2))
+    found.take(CANDIDATES)
+}
+
+// The most session files read to find one agent's session.
+const CANDIDATES: i64 = 16
+
+// Which of the sessions `found`, written at `since` or later, the agent that
+// started at `since` ran: the first to begin after it started, as several
+// agents may share a folder; else, for a session resumed from before, the
+// one written last.
+fn chosen(found: Vec<Session>, since: i64) -> Option<Session> {
+    let begun = found.filter(|s| s.started >= since)
+    if !begun.is_empty() { return begun.iter().min_by_key(|s| s.started) }
+    found.iter().max_by_key(|s| s.used)
+}
+
+// The complete lines of `file` read for its record: those in its first
+// `HEAD_BYTES`, then, for a longer file, those in its last. A record's
+// lasting facts come first, and the latest of what changes, such as a
+// title, last.
+fn record_lines(file: String) -> Vec<String> {
+    let Ok(f) = fs::open(file) else { return #[] }
+    let Ok(size) = f.len() else { return #[] }
+    let mut lines = whole_lines(f, 0, HEAD_BYTES)
+    if size > HEAD_BYTES {
+        for line in tail_of(f, size) { lines.push(line) }
+    }
+    lines
+}
+
+// The complete lines in the last `HEAD_BYTES` of `file`.
+fn tail_lines(file: String) -> Vec<String> {
+    let Ok(f) = fs::open(file) else { return #[] }
+    let Ok(size) = f.len() else { return #[] }
+    tail_of(f, size)
+}
+
+// The complete lines in the last `HEAD_BYTES` of `f`, `size` bytes long. The
+// window starts a byte early, so a line beginning right at it is seen whole.
+fn tail_of(f: fs::File, size: i64) -> Vec<String> {
+    let start = if size > HEAD_BYTES { size - HEAD_BYTES - 1 } else { 0 }
+    whole_lines(f, start, size - start)
+}
+
+// The complete lines in the `count` bytes of `f` from `offset`: a line cut by
+// either end of what is read is dropped.
+fn whole_lines(f: fs::File, offset: i64, count: i64) -> Vec<String> {
+    let Ok(bytes) = f.read_at(count, offset) else { return #[] }
+    let mut start = 0
+    if offset > 0 {
+        while start < bytes.len() && bytes[start] != 10 { start += 1 }
+        start += 1
+    }
+    let mut end = bytes.len()
+    while end > start && bytes[end - 1] != 10 { end -= 1 }
+    if end <= start { return #[] }
+    let Ok(text) = String::from_utf8(bytes[start..end - 1]) else { return #[] }
+    text.split("\n")
+}
+
+// The first `limit` characters of `text` on one line.
+fn one_line(text: String, limit: i64) -> String {
+    let flat = text.split_whitespace().join(" ")
+    if flat.len() <= limit { return flat }
+    let mut out = String::with_capacity(limit + 4)
+    for c in flat.chars().take(limit) { out.push_char(c) }
+    out + "…"
+}
+
+fn claude_latest(root: String, dir: String, since: i64) -> Option<Session> {
+    let folder = path::join(path::join(root, "projects"), claude_folder(dir))
+    chosen(written(folder, since, |_| true).filter_map(|f| claude_read(f, dir)), since)
+}
+
+// The Claude Code session file `found` holds for folder `dir`.
+fn claude_read(found: (String, String, i64), dir: String) -> Option<Session> {
+    let file, name, modified = found
+    let id = name.substring(0, name.byte_len() - ".jsonl".byte_len())
+    // A title the user gave outranks the one Claude Code made up, and the
+    // latest of each kind is the one in force.
+    let mut custom_title = ""
+    let mut ai_title = ""
+    let mut prompt = ""
+    let mut cwd = ""
+    let mut started = 0
+    for line in record_lines(file) {
+        let Ok(v) = json::parse(line) else { continue }
+        // The first line that carries a time is when the session began.
+        if started == 0 { started = instant(v.get("timestamp").and_then(|t| t.as_str()).unwrap_or("")) }
+        let kind = v.get("type").and_then(|t| t.as_str()).unwrap_or("")
+        if kind == "custom-title" {
+            let given = v.get("customTitle").and_then(|t| t.as_str()).unwrap_or("")
+            if !given.trim().is_empty() { custom_title = given }
+        } else if kind == "ai-title" {
+            let made = v.get("aiTitle").and_then(|t| t.as_str()).unwrap_or("")
+            if !made.trim().is_empty() { ai_title = made }
+        } else if kind == "user" {
+            if cwd.is_empty() { cwd = v.get("cwd").and_then(|c| c.as_str()).unwrap_or("") }
+            let meta = v.get("isMeta").and_then(|b| b.as_bool()).unwrap_or(false)
+            let text = v.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_str()).unwrap_or("")
+            if prompt.is_empty() && !meta && !text.trim().is_empty() && !text.trim().starts_with("<") { prompt = text }
+        }
+    }
+    if !cwd.is_empty() && cwd != dir { return None }
+    let title = if !custom_title.is_empty() { custom_title } else if !ai_title.is_empty() { ai_title } else { prompt }
+    let shown = one_line(title, 80)
+    Some(Session { agent: "claude", id: id, dir: dir, title: shown, used: modified, started: started })
+}
+
+fn codex_latest(root: String, dir: String, since: i64) -> Option<Session> {
+    // Codex files a session under the local date it began; one begun before
+    // midnight is under the day before.
+    let now = time::unix_ms()
+    let mut files = #[]
+    for day in #[now, now - 24 * 60 * 60 * 1000] {
+        for f in written(codex_day(root, day), since, |n| n.starts_with("rollout-")) { files.push(f) }
+    }
+    // A resumed session goes on in the file of the day it began, whenever
+    // that was. Its id is among those prompted since, and says when it began.
+    for id in codex_prompted(root, since) {
+        let Some(began) = uuid7_ms(id) else { continue }
+        for f in written(codex_day(root, began), since, |n| n.ends_with(f"{id}.jsonl")) {
+            if !files.any(|g| g.0 == f.0) { files.push(f) }
+        }
+    }
+    let titles = codex_titles(root)
+    chosen(files.filter_map(|f| codex_read(f, dir, titles)), since)
+}
+
+// The name Codex gave each session, by id: its session index keeps one line
+// per naming, the latest last.
+fn codex_titles(root: String) -> Map<String, String> {
+    let mut titles = Map::new()
+    for line in tail_lines(path::join(root, "session_index.jsonl")) {
+        let Ok(v) = json::parse(line) else { continue }
+        let id = v.get("id").and_then(|i| i.as_str()).unwrap_or("")
+        let name = v.get("thread_name").and_then(|n| n.as_str()).unwrap_or("")
+        if !id.is_empty() && !name.trim().is_empty() { titles[id] = name }
+    }
+    titles
+}
+
+// The folder Codex files the sessions begun on the local date of `instant`
+// under.
+fn codex_day(root: String, instant: i64) -> String {
+    let Ok(civil) = time::Location::local().civil(instant) else { return "" }
+    path::join(root, f"sessions/{civil.year:04}/{civil.month:02}/{civil.day:02}")
+}
+
+// The sessions Codex's prompt history records a prompt for at `since` or
+// later, as its own record keeps them.
+fn codex_prompted(root: String, since: i64) -> Vec<String> {
+    let mut ids = #[]
+    for line in tail_lines(path::join(root, "history.jsonl")) {
+        let Ok(v) = json::parse(line) else { continue }
+        // The history keeps whole seconds.
+        let at = v.get("ts").and_then(|t| t.as_i64()).unwrap_or(0) * 1000
+        let id = v.get("session_id").and_then(|i| i.as_str()).unwrap_or("")
+        if at + 999 >= since && !id.is_empty() && !ids.contains(id) { ids.push(id) }
+    }
+    ids
+}
+
+// When the session with version 7 UUID `id` began, in milliseconds since the
+// Unix epoch: its first 48 bits. None for an id of another kind.
+fn uuid7_ms(id: String) -> Option<i64> {
+    if id.byte_len() != 36 || id.byte_at(14) != 55 { return None }
+    strconv::parse_i64_radix(id.substring(0, 8) + id.substring(9, 13), 16).ok()
+}
+
+// The Codex session file `found` holds for folder `dir`, titled by the name
+// `titles` gives it, else by its first prompt.
+fn codex_read(found: (String, String, i64), dir: String, titles: Map<String, String>) -> Option<Session> {
+    let file, name, modified = found
+    let stem = name.substring(0, name.byte_len() - ".jsonl".byte_len())
+    // The name ends in the session's id, a 36-character UUID.
+    if stem.byte_len() < 36 { return None }
+    let id = stem.substring(stem.byte_len() - 36, stem.byte_len())
+    let mut cwd = ""
+    let mut prompt = ""
+    let mut started = 0
+    for line in record_lines(file) {
+        let Ok(v) = json::parse(line) else { continue }
+        let kind = v.get("type").and_then(|t| t.as_str()).unwrap_or("")
+        let payload = v.get("payload")
+        if kind == "session_meta" && cwd.is_empty() {
+            cwd = payload.and_then(|p| p.get("cwd")).and_then(|c| c.as_str()).unwrap_or("")
+            started = instant(payload.and_then(|p| p.get("timestamp")).and_then(|t| t.as_str()).unwrap_or(""))
+        } else if kind == "event_msg" && prompt.is_empty() {
+            prompt = codex_prompt(payload)
+        }
+    }
+    if cwd != dir { return None }
+    let title = titles.get(id).unwrap_or(prompt)
+    Some(Session { agent: "codex", id: id, dir: dir, title: one_line(title, 80), used: modified, started: started })
+}
+
+// The text the user typed, when Codex event `payload` is a prompt: a
+// `user_message` event, or the completed `UserMessage` item later Codex
+// releases record.
+fn codex_prompt(payload: Option<json::Value>) -> String {
+    let Some(p) = payload else { return "" }
+    match p.get("type").and_then(|t| t.as_str()).unwrap_or("") {
+        "user_message" => p.get("message").and_then(|m| m.as_str()).unwrap_or("")
+        "item_completed" => {
+            let item = p.get("item")
+            if item.and_then(|i| i.get("type")).and_then(|t| t.as_str()) != Some("UserMessage") { return "" }
+            first_text(item.and_then(|i| i.get("content")))
+        }
+        _ => ""
+    }
+}
+
+fn pi_latest(folder: String, dir: String, since: i64) -> Option<Session> {
+    chosen(written(folder, since, |_| true).filter_map(|f| pi_read(f, dir)), since)
+}
+
+// The pi session file `found` holds for folder `dir`.
+fn pi_read(found: (String, String, i64), dir: String) -> Option<Session> {
+    let file, name, modified = found
+    let stem = name.substring(0, name.byte_len() - ".jsonl".byte_len())
+    // The name ends in the session's id, a 36-character UUID.
+    if stem.byte_len() < 36 { return None }
+    let id = stem.substring(stem.byte_len() - 36, stem.byte_len())
+    let mut cwd = ""
+    let mut started = 0
+    let mut name_given = ""
+    let mut prompt = ""
+    for line in record_lines(file) {
+        let Ok(v) = json::parse(line) else { continue }
+        let kind = v.get("type").and_then(|t| t.as_str()).unwrap_or("")
+        if kind == "session" {
+            cwd = v.get("cwd").and_then(|c| c.as_str()).unwrap_or("")
+            started = instant(v.get("timestamp").and_then(|t| t.as_str()).unwrap_or(""))
+        } else if kind == "session_info" {
+            // The latest name given is the session's name.
+            let given = v.get("name").and_then(|n| n.as_str()).unwrap_or("")
+            if !given.is_empty() { name_given = given }
+        } else if kind == "message" && prompt.is_empty() {
+            let message = v.get("message")
+            let role = message.and_then(|m| m.get("role")).and_then(|r| r.as_str()).unwrap_or("")
+            if role == "user" { prompt = first_text(message.and_then(|m| m.get("content"))) }
+        }
+    }
+    if cwd != dir { return None }
+    let title = if name_given.is_empty() { one_line(prompt, 80) } else { one_line(name_given, 80) }
+    Some(Session { agent: "pi", id: id, dir: dir, title: title, used: modified, started: started })
+}
+
+// The most parts of a message looked through for its text: a prompt leads
+// with it, ahead of any images.
+const PARTS: i64 = 16
+
+// The text of a message's content, as pi and Codex record it: the content
+// itself when it is text, else its first text part.
+fn first_text(content: Option<json::Value>) -> String {
+    let Some(c) = content else { return "" }
+    if let Some(text) = c.as_str() { return text }
+    // Past its end an array reads as null, whose parts have no type.
+    for i in 0..PARTS {
+        let part = c.at(i)
+        if part.get("type").and_then(|t| t.as_str()) == Some("text") { return part.get("text").and_then(|t| t.as_str()).unwrap_or("") }
+    }
+    ""
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{env, fs, path, strconv, time}
+
+    use super::{HEAD_BYTES, Session, claude_folder, claude_latest, codex_day, codex_latest, pi_folder, pi_latest, resume_input, used, uuid7_ms}
+
+    #[test]
+    fn claude_names_a_folder_with_every_other_character_a_dash() {
+        assert_eq(claude_folder("/home/me/dev/waftty"), "-home-me-dev-waftty")
+        assert_eq(claude_folder("/srv/my_app.v2"), "-srv-my-app-v2")
+    }
+
+    #[test]
+    fn a_claude_session_reads_its_title_and_folder_from_its_record() {
+        let Ok(root) = fs::temp_dir("waftty-claude-") else { panic("no temporary folder") }
+        let folder = path::join(path::join(root, "projects"), "-work-site")
+        let _ = fs::create_dir_all(folder)
+        let id = "35892bcb-7adb-4d89-8ef3-9a49a87ef33e"
+        let lines = #[
+            "{\"type\":\"permission-mode\",\"sessionId\":\"x\"}"
+            "{\"type\":\"attachment\",\"timestamp\":\"2026-11-13T18:20:11.548Z\"}"
+            "{\"type\":\"user\",\"cwd\":\"/work/site\",\"isMeta\":true,\"message\":{\"content\":\"<command-name>/clear</command-name>\"}}"
+            "{\"type\":\"user\",\"cwd\":\"/work/site\",\"message\":{\"content\":\"Fix   the\\nlogin page\"}}"
+            "{\"type\":\"ai-title\",\"aiTitle\":\"Login page fix\"}"
+        ]
+        let _ = fs::write(path::join(folder, f"{id}.jsonl"), (lines.join("\n") + "\n").bytes())
+        let Some(found) = claude_latest(root, "/work/site", 0) else { panic("no session found") }
+        assert_eq(found.id, id)
+        assert_eq(found.title, "Login page fix")
+        assert_eq(found.dir, "/work/site")
+        assert_eq(found.started, 1_794_594_011_000)
+        assert(claude_latest(root, "/work/site", found.used + 1).is_none())
+        assert(claude_latest(root, "/elsewhere", 0).is_none())
+        let _ = fs::remove_dir_all(root)
+    }
+
+    #[test]
+    fn agents_sharing_a_folder_each_find_the_session_they_began() {
+        let Ok(root) = fs::temp_dir("waftty-claude-") else { panic("no temporary folder") }
+        let record = |folder: String, id: String, began: String, prompt: String| {
+            let _ = fs::create_dir_all(path::join(path::join(root, "projects"), folder))
+            let line = f"{{\"type\":\"user\",\"timestamp\":\"{began}\",\"cwd\":\"/{folder.substring(1, folder.byte_len())}\",\"message\":{{\"content\":\"{prompt}\"}}}}\n"
+            let _ = fs::write(path::join(path::join(path::join(root, "projects"), folder), f"{id}.jsonl"), line.bytes())
+        }
+        // Two sessions begun a minute apart in one folder, both still writing.
+        record("-w", "0f0e0d0c-0000-4000-8000-00000000000a", "2026-11-12T18:00:00Z", "First tab")
+        record("-w", "0f0e0d0c-0000-4000-8000-00000000000b", "2026-11-12T18:01:00Z", "Second tab")
+        let first = claude_latest(root, "/w", 1_794_506_398_000)
+        assert_eq(first.map(|s| s.title), Some("First tab"))
+        let second = claude_latest(root, "/w", 1_794_506_458_000)
+        assert_eq(second.map(|s| s.title), Some("Second tab"))
+        // A session begun long ago and resumed is the one written since.
+        record("-r", "00000000-0000-4000-8000-000000000000", "2026-01-01T00:00:00Z", "Old work")
+        let resumed = claude_latest(root, "/r", time::unix_ms() - 60_000)
+        assert_eq(resumed.map(|s| s.title), Some("Old work"))
+        let _ = fs::remove_dir_all(root)
+    }
+
+    #[test]
+    fn a_long_claude_session_shows_its_latest_title_and_a_given_one_first() {
+        let Ok(root) = fs::temp_dir("waftty-claude-") else { panic("no temporary folder") }
+        let folder = path::join(path::join(root, "projects"), "-w")
+        let _ = fs::create_dir_all(folder)
+        let file = path::join(folder, "0f0e0d0c-0000-4000-8000-000000000002.jsonl")
+        let mut text = "{\"type\":\"user\",\"cwd\":\"/w\",\"message\":{\"content\":\"First prompt\"}}\n"
+        // Past what is read from the start, as a long session's titles are.
+        let filler = "{\"type\":\"assistant\",\"message\":{\"content\":\"" + "x".repeat(1000) + "\"}}\n"
+        while text.byte_len() < 2 * HEAD_BYTES { text += filler }
+        text += "{\"type\":\"ai-title\",\"aiTitle\":\"Early guess\"}\n"
+        text += filler
+        text += "{\"type\":\"ai-title\",\"aiTitle\":\"Settled title\"}\n"
+        let _ = fs::write(file, text.bytes())
+        assert_eq(claude_latest(root, "/w", 0).map(|s| s.title), Some("Settled title"))
+        text += "{\"type\":\"custom-title\",\"customTitle\":\"Named by me\"}\n"
+        text += "{\"type\":\"ai-title\",\"aiTitle\":\"Later guess\"}\n"
+        let _ = fs::write(file, text.bytes())
+        assert_eq(claude_latest(root, "/w", 0).map(|s| s.title), Some("Named by me"))
+        let _ = fs::remove_dir_all(root)
+    }
+
+    #[test]
+    fn a_claude_session_without_a_title_shows_its_first_prompt() {
+        let Ok(root) = fs::temp_dir("waftty-claude-") else { panic("no temporary folder") }
+        let folder = path::join(path::join(root, "projects"), "-w")
+        let _ = fs::create_dir_all(folder)
+        let line = "{\"type\":\"user\",\"cwd\":\"/w\",\"message\":{\"content\":\"Fix   the\\nlogin page\"}}\n"
+        let _ = fs::write(path::join(folder, "0f0e0d0c-0000-4000-8000-000000000001.jsonl"), line.bytes())
+        let Some(found) = claude_latest(root, "/w", 0) else { panic("no session found") }
+        assert_eq(found.title, "Fix the login page")
+        let _ = fs::remove_dir_all(root)
+    }
+
+    #[test]
+    fn a_codex_session_reads_its_folder_and_first_prompt_from_todays_record() {
+        let Ok(root) = fs::temp_dir("waftty-codex-") else { panic("no temporary folder") }
+        let Ok(civil) = time::Location::local().civil(time::unix_ms()) else { panic("no local date") }
+        let folder = path::join(root, f"sessions/{civil.year:04}/{civil.month:02}/{civil.day:02}")
+        let _ = fs::create_dir_all(folder)
+        let id = "019db719-72ac-7671-b651-d0678ea38966"
+        let lines = #[
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"019db719-72ac-7671-b651-d0678ea38966\",\"timestamp\":\"2026-04-22T21:29:51.605Z\",\"cwd\":\"/work/api\"}}"
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\"}}"
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"user_message\",\"message\":\"What does this repo do?\"}}"
+        ]
+        let _ = fs::write(path::join(folder, f"rollout-2026-11-12T21-52-50-{id}.jsonl"), (lines.join("\n") + "\n").bytes())
+        let Some(found) = codex_latest(root, "/work/api", 0) else { panic("no session found") }
+        assert_eq(found.id, id)
+        assert_eq(found.title, "What does this repo do?")
+        assert_eq(found.started, 1_776_893_391_000)
+        assert(codex_latest(root, "/elsewhere", 0).is_none())
+        let _ = fs::remove_dir_all(root)
+    }
+
+    #[test]
+    fn a_codex_session_shows_its_thread_name_else_its_first_typed_prompt() {
+        let Ok(root) = fs::temp_dir("waftty-codex-") else { panic("no temporary folder") }
+        let folder = codex_day(root, time::unix_ms())
+        let _ = fs::create_dir_all(folder)
+        let id = "01a1a479-37ec-77e0-af1e-1653b4e7a5fd"
+        let lines = #[
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"01a1a479-37ec-77e0-af1e-1653b4e7a5fd\",\"timestamp\":\"2026-11-04T02:52:50.032Z\",\"cwd\":\"/work/api\"}}"
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"# AGENTS.md instructions\"}]}}"
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"item_completed\",\"item\":{\"type\":\"AgentMessage\",\"content\":[{\"type\":\"text\",\"text\":\"Not this\"}]}}}"
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"item_completed\",\"item\":{\"type\":\"UserMessage\",\"content\":[{\"type\":\"text\",\"text\":\"Assess the CPU use\"}]}}}"
+        ]
+        let _ = fs::write(path::join(folder, f"rollout-2026-11-03T21-52-50-{id}.jsonl"), (lines.join("\n") + "\n").bytes())
+        assert_eq(codex_latest(root, "/work/api", 0).map(|s| s.title), Some("Assess the CPU use"))
+        let index = #[
+            f"{{\"id\":\"{id}\",\"thread_name\":\"First name\"}}"
+            "{\"id\":\"01a1a441-8738-7501-98bd-079b64a13b45\",\"thread_name\":\"Another thread\"}"
+            f"{{\"id\":\"{id}\",\"thread_name\":\"Assess CPU reduction\"}}"
+        ]
+        let _ = fs::write(path::join(root, "session_index.jsonl"), (index.join("\n") + "\n").bytes())
+        assert_eq(codex_latest(root, "/work/api", 0).map(|s| s.title), Some("Assess CPU reduction"))
+        let _ = fs::remove_dir_all(root)
+    }
+
+    #[test]
+    fn a_codex_session_resumed_days_after_it_began_is_found_where_it_began() {
+        let Ok(root) = fs::temp_dir("waftty-codex-") else { panic("no temporary folder") }
+        let now = time::unix_ms()
+        let began = now - 5 * 24 * 60 * 60 * 1000
+        let hex = format_hex(began)
+        let id = f"{hex.substring(0, 8)}-{hex.substring(8, 12)}-7abc-8def-0123456789ab"
+        assert_eq(uuid7_ms(id), Some(began))
+        let folder = codex_day(root, began)
+        let _ = fs::create_dir_all(folder)
+        let meta = f"{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"cwd\":\"/work/api\"}}}}\n"
+        let _ = fs::write(path::join(folder, f"rollout-2026-11-08T10-00-00-{id}.jsonl"), meta.bytes())
+        let prompt = f"{{\"session_id\":\"{id}\",\"ts\":{now / 1000},\"text\":\"Carry on\"}}\n"
+        let _ = fs::write(path::join(root, "history.jsonl"), prompt.bytes())
+        let Some(found) = codex_latest(root, "/work/api", now - 60_000) else { panic("no session found") }
+        assert_eq(found.id, id)
+        assert(codex_latest(root, "/work/api", now + 60_000).is_none())
+        let _ = fs::remove_dir_all(root)
+    }
+
+    #[test]
+    fn only_a_version_seven_uuid_says_when_its_session_began() {
+        assert_eq(uuid7_ms("019cea73-4086-7fd2-89f4-798e8093e9f8"), Some(1_773_459_947_654))
+        assert(uuid7_ms("2e553028-ae82-4314-99a4-479cf148bccc").is_none())
+        assert(uuid7_ms("019cea73").is_none())
+    }
+
+    // `ms` as the 12 hexadecimal digits of a version 7 UUID's time.
+    fn format_hex(ms: i64) -> String {
+        let digits = strconv::format_i64_radix(ms, 16)
+        "0".repeat(12 - digits.byte_len()) + digits
+    }
+
+    #[test]
+    fn a_session_shows_when_it_began_in_twelve_hour_time() {
+        let Ok(est) = time::Location::fixed(-5 * 60 * 60) else { panic("no fixed location") }
+        let afternoon = Session { started: 1_794_594_011_000, ..Session::default() }
+        assert_eq(super::started_text(afternoon, est), "11/13/26 1:20PM")
+        let midnight = Session { started: 1_794_459_600_000, ..Session::default() }
+        assert_eq(super::started_text(midnight, est), "11/12/26 12:00AM")
+        assert_eq(super::started_text(Session::default(), est), "")
+    }
+
+    #[test]
+    fn pi_names_a_folder_between_double_dashes() {
+        assert_eq(pi_folder("/home/me/dev/waftty"), "--home-me-dev-waftty--")
+        assert_eq(pi_folder("C:\\work\\site"), "--C--work-site--")
+    }
+
+    #[test]
+    fn a_pi_session_reads_its_header_name_and_first_prompt() {
+        let Ok(folder) = fs::temp_dir("waftty-pi-") else { panic("no temporary folder") }
+        let id = "019a7f2e-1b4c-7d5e-9f60-a1b2c3d4e5f6"
+        let lines = #[
+            "{\"type\":\"session\",\"version\":3,\"id\":\"019a7f2e-1b4c-7d5e-9f60-a1b2c3d4e5f6\",\"timestamp\":\"2026-11-13T18:20:11.548Z\",\"cwd\":\"/work/tool\"}"
+            "{\"type\":\"message\",\"id\":\"a1\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Add a --dry-run flag\"}]}}"
+        ]
+        let file = path::join(folder, f"2026-11-13T18-20-11-548Z_{id}.jsonl")
+        let _ = fs::write(file, (lines.join("\n") + "\n").bytes())
+        let Some(found) = pi_latest(folder, "/work/tool", 0) else { panic("no session found") }
+        assert_eq(found.id, id)
+        assert_eq(found.title, "Add a --dry-run flag")
+        assert_eq(found.started, 1_794_594_011_000)
+        let named = lines.join("\n") + "\n{\"type\":\"session_info\",\"id\":\"b2\",\"name\":\"Dry run\"}\n"
+        let _ = fs::write(file, named.bytes())
+        let Some(renamed) = pi_latest(folder, "/work/tool", 0) else { panic("no session found") }
+        assert_eq(renamed.title, "Dry run")
+        assert(pi_latest(folder, "/elsewhere", 0).is_none())
+        let _ = fs::remove_dir_all(folder)
+    }
+
+    #[test]
+    fn resuming_types_the_agents_own_command_and_refuses_other_ids() {
+        let claude = Session { agent: "claude", id: "35892bcb-7adb-4d89-8ef3-9a49a87ef33e", ..Session::default() }
+        assert_eq(resume_input(claude), Some("claude --resume 35892bcb-7adb-4d89-8ef3-9a49a87ef33e\r"))
+        let codex = Session { agent: "codex", id: "019db719-72ac-7671-b651-d0678ea38966", ..Session::default() }
+        assert_eq(resume_input(codex), Some("codex resume 019db719-72ac-7671-b651-d0678ea38966\r"))
+        assert(resume_input(Session { agent: "claude", id: "x; rm -rf ~", ..Session::default() }).is_none())
+        let pi = Session { agent: "pi", id: "019a7f2e-1b4c-7d5e-9f60-a1b2c3d4e5f6", ..Session::default() }
+        assert_eq(resume_input(pi), Some("pi --session 019a7f2e-1b4c-7d5e-9f60-a1b2c3d4e5f6\r"))
+        assert(resume_input(Session { agent: "aider", id: "abc", ..Session::default() }).is_none())
+    }
+
+    #[test]
+    fn a_saved_list_loads_back() {
+        let Ok(root) = fs::temp_dir("waftty-sessions-") else { panic("no temporary folder") }
+        env::set_var("XDG_CONFIG_HOME", root)
+        let s = Session { agent: "claude", id: "7d3f8a2e-1b4c-4d5e-9f60-a1b2c3d4e5f6", dir: root, title: "Notes", used: 5, started: 7 }
+        let saved = super::save(#[s])
+        assert(saved.is_ok(), f"{saved:?}")
+        assert_eq(super::load(), #[s])
+        let _ = fs::remove_dir_all(root)
+    }
+
+    #[test]
+    fn a_used_session_moves_first_once_within_the_limit() {
+        let a = Session { agent: "claude", id: "a", ..Session::default() }
+        let b = Session { agent: "codex", id: "b", ..Session::default() }
+        let list = used(used(#[], a), b)
+        assert_eq(list.map(|s| s.id), #["b", "a"])
+        assert_eq(used(list, a).map(|s| s.id), #["a", "b"])
+    }
+}

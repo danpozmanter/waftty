@@ -1,11 +1,15 @@
 [project]
 id = "dev.gossamer/waftty"
-version = "0.6.3"
+version = "0.7.0"
 gossamer-version = "^v0.78.7"
 # A GUI application: Windows opens no console window beside it.
 windows-subsystem = "windows"
 authors = ["Dan Pozmanter"]
 license = "Apache 2.0"
+
+# Processes and the status bar read the process tree through this crate.
+[rust-bindings]
+waftty-processes = { path = "rust/processes" }
 
 # The engine's optional parts (rich text import, SVG, JPEG and GIF) stay out:
 # a terminal draws none of them.

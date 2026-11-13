@@ -38,6 +38,8 @@ the menu bar. **Edit > Settings > Shortcuts** changes any of them.
 | Clear Scrollback | ++ctrl+shift+k++ | ++cmd+k++ |
 | Reset and Clear | (none; the Terminal menu or the palette) | ++cmd+option+k++ |
 | Recent Directories | ++ctrl+shift+r++ | ++cmd+shift+r++ |
+| Recent Sessions | ++ctrl+shift+period++ | ++cmd+shift+period++ |
+| Processes | ++ctrl+shift+backslash++ | ++cmd+shift+backslash++ |
 | Next Tab / Previous Tab | ++ctrl+tab++ / ++ctrl+shift+tab++ (also ++ctrl+page-down++ / ++ctrl+page-up++) | the same, or ++cmd+shift+bracket-right++ / ++cmd+shift+bracket-left++ |
 | Tab 1 to 8 / Last Tab | ++alt+1++ to ++alt+8++ / ++alt+9++ | ++cmd+1++ to ++cmd+8++ / ++cmd+9++ |
 | Switch to Last Tab | ++ctrl+shift+l++ | ++cmd+shift+l++ |
@@ -47,7 +49,7 @@ the menu bar. **Edit > Settings > Shortcuts** changes any of them.
 | Close Pane | ++ctrl+shift+j++ | ++cmd+option+w++ |
 
 A right click on the terminal offers the link entries, Copy, Paste, Select
-All, New Tab, Split Right, Split Down, Close Pane, Recent Directories, Find, Clear Scrollback,
+All, New Tab, Split Right, Split Down, Close Pane, Recent Directories, Recent Sessions, Find, Clear Scrollback,
 Send Signal, Zoom, Command Palette, Show Menu Bar and Settings.
 
 ## Command Palette
@@ -96,6 +98,54 @@ narrow the list, ++tab++ completes the search to the highlighted folder, and
 and types the `cd`, and while a command runs it opens a new tab in the
 folder instead. Private tabs add nothing to the list, and **Terminal > Clear
 Recent Directories** (or the palette) forgets every folder on it.
+
+## Recent Sessions
+
+When Claude Code, Codex or pi runs in a tab and then exits (or its tab
+closes), waftty notes the session it ran: the agent, the session's title or
+first prompt, the folder it worked in, and when it began. waftty reads these
+from the session records the agents keep themselves (`~/.claude`,
+`~/.codex` and `~/.pi`, or the folders `CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
+`PI_CODING_AGENT_DIR` and `PI_CODING_AGENT_SESSION_DIR` name), so nothing is
+taken from the screen. ++ctrl+shift+period++ (++cmd+shift+period++ on macOS)
+lists the last 20, latest first, as
+`claude · Version 0.6.1 release · ~/dev/waftty · 11/13/26 1:20PM`. Type
+part of an entry to narrow the list; ++enter++ or a click opens a new tab in
+the session's folder and types `claude --resume`, `codex resume` or
+`pi --session` with its id, so the shell's own environment applies and its
+prompt comes back when the agent ends. Private tabs add nothing, and
+**Terminal > Clear Recent Sessions** forgets the list. Sessions are noted on
+Linux, macOS and FreeBSD, where waftty can see which program runs in a tab.
+
+## Processes
+
+++ctrl+shift+backslash++ (++cmd+shift+backslash++ on macOS), or **View > Processes**, lists
+waftty and every process its tabs started, with the tab each belongs to, its
+CPU use, its memory, and how fast it reads and writes the disk. The list
+refreshes every two seconds. It opens sorted by CPU, highest first; Settings >
+Behavior changes that to memory, or to lowest first, and a click on a column
+sorts by it, a second click the other way. Select a process, pick a signal
+and press **Send Signal** to send it (Terminate by default); on Windows
+**End Process** ends it. ++escape++ or **Close** closes the list. FreeBSD
+shows no disk figures.
+
+**View > Show Status Bar** shows the totals of that list under the terminal:
+`CPU 3.2% · Memory 412 MB · Disk 0 B/s read, 12 KB/s written · 5
+subprocesses`. It reads the processes every two seconds while it is shown,
+and not at all while it is hidden or the quick terminal is put away;
+**Status bar refresh** under Settings >
+Appearance sets that from 1 second to 3600 (an hour). CPU and disk figures
+are averages since the last reading.
+
+## Alerts
+
+When a command that ran a while finishes in a tab you are not looking at,
+waftty marks the tab and posts a desktop notification, such as "make
+finished", with how long it ran and the tab's name. It does the same when Claude Code,
+Codex or pi has worked for a while and then stops to wait for you: an agent
+redraws its screen while it works, so one whose screen stays still for a few
+seconds after working is waiting. Settings > Behavior turns alerts off and
+sets how many seconds of work count (10 by default).
 
 ## Private Tabs and Windows
 
@@ -310,6 +360,9 @@ Coding agents in a background tab can tell you when they need you:
 - **Any long command:** end it with `; printf '\a'` to ring the bell when it
   finishes.
 
+waftty also notices on its own when an agent stops to wait or a long command
+ends; see [Alerts](#alerts).
+
 ## Starting waftty
 
 ```sh
@@ -368,11 +421,12 @@ are saved, so the defaults follow your desktop.
   blinking, bold text in bright colors, readability adjustment, padding,
   background opacity (below 100 percent the desktop shows through the
   terminal, where it blends windows), the scrollbar and its side, the menu
-  bar and the tab bar.
+  bar, the tab bar, and the status bar and how often it refreshes.
 - **Behavior**: scrollback lines, scrolling on output and typing, the
   characters a double click selects, copying on select, asking before
   pasting several lines, the bell (mark the tab, flash or sound),
-  notifications, programs writing the clipboard (OSC 52; they can never read
+  notifications, [alerts](#alerts) and how long a command runs before its
+  end alerts, how [Processes](#processes) sorts, programs writing the clipboard (OSC 52; they can never read
   it), the editor for file paths (such as `nvim +{line} {path}`), on macOS
   whether Option is Meta, and on Linux whether keys go through the input
   method (see below).

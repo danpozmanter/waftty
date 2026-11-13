@@ -2,7 +2,7 @@
 // the tab strip's requests, what the terminals report, window closing, and
 // the Find, Settings, Edit Colors, About and confirmation dialogs.
 
-use std::{errors, fs, os, path, runtime}
+use std::{errors, fs, os, path, process, runtime, time}
 
 use gui
 use gui::{Effect, Outcome, UiMsg}
@@ -13,12 +13,14 @@ use gui::services::desktop::Urgency
 use gui::terminal::Event
 use windowing
 
+use alerts
 use cli
 use commands
 use drop_down
 use info
 use model
 use model::Model
+use processes
 use prompts
 use recent
 use releases
@@ -26,8 +28,10 @@ use releases::Release
 use schemes
 use search
 use search::Step
+use sessions
 use settings
 use shortcuts
+use signals
 use view
 
 /// The model after `msg`.
@@ -41,6 +45,29 @@ pub fn update(m: Model, msg: UiMsg) -> Model {
             if let Some(w) = model::window_index(n, window) {
                 close_overlays(&mut n, w)
                 go_to(&mut n, w, dir)
+            }
+        }
+        UiMsg::Chosen(id, session) if commands::sessions_window_of(id).is_some() => {
+            let window = commands::sessions_window_of(id).unwrap_or("")
+            if let Some(w) = model::window_index(n, window) {
+                close_overlays(&mut n, w)
+                resume(&mut n, w, session)
+            }
+        }
+        UiMsg::Timer(tag) if tag == processes::TIMER || tag == processes::SECOND && n.monitor.interval > 0 => sample(&mut n)
+        UiMsg::Timer(tag) if tag == alerts::TIMER => watch_agents(&mut n)
+        UiMsg::SortRequested(id, column, ascending) if commands::processes_control(id).is_some() => n.monitor.sort = (column, ascending)
+        UiMsg::Selected(id, key) if commands::processes_control(id).is_some() => {
+            let window, part = commands::processes_control(id).unwrap_or(("", ""))
+            if part == "table" { n.monitor.selected = key.to_i64().unwrap_or(0) }
+            if part == "signal" { n.monitor.signal = key.to_i64().unwrap_or(n.monitor.signal) }
+            let _ = window
+        }
+        UiMsg::Clicked(id) if commands::processes_control(id).is_some() => {
+            let window, part = commands::processes_control(id).unwrap_or(("", ""))
+            if let Some(w) = model::window_index(n, window) {
+                if part == "send" { send_to_process(&mut n, w) }
+                if part == "close" { close_overlays(&mut n, w) }
             }
         }
         UiMsg::WindowCommand(window, id) => command(&mut n, window, id)
@@ -114,7 +141,122 @@ pub fn update(m: Model, msg: UiMsg) -> Model {
         }
         _ => ()
     }
+    keep_timers(&mut n)
     n
+}
+
+// Starts or stops the timers that sample the processes and look at the
+// agents, as what shows and what runs needs them.
+fn keep_timers(m: &mut Model) {
+    // A hidden quick terminal shows neither, so it takes no samples.
+    let docked_away = m.drop_down && m.drop_down_hidden
+    let shown = m.windows.filter(|w| !(docked_away && w.key == "main"))
+    let bar = if m.settings.status_bar && !shown.is_empty() { m.settings.status_every * 1000 } else { 0 }
+    // An open Processes refreshes at its own pace, or the bar's when faster.
+    let interval = if shown.any(|w| w.processes) && (bar == 0 || bar > processes::INTERVAL_MS) { processes::INTERVAL_MS } else { bar }
+    if interval != m.monitor.interval {
+        let was = m.monitor.interval
+        m.monitor.interval = interval
+        if interval > 0 {
+            gui::perform(Effect::StartTimer(processes::TIMER, interval, true))
+            // Speeding up samples at once, so what shows is no older than
+            // the new pace allows.
+            if was == 0 || interval < was { sample(m) }
+            if was == 0 && interval > processes::INTERVAL_MS { gui::perform(Effect::StartTimer(processes::SECOND, processes::INTERVAL_MS, false)) }
+        } else {
+            gui::perform(Effect::CancelTimer(processes::TIMER))
+            m.monitor.last = None
+            m.monitor.rows = #[]
+        }
+    }
+    let watching = m.settings.alerts && m.windows.any(|w| w.tabs.any(|t| !model::agent_of(t).is_empty()))
+    if watching != m.watching {
+        m.watching = watching
+        if watching { gui::perform(Effect::StartTimer(alerts::TIMER, alerts::INTERVAL_MS, true)) } else {
+            gui::perform(Effect::CancelTimer(alerts::TIMER))
+            m.watches = Map::new()
+        }
+    }
+}
+
+// Samples the processes for Processes and the status bar.
+fn sample(m: &mut Model) {
+    let now = processes::sample()
+    // A tab's program keeps its process for the tab's life.
+    let mut pids = Map::new()
+    let mut tab_of = Map::new()
+    for win in m.windows {
+        for tab in win.tabs {
+            let known = m.monitor.tab_pids.get(tab.key).unwrap_or(0)
+            let pid = if known > 0 { known } else { tab.terminal.snapshot().map(|s| s.pid).unwrap_or(0) }
+            if pid > 0 {
+                pids[tab.key] = pid
+                tab_of[pid] = if tab.private { "Private tab" } else { tab.label() }
+            }
+        }
+    }
+    m.monitor.tab_pids = pids
+    m.monitor.rows = processes::rows(m.monitor.last, now, tab_of)
+    m.monitor.last = Some(now)
+    m.monitor.revision += 1
+}
+
+// Shows Processes over window `w`, its table focused.
+fn open_processes(m: &mut Model, w: i64) {
+    m.windows[w].palette = false
+    m.windows[w].recent = false
+    m.windows[w].sessions = false
+    m.windows[w].processes = true
+    gui::perform(Effect::FocusInWindow(m.windows[w].key, commands::processes_table(m.windows[w].key)))
+}
+
+// Sends the signal chosen in Processes to the process chosen there, when it
+// is still one waftty runs and not waftty itself.
+fn send_to_process(m: &mut Model, w: i64) {
+    let window = m.windows[w].key
+    let pid = m.monitor.selected
+    let Some(row) = m.monitor.rows.iter().find(|r| r.pid == pid) else { return }
+    if pid == process::id() { return }
+    let number = if signals::supported() { m.monitor.signal } else { 9 }
+    match processes::signal(pid, number) {
+        Ok(()) => {
+            let what = if signals::supported() { signals::table().iter().find(|s| s.number == number).map(|s| s.name).unwrap_or(f"signal {number}") } else { "End" }
+            gui::perform(Effect::Announce(f"Sent {what} to {row.name} ({pid})"))
+        }
+        Err(why) => model::report(window, f"Couldn't signal {row.name}", why)
+    }
+}
+
+// Looks at each agent's screen, and alerts for an agent in a tab not in
+// front that stopped to wait after working a while.
+fn watch_agents(m: &mut Model) {
+    let now = time::unix_ms()
+    let after = m.settings.alert_after * 1000
+    let mut watches = Map::new()
+    let mut w = 0
+    while w < m.windows.len() {
+        let mut t = 0
+        while t < m.windows[w].tabs.len() {
+            let tab = m.windows[w].tabs[t]
+            let agent = model::agent_of(tab)
+            if !agent.is_empty() && let Ok(shot) = tab.terminal.snapshot() {
+                let watch, waited = alerts::looked(m.watches.get(tab.key).unwrap_or(alerts::Watch::default()), shot.text, now, after)
+                watches[tab.key] = watch
+                if waited { alert(m, w, t, f"{agent} is waiting", tab.label()) }
+            }
+            t += 1
+        }
+        w += 1
+    }
+    m.watches = watches
+}
+
+// Alerts for tab `t` of window `w` when it is not in front: a desktop
+// notification, and a mark on the tab.
+fn alert(m: &mut Model, w: i64, t: i64, title: String, body: String) {
+    if in_front(*m, w, t) { return }
+    gui::perform(Effect::Notify { id: f"alert:{m.windows[w].tabs[t].key}", title: title, body: body, urgency: Urgency::Normal })
+    call_attention(m, w, t)
 }
 
 fn dialog(m: &mut Model, id: String, outcome: Outcome) {
@@ -199,6 +341,8 @@ fn release_checked(m: &mut Model, release: Release) {
 // focused.
 fn open_palette(m: &mut Model, w: i64) {
     m.windows[w].recent = false
+    m.windows[w].sessions = false
+    m.windows[w].processes = false
     m.windows[w].palette = true
     gui::perform(Effect::FocusInWindow(m.windows[w].key, commands::PALETTE_FIELD))
 }
@@ -207,8 +351,40 @@ fn open_palette(m: &mut Model, w: i64) {
 // focused.
 fn open_recent(m: &mut Model, w: i64) {
     m.windows[w].palette = false
+    m.windows[w].sessions = false
+    m.windows[w].processes = false
     m.windows[w].recent = true
     gui::perform(Effect::FocusInWindow(m.windows[w].key, commands::recent_field(m.windows[w].key)))
+}
+
+// Shows Recent Sessions over window `w`, its search field focused.
+fn open_sessions(m: &mut Model, w: i64) {
+    m.windows[w].palette = false
+    m.windows[w].recent = false
+    m.windows[w].processes = false
+    m.windows[w].sessions = true
+    gui::perform(Effect::FocusInWindow(m.windows[w].key, commands::sessions_field(m.windows[w].key)))
+}
+
+// Resumes recent session `id` in a new tab of window `w`, in its folder:
+// the agent's own resume command typed at the shell's first prompt, so the
+// shell's environment applies and its prompt returns when the agent ends.
+fn resume(m: &mut Model, w: i64, id: String) {
+    let window = m.windows[w].key
+    let Some(session) = m.recent_sessions.iter().find(|s| s.id == id) else { return }
+    let Some(input) = sessions::resume_input(session) else { return }
+    if !fs::is_dir(session.dir) {
+        model::report(window, "Couldn't resume the session", errors::new(f"{session.dir} is gone"))
+        return
+    }
+    let command = gui::terminal::Command { cwd: session.dir, ..model::shell(*m) }
+    if let Err(why) = model::open_tab(m, w, command) {
+        model::report(window, "Couldn't open a tab", why)
+        return
+    }
+    if let Some(tab) = m.windows[w].current() && let Err(why) = tab.terminal.input(input) {
+        model::report(window, "Couldn't resume the session", why)
+    }
 }
 
 // Hides the palette and Recent Directories over window `w`'s terminal and
@@ -216,6 +392,8 @@ fn open_recent(m: &mut Model, w: i64) {
 fn close_overlays(m: &mut Model, w: i64) {
     m.windows[w].palette = false
     m.windows[w].recent = false
+    m.windows[w].sessions = false
+    m.windows[w].processes = false
     if let Some(tab) = m.windows[w].current() { gui::perform(Effect::FocusInWindow(m.windows[w].key, tab.view_id())) }
 }
 
@@ -251,11 +429,24 @@ fn command(m: &mut Model, window: String, id: String) {
     }
     // The palette and Recent Directories close for any command they do not
     // open, the palette's own choice included.
-    if (m.windows[w].palette && id != commands::COMMAND_PALETTE) || (m.windows[w].recent && id != commands::RECENT_DIRS) { close_overlays(m, w) }
+    if (m.windows[w].palette && id != commands::COMMAND_PALETTE) || (m.windows[w].recent && id != commands::RECENT_DIRS) || (m.windows[w].sessions && id != commands::RECENT_SESSIONS) || (m.windows[w].processes && id != commands::PROCESSES) { close_overlays(m, w) }
     let tab = m.windows[w].current()
     match id {
         commands::COMMAND_PALETTE => if m.windows[w].palette { close_overlays(m, w) } else { open_palette(m, w) }
         commands::RECENT_DIRS => if m.windows[w].recent { close_overlays(m, w) } else { open_recent(m, w) }
+        commands::RECENT_SESSIONS => if m.windows[w].sessions { close_overlays(m, w) } else { open_sessions(m, w) }
+        commands::CLOSE_SESSIONS | commands::CLOSE_PROCESSES => close_overlays(m, w)
+        commands::PROCESSES => if m.windows[w].processes { close_overlays(m, w) } else { open_processes(m, w) }
+        commands::STATUS_BAR => {
+            let mut chosen = m.settings
+            chosen.status_bar = !chosen.status_bar
+            store_settings(m, chosen)
+        }
+        commands::CLEAR_SESSIONS => {
+            m.recent_sessions = #[]
+            sessions::clear()
+            gui::perform(Effect::Announce("Recent sessions cleared"))
+        }
         commands::CLEAR_RECENT => {
             m.recent_dirs = #[]
             recent::clear()
@@ -567,6 +758,22 @@ fn terminal_event(m: &mut Model, id: i64, event: Event) {
         Event::LinkPointed(uri) => m.windows[w].tabs[t].link = uri
         Event::LinkActivated(uri) => gui::perform(Effect::OpenUrl(uri))
         Event::Foreground(job, cwd) => {
+            let before = m.windows[w].tabs[t]
+            if job != before.job {
+                let now = time::unix_ms()
+                // An agent's end is the user's own doing; waiting alerts
+                // for it instead.
+                if m.settings.alerts && !before.job.is_empty() && !sessions::is_agent(before.job) && alerts::ran_long(before.job_since, now, m.settings.alert_after * 1000) {
+                    alert(m, w, t, f"{before.job} finished", f"After {alerts::duration_text(now - before.job_since)} in {before.label()}")
+                }
+                m.windows[w].tabs[t].job_since = if job.is_empty() { 0 } else { now }
+                // An agent leaving the foreground has written its session.
+                if sessions::is_agent(before.job) {
+                    model::finish_agent(m, before)
+                    m.windows[w].tabs[t].agent_since = 0
+                }
+                if sessions::is_agent(job) { m.windows[w].tabs[t].agent_since = time::unix_ms() - sessions::START_SLACK_MS }
+            }
             m.windows[w].tabs[t].job = job
             m.windows[w].tabs[t].cwd = cwd
             if !m.windows[w].tabs[t].private && !cwd.is_empty() && m.recent_dirs.first() != Some(cwd) {
@@ -577,10 +784,11 @@ fn terminal_event(m: &mut Model, id: i64, event: Event) {
         }
         Event::Focused => {
             if m.windows[w].active != m.windows[w].tabs[t].key { model::focus_pane(m, w, m.windows[w].tabs[t].key) }
-            // A click that gives a terminal the focus leaves the palette
-            // and Recent Directories.
+            // A click that gives a terminal the focus leaves the palette,
+            // Recent Directories and Recent Sessions.
             m.windows[w].palette = false
             m.windows[w].recent = false
+            m.windows[w].sessions = false
         }
     }
 }
@@ -689,7 +897,9 @@ mod tests {
 
     use commands
     use model
+    use processes
     use recent
+    use sessions
     use settings::Settings
 
     #[test]
@@ -727,6 +937,46 @@ mod tests {
         assert(m.recent_dirs.is_empty())
         assert(recent::load().is_empty())
         assert_eq(enabled(m), Some(false))
+    }
+
+    #[test]
+    fn clearing_recent_sessions_empties_the_list_and_disables_itself() {
+        // The command deletes the list's file, so it runs against a folder of
+        // the test's own, never the user's configuration.
+        let Ok(root) = fs::temp_dir("waftty-sessions-") else { panic("no temporary folder") }
+        services::set_config_root(root)
+        defer {
+            services::set_config_root("")
+            let _ = fs::remove_dir_all(root)
+        }
+        let session = sessions::Session { agent: "claude", id: "7d3f8a2e-1b4c-4d5e-9f60-a1b2c3d4e5f6", dir: "/tmp", title: "Notes", used: 1, started: 1 }
+        let _ = sessions::save(#[session])
+        let mut m = model::new(Settings::default())
+        m.recent_sessions = sessions::load()
+        let enabled = |m: model::Model| commands::registry(m, "main").iter().find(|c| c.id == commands::CLEAR_SESSIONS).map(|c| c.enabled)
+        assert_eq(enabled(m), Some(true))
+        m = super::update(m, UiMsg::Command(commands::CLEAR_SESSIONS))
+        assert(m.recent_sessions.is_empty())
+        assert(sessions::load().is_empty())
+        assert_eq(enabled(m), Some(false))
+    }
+
+    #[test]
+    fn a_put_away_quick_terminal_samples_no_processes() {
+        let mut m = model::new(Settings { status_bar: true, status_every: 5, ..Settings::default() })
+        m.drop_down = true
+        // A message that changes nothing still settles the timers.
+        let idle = UiMsg::Timer("nothing")
+        m = super::update(m, idle)
+        assert_eq(m.monitor.interval, 5_000)
+        m.drop_down_hidden = true
+        m = super::update(m, idle)
+        assert_eq(m.monitor.interval, 0)
+        // Processes, open on a shown window, refreshes faster than the bar.
+        m.drop_down_hidden = false
+        m.windows[0].processes = true
+        m = super::update(m, idle)
+        assert_eq(m.monitor.interval, processes::INTERVAL_MS)
     }
 
     #[test]
