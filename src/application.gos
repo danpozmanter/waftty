@@ -41,6 +41,8 @@ fn init(s: Settings, first: Command, first_tab: FirstTab, restore: bool, program
     m.program_env = program_env
     m.recent_dirs = recent::load()
     m.desktop_font = settings::desktop_font()
+    // The terminals' family is read now, so the first frame already draws in it.
+    let _ = gui::text::fonts::preload(model::font(m))
     let found, scheme_problems = schemes::user()
     m.user_schemes = found
     gui::perform(schemes::theme_effect(model::scheme(m)))

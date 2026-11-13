@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.2 - System font from the first frame, cleaner macOS install, dependency updates
+
+- Text draws in the configured or desktop font from the first frame, instead of switching to it just after the window opens.
+- A font set by its style-specific name, such as "Lilex Light", draws in that font instead of the built-in one.
+- macOS: `install.command` moves waftty.app into Applications instead of copying it, so Spotlight and Launchpad no longer open the quarantined download, which macOS refused to run.
+- macOS: `install.command` lists other copies of waftty, such as earlier downloads, to delete.
+- Builds on gui-engine-gos 0.2.17, gui-gos 0.2.6 and windowing-gos 0.1.19.
+
 ## 0.6.1 - Cursor blinking and FreeBSD support
 
 - The cursor no longer blinks by default; turn blinking on under Settings > Appearance.

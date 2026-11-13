@@ -86,9 +86,11 @@ Not sure which Mac you have? Open the Apple menu and choose About This Mac:
     bash install.command
     ```
 
-    It copies `waftty.app` to `/Applications`, clears the download
-    quarantine, signs the copy for this Mac, and links a `waftty` command
-    into `/usr/local/bin`.
+    It moves `waftty.app` to `/Applications`, clears the download
+    quarantine, signs the app for this Mac, and links a `waftty` command
+    into `/usr/local/bin`. It lists any other copies of waftty it finds,
+    such as earlier downloads; delete them, since Spotlight and Launchpad
+    may open one of those instead and macOS refuses to run it.
 
 === "Windows"
 

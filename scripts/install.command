@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Installs waftty.app to /Applications, clears its download quarantine,
+# Moves waftty.app to /Applications, clears its download quarantine,
 # re-signs it ad hoc for its new place, and links a `waftty` command.
+# Moving leaves no quarantined copy behind for Spotlight or Launchpad to open.
 #
 # Double-click this file to run it in Terminal, or run: bash install.command
 # Opened from Finder, the downloaded script is itself checked by Gatekeeper,
@@ -9,6 +10,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BUNDLE_ID="dev.gossamer.waftty"
+LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 
 die() { echo "error: $*" >&2; exit 1; }
 
@@ -22,13 +25,37 @@ install_app() {
 
     echo "Installing $name..."
     rm -rf "$dest"
-    cp -R "$src" "$dest"
+    # A copy stays behind only where the download cannot be moved, such as a
+    # read-only volume.
+    if ! mv "$src" "$dest" 2>/dev/null; then
+        rm -rf "$dest"
+        cp -R "$src" "$dest"
+    fi
     xattr -dr com.apple.quarantine "$dest" 2>/dev/null || true
     codesign --force --deep --sign - --timestamp=none "$dest" >/dev/null 2>&1 || true
+    if [ -x "$LSREGISTER" ]; then
+        "$LSREGISTER" -u "$src" >/dev/null 2>&1 || true
+        "$LSREGISTER" -f "$dest" >/dev/null 2>&1 || true
+    fi
     echo "  Installed to $dest"
 }
 
 install_app "$SCRIPT_DIR/waftty.app"
+
+# Other copies of the app, such as earlier downloads, are still offered by
+# Spotlight and Launchpad, and macOS refuses to open the quarantined ones.
+others=()
+while IFS= read -r found; do
+    [ "$found" = /Applications/waftty.app ] || [ ! -d "$found" ] || others+=("$found")
+done < <(mdfind "kMDItemCFBundleIdentifier == \"$BUNDLE_ID\"" 2>/dev/null)
+if [ "${#others[@]}" -gt 0 ]; then
+    echo ""
+    echo "Other copies of waftty were found. Spotlight and Launchpad may open"
+    echo "one of them instead of /Applications/waftty.app; delete them:"
+    for found in "${others[@]}"; do
+        echo "  $found"
+    done
+fi
 
 install_cli_symlink() {
     local binary="$1"

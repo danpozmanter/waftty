@@ -650,7 +650,9 @@ fn apply_settings(m: &mut Model, values: Map<String, String>) {
 fn store_settings(m: &mut Model, chosen: settings::Settings) {
     if chosen == m.settings { return }
     if m.drop_down { drop_down::settings_changed(m.settings, chosen, m.quick_position) }
+    let font_changed = chosen.font != m.settings.font
     m.settings = chosen
+    if font_changed { let _ = gui::text::fonts::preload(model::font(*m)) }
     gui::perform(schemes::theme_effect(model::scheme(*m)))
     gui::perform(Effect::SetTransparent(chosen.opacity < 100))
     if let Err(why) = settings::save(chosen) {
