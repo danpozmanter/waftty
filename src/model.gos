@@ -964,7 +964,9 @@ mod tests {
         let _ = fs::create_dir_all(dir)
         let folder = path::join(path::join(root, "projects"), dir.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_string() } else { "-" }).collect::<Vec<String>>().join(""))
         let _ = fs::create_dir_all(folder)
-        let line = f"{{\"type\":\"user\",\"cwd\":\"{dir}\",\"message\":{{\"content\":\"Tidy the logs\"}}}}\n"
+        // A Windows folder's backslashes need escaping in the record's JSON.
+        let quoted = json::encode(dir)
+        let line = f"{{\"type\":\"user\",\"cwd\":{quoted},\"message\":{{\"content\":\"Tidy the logs\"}}}}\n"
         let _ = fs::write(path::join(folder, "0f0e0d0c-0000-4000-8000-000000000001.jsonl"), line.bytes())
         let mut m = super::new(Settings::default())
         super::finish_agent(&mut m, agent_tab("bash", "claude", dir, false))

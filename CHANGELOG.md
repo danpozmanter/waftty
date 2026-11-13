@@ -7,7 +7,8 @@
 - An optional status bar shows their total CPU, memory and disk use and the number of subprocesses, refreshed every 2 seconds by default (1 to 3600 in Settings).
 - A tab out of view is marked, with a desktop notification, when a long command finishes in it or an agent in it stops to wait for you; on by default.
 - A tab names a job that writes nothing, such as `sleep`, as soon as it starts.
-- Builds on gui-gos 0.2.7, gui-engine-gos 0.2.19 and windowing-gos 0.1.21.
+- Linux: tabs no longer end when the launcher or shortcut service that started waftty restarts, since waftty moves into a systemd scope of its own first.
+- Builds on gui-gos 0.2.7, gui-engine-gos 0.2.19 and windowing-gos 0.1.22.
 
 ## 0.6.3 - Quits on SIGTERM on macOS
 

@@ -4,6 +4,8 @@
 
 use std::{env, errors, process}
 
+use windowing::system
+
 use application
 use application::FirstTab
 use cli
@@ -49,6 +51,9 @@ fn main() -> Result<(), errors::Error> {
             process::exit(2)
         }
     }
+    // The tabs' programs belong to this process, not to the service that
+    // launched it, which may stop or restart on its own.
+    if let Err(why) = system::own_scope(info::APP_ID) { eprintln(f"{info::NAME}: tabs stay in the launcher's service: {why}") }
     portable::enable()
     let s = match settings::load() {
         Ok(s) => s

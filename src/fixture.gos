@@ -17,6 +17,13 @@ use model
 use sessions
 use settings::Settings
 
+// The agent stand-in is a copy of a shell that runs under the copy's name.
+// macOS's /bin/sh is a shim that runs another shell in its place.
+#[cfg(target_os = "macos")]
+const AGENT_STAND_IN: String = "/bin/bash"
+#[cfg(not(target_os = "macos"))]
+const AGENT_STAND_IN: String = "/bin/sh"
+
 fn require(value: bool, why: String) -> Result<(), errors::Error> {
     if value { Ok(()) } else { Err(errors::new(why)) }
 }
@@ -452,7 +459,7 @@ pub fn journey() -> Result<(), errors::Error> {
     // at agents' screens to see it change.
     let bin = f"{config}/bin"
     fs::create_dir_all(bin)?
-    enter(&mut s, f"cp /bin/sh {bin}/claude && {bin}/claude -c 'for i in 1 2 3 4 5 6 7 8; do echo working $i; sleep 0.5; done; read x; echo answered'")?
+    enter(&mut s, f"cp {AGENT_STAND_IN} {bin}/claude && {bin}/claude -c 'for i in 1 2 3 4 5 6 7 8; do echo working $i; sleep 0.5; done; read x; echo answered'")?
     await_text(&mut s, 0, "\nworking 1")?
     shortcut(&mut s, commands::NEW_TAB)?
     await_text(&mut s, 0, "needs attention")?
