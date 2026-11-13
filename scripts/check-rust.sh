@@ -12,7 +12,8 @@ case "$sdk" in
             --config "patch.crates-io.gossamer-binding.tag=\"${sdk##*@}\""
         ;;
     *)
-        set -- --config "patch.crates-io.gossamer-binding.path=\"$sdk\""
+        # A TOML literal string: a Windows path's backslashes are no escapes.
+        set -- --config "patch.crates-io.gossamer-binding.path='$sdk'"
         ;;
 esac
 cd "$root/rust/system"
