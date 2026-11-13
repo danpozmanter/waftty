@@ -1,0 +1,74 @@
+// Dates and times of day as a wall clock shows them. The system says how
+// far local time is from UTC, so waftty carries no time zone database.
+
+use waftty_system
+
+/// A moment as a wall clock and calendar show it.
+#[derive(Default, PartialEq)]
+pub struct Civil {
+    pub year: i64
+    pub month: i64
+    pub day: i64
+    pub hour: i64
+    pub minute: i64
+}
+
+/// Seconds local time is ahead of UTC at `ms`, milliseconds since the Unix
+/// epoch, by the system's zone rules for that moment.
+pub fn local_offset(ms: i64) -> i64 {
+    waftty_system::local_offset(floor_div(ms, 1000))
+}
+
+/// The local wall-clock time at `ms`, milliseconds since the Unix epoch.
+pub fn local(ms: i64) -> Civil {
+    at(ms, local_offset(ms))
+}
+
+/// The wall-clock time at `ms`, milliseconds since the Unix epoch, where
+/// clocks run `offset` seconds ahead of UTC.
+pub fn at(ms: i64, offset: i64) -> Civil {
+    let seconds = floor_div(ms, 1000) + offset
+    let days = floor_div(seconds, 86_400)
+    let of_day = seconds - days * 86_400
+    // Howard Hinnant's days-to-civil: eras of 400 years from 0000-03-01.
+    let z = days + 719_468
+    let era = floor_div(z, 146_097)
+    let of_era = z - era * 146_097
+    let year_of_era = (of_era - of_era / 1_460 + of_era / 36_524 - of_era / 146_096) / 365
+    let of_year = of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100)
+    let shifted_month = (5 * of_year + 2) / 153
+    let day = of_year - (153 * shifted_month + 2) / 5 + 1
+    let month = if shifted_month < 10 { shifted_month + 3 } else { shifted_month - 9 }
+    let year = year_of_era + era * 400 + if month <= 2 { 1 } else { 0 }
+    Civil { year: year, month: month, day: day, hour: of_day / 3_600, minute: of_day % 3_600 / 60 }
+}
+
+// `a / b` rounded toward negative infinity, for positive `b`.
+fn floor_div(a: i64, b: i64) -> i64 {
+    (a - a.rem_euclid(b)) / b
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Civil
+
+    #[test]
+    fn instants_read_as_calendar_dates_and_times() {
+        assert_eq(super::at(0, 0), Civil { year: 1970, month: 1, day: 1, hour: 0, minute: 0 })
+        // 2026-11-13 18:20:11 UTC, five hours behind.
+        assert_eq(super::at(1_794_594_011_000, -5 * 3_600), Civil { year: 2026, month: 11, day: 13, hour: 13, minute: 20 })
+        // A leap day, and the last minute of a leap year.
+        assert_eq(super::at(951_782_400_000, 0), Civil { year: 2000, month: 2, day: 29, hour: 0, minute: 0 })
+        assert_eq(super::at(1_735_689_599_000, 0), Civil { year: 2024, month: 12, day: 31, hour: 23, minute: 59 })
+        // Before the epoch, and across midnight by the offset.
+        assert_eq(super::at(-1_000, 0), Civil { year: 1969, month: 12, day: 31, hour: 23, minute: 59 })
+        assert_eq(super::at(1_000, 3_600), Civil { year: 1970, month: 1, day: 1, hour: 1, minute: 0 })
+    }
+
+    #[test]
+    fn the_local_offset_is_whole_minutes_within_a_day() {
+        let offset = super::local_offset(1_794_594_011_000)
+        assert(offset.abs() < 86_400)
+        assert_eq(offset % 60, 0)
+    }
+}

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Formatting, Clippy and tests for the crate that reads the process tree.
+# Formatting, Clippy and tests for the crate waftty reads the system through.
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 # The binding SDK is not on crates.io. Take it where the projects gos
@@ -15,7 +15,7 @@ case "$sdk" in
         set -- --config "patch.crates-io.gossamer-binding.path=\"$sdk\""
         ;;
 esac
-cd "$root/rust/processes"
+cd "$root/rust/system"
 cargo fmt --all --check
 cargo clippy "$@" --all-targets -- -D warnings
 cargo test "$@" --all-targets

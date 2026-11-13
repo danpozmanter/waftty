@@ -7,9 +7,10 @@ windows-subsystem = "windows"
 authors = ["Dan Pozmanter"]
 license = "Apache 2.0"
 
-# Processes and the status bar read the process tree through this crate.
+# The process tree, signals and the local time zone come from the system
+# through this crate.
 [rust-bindings]
-waftty-processes = { path = "rust/processes" }
+waftty-system = { path = "rust/system" }
 
 # The engine's optional parts (rich text import, SVG, JPEG and GIF) stay out:
 # a terminal draws none of them.

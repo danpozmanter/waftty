@@ -5,7 +5,7 @@
 use std::{errors, process, time}
 use std::encoding::json
 
-use waftty_processes
+use waftty_system
 
 /// How often the processes are sampled while shown, in milliseconds.
 pub const INTERVAL_MS: i64 = 2_000
@@ -88,13 +88,13 @@ pub struct Totals {
 
 /// The tree under waftty now.
 pub fn sample() -> Sample {
-    let tree = json::decode::<Tree>(waftty_processes::tree(process::id())).map(|t| t.processes).unwrap_or(#[])
+    let tree = json::decode::<Tree>(waftty_system::processes(process::id())).map(|t| t.processes).unwrap_or(#[])
     Sample { at: time::Instant::now(), processes: tree }
 }
 
 /// Sends signal `signum` to process `pid`; on Windows, ends it.
 pub fn signal(pid: i64, signum: i64) -> Result<(), errors::Error> {
-    waftty_processes::signal(pid, signum).map_err(|e| errors::new(f"{e}"))
+    waftty_system::signal(pid, signum).map_err(|e| errors::new(f"{e}"))
 }
 
 /// The rows `now` shows, with rates from the change since `before`, each

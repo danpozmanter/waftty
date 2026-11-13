@@ -8,6 +8,7 @@ use std::encoding::json
 
 use gui::services
 
+use clock
 use info
 
 /// The most sessions the list keeps.
@@ -76,11 +77,12 @@ pub fn used(sessions: Vec<Session>, session: Session) -> Vec<Session> {
     out
 }
 
-/// When `session` began, as Recent Sessions shows it in `location`
-/// ("11/13/26 1:20PM"); empty when its record does not say.
-pub fn started_text(session: Session, location: time::Location) -> String {
+/// When `session` began, as Recent Sessions shows it where clocks then ran
+/// `offset` seconds ahead of UTC ("11/13/26 1:20PM"); empty when its record
+/// does not say.
+pub fn started_text(session: Session, offset: i64) -> String {
     if session.started <= 0 { return "" }
-    let Ok(c) = location.civil(session.started) else { return "" }
+    let c = clock::at(session.started, offset)
     let hour = if c.hour % 12 == 0 { 12 } else { c.hour % 12 }
     let half = if c.hour < 12 { "AM" } else { "PM" }
     f"{c.month}/{c.day}/{c.year % 100:02} {hour}:{c.minute:02}{half}"
@@ -314,7 +316,7 @@ fn codex_titles(root: String) -> Map<String, String> {
 // The folder Codex files the sessions begun on the local date of `instant`
 // under.
 fn codex_day(root: String, instant: i64) -> String {
-    let Ok(civil) = time::Location::local().civil(instant) else { return "" }
+    let civil = clock::local(instant)
     path::join(root, f"sessions/{civil.year:04}/{civil.month:02}/{civil.day:02}")
 }
 
@@ -439,6 +441,8 @@ fn first_text(content: Option<json::Value>) -> String {
 mod tests {
     use std::{env, fs, path, strconv, time}
 
+    use clock
+
     use super::{HEAD_BYTES, Session, claude_folder, claude_latest, codex_day, codex_latest, pi_folder, pi_latest, resume_input, used, uuid7_ms}
 
     #[test]
@@ -530,7 +534,7 @@ mod tests {
     #[test]
     fn a_codex_session_reads_its_folder_and_first_prompt_from_todays_record() {
         let Ok(root) = fs::temp_dir("waftty-codex-") else { panic("no temporary folder") }
-        let Ok(civil) = time::Location::local().civil(time::unix_ms()) else { panic("no local date") }
+        let civil = clock::local(time::unix_ms())
         let folder = path::join(root, f"sessions/{civil.year:04}/{civil.month:02}/{civil.day:02}")
         let _ = fs::create_dir_all(folder)
         let id = "019db719-72ac-7671-b651-d0678ea38966"
@@ -607,7 +611,7 @@ mod tests {
 
     #[test]
     fn a_session_shows_when_it_began_in_twelve_hour_time() {
-        let Ok(est) = time::Location::fixed(-5 * 60 * 60) else { panic("no fixed location") }
+        let est = -5 * 60 * 60
         let afternoon = Session { started: 1_794_594_011_000, ..Session::default() }
         assert_eq(super::started_text(afternoon, est), "11/13/26 1:20PM")
         let midnight = Session { started: 1_794_459_600_000, ..Session::default() }

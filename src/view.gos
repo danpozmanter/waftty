@@ -2,13 +2,14 @@
 // active tab's terminal, with a tab strip joined between them as the
 // settings ask, and the find bar under the terminal while it is open.
 
-use std::{fs, process, time}
+use std::{fs, process}
 
 use gui
 use gui::{Axis, Color, Edge, TabItem, ThemeOverride, Widget}
 use gui::text::layout::TextAlign
 use gui::widgets::collections::{Collection, Column, Row}
 
+use clock
 use commands
 use drop_down
 use model
@@ -135,7 +136,7 @@ fn sessions(m: Model, w: i64) -> Widget {
 fn session_label(s: sessions::Session) -> String {
     let title = if s.title.is_empty() { "Untitled session" } else { s.title }
     let label = f"{s.agent} \u{b7} {title} \u{b7} {model::shortened(s.dir)}"
-    let started = sessions::started_text(s, time::Location::local())
+    let started = sessions::started_text(s, clock::local_offset(s.started))
     if started.is_empty() { label } else { f"{label} \u{b7} {started}" }
 }
 
