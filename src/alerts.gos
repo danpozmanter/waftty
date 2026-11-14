@@ -1,48 +1,48 @@
 // Alerts for a tab that is not in front: a command that ran a while has
-// finished, or an agent that was working has stopped to wait for the user.
-// An agent shows it works by changing its screen (a spinner, a timer, its
-// output), so one whose screen stays still after a stretch of work is
-// waiting.
+// finished, or an agent needs the user. Only the agent's own word counts:
+// Claude Code's record of its state, and the notifications and bells agents
+// send through the terminal. An agent that ends its turn has not asked for
+// anything, so that alone does not alert. The records are read when the
+// folder holding them changes, which the toolkit watches on a thread of its
+// own while a tab runs Claude Code, so an idle agent costs nothing.
 
-/// How often agents' screens are looked at, in milliseconds.
-pub const INTERVAL_MS: i64 = 1_500
+/// The id of the watch on the folder of Claude Code's records
+/// (`Effect::WatchFolder`).
+pub const RECORDS: String = "agents:records"
 
-/// The timer that looks at them.
-pub const TIMER: String = "agents"
-
-/// How long an agent's screen stays still before it counts as waiting.
-pub const QUIET_MS: i64 = 3_000
-
-/// What is known of one agent's screen.
+/// What is known of one running agent's state.
 #[derive(Default, PartialEq)]
 pub struct Watch {
-    /// The screen when last looked at.
-    pub screen: String
-    /// When its screen began changing, in milliseconds since the Unix epoch;
-    /// 0 while it is still.
-    pub busy_since: i64
-    /// When its screen last changed.
-    pub changed_at: i64
+    /// The agent's process, once its record is found; 0 until then.
+    pub pid: i64
+    /// Its state as last read: "busy", "shell", "idle" or "waiting".
+    pub state: String
+}
+
+/// What one look at an agent's state means for its tab.
+#[derive(Default, PartialEq)]
+pub struct Change {
+    /// The agent asks the user for something: what, as its alert says.
+    pub alert: Option<String>
+    /// The agent is not working, so its session record may have changed.
+    pub stopped: bool
+}
+
+/// `watch` once the agent says its state is `state`, waiting for
+/// `waiting_for` when it asks for an answer. "busy" is working; "shell" has
+/// ended its turn while commands it started run on; "idle" has ended its turn;
+/// "waiting" asks the user for an answer, such as a permission, and alerts.
+pub fn moved(watch: Watch, state: String, waiting_for: String) -> (Watch, Change) {
+    if state == watch.state { return (watch, Change::default()) }
+    let stopped = state != "busy"
+    let alert = if state == "waiting" { Some(if waiting_for.is_empty() { "an answer" } else { waiting_for }) } else { None }
+    (Watch { state: state, ..watch }, Change { alert: alert, stopped: stopped })
 }
 
 /// Whether a job that came to the front at `since` and left at `now`, both
 /// in milliseconds since the Unix epoch, ran at least `after_ms`.
 pub fn ran_long(since: i64, now: i64, after_ms: i64) -> bool {
     since > 0 && now - since >= after_ms
-}
-
-/// `watch` once the agent's screen reads `screen` at `now`, and whether the
-/// agent has just stopped after working at least `after_ms`.
-pub fn looked(watch: Watch, screen: String, now: i64, after_ms: i64) -> (Watch, bool) {
-    if screen != watch.screen {
-        let since = if watch.busy_since == 0 { now } else { watch.busy_since }
-        return (Watch { screen: screen, busy_since: since, changed_at: now }, false)
-    }
-    if watch.busy_since > 0 && now - watch.changed_at >= QUIET_MS {
-        let worked = watch.changed_at - watch.busy_since >= after_ms
-        return (Watch { busy_since: 0, ..watch }, worked)
-    }
-    (watch, false)
 }
 
 /// How long `ms` milliseconds is, as an alert says it: "45s", "2m 05s",
@@ -56,7 +56,7 @@ pub fn duration_text(ms: i64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{QUIET_MS, Watch, looked}
+    use super::{Change, Watch, moved}
 
     #[test]
     fn a_job_counts_as_long_from_the_threshold_on() {
@@ -66,36 +66,25 @@ mod tests {
     }
 
     #[test]
-    fn an_agent_that_worked_long_enough_then_went_still_is_waiting_once() {
-        let mut w = Watch::default()
-        // It works for twelve seconds, its screen changing every tick.
-        let mut now = 1_000_000
-        for i in 0..9 {
-            let r = looked(w, f"working {i}", now, 10_000)
-            w = r.0
-            assert(!r.1)
-            now += 1_500
-        }
-        let last_change = now - 1_500
-        // Then it is still: once the quiet has lasted, it waits.
-        while now - last_change < QUIET_MS {
-            let r = looked(w, "working 8", now, 10_000)
-            w = r.0
-            assert(!r.1)
-            now += 1_500
-        }
-        let r = looked(w, "working 8", now, 10_000)
-        w = r.0
-        assert(r.1)
-        // Still afterwards, it does not wait again.
-        assert(!looked(w, "working 8", now + 1_500, 10_000).1)
+    fn an_agent_alerts_only_when_it_asks_for_an_answer() {
+        let busy, began = moved(Watch::default(), "busy", "")
+        assert_eq(began, Change::default())
+        let asking, asked = moved(busy, "waiting", "permission prompt")
+        assert_eq(asked, Change { alert: Some("permission prompt"), stopped: true })
+        // Read again unchanged, it does not alert twice.
+        assert_eq(moved(asking, "waiting", "permission prompt").1, Change::default())
+        assert_eq(moved(Watch::default(), "waiting", "").1, Change { alert: Some("an answer"), stopped: true })
     }
 
     #[test]
-    fn a_short_burst_of_work_is_not_waiting() {
-        let started = looked(Watch::default(), "start", 0, 10_000).0
-        let answered = looked(started, "answer", 1_500, 10_000).0
-        assert(!looked(answered, "answer", 1_500 + QUIET_MS, 10_000).1)
+    fn an_agent_ending_its_turn_does_not_alert() {
+        let busy = moved(Watch::default(), "busy", "").0
+        assert_eq(moved(busy, "idle", "").1, Change { alert: None, stopped: true })
+        let running_on = moved(busy, "shell", "")
+        assert_eq(running_on.1, Change { alert: None, stopped: true })
+        assert_eq(moved(running_on.0, "idle", "").1, Change { alert: None, stopped: true })
+        // A turn ended before its start was seen is still its end.
+        assert_eq(moved(Watch::default(), "idle", "").1, Change { alert: None, stopped: true })
     }
 
     #[test]

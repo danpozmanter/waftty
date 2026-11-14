@@ -1,7 +1,9 @@
-// The agent sessions tabs have run, latest first, which Recent Sessions
-// offers to resume. An agent keeps its own record of each session; this
-// reads the session's id, folder and title from it when the agent leaves a
-// tab's foreground. Private tabs add none.
+// The agent sessions tabs have run or run now, latest first, which Recent
+// Sessions offers to resume. An agent keeps its own record of each session;
+// this reads the session's id, folder and title from it while the agent
+// runs and when it leaves a tab's foreground. A session the agent has
+// recorded nothing for yet is listed too, and resuming it starts the agent
+// afresh in its folder. Private tabs add none.
 
 use std::{env, errors, fs, path, strconv, time}
 use std::encoding::json
@@ -38,6 +40,20 @@ pub struct Session {
     /// its record does not say.
     #[default]
     pub started: i64
+    /// Whether the agent has recorded nothing for the session yet, so there
+    /// is nothing to resume; its id is empty when the agent has not named it.
+    #[default]
+    pub empty: bool
+}
+
+/// The session one running agent registered for itself: its process, the
+/// session's id and folder, and when it began.
+#[derive(Default, PartialEq)]
+pub struct Live {
+    pub pid: i64
+    pub id: String
+    pub dir: String
+    pub started: i64
 }
 
 // The list as its file holds it.
@@ -68,13 +84,22 @@ pub fn clear() {
     if fs::exists(file()) { let _ = fs::remove_file(file()) }
 }
 
-/// `sessions` with `session` first, once by id, within the limit.
+/// `sessions` with `session` first, once by id, within the limit. A session
+/// with nothing in it gives way to any later one of its agent in its folder.
 pub fn used(sessions: Vec<Session>, session: Session) -> Vec<Session> {
     let mut out = #[session]
     for s in sessions {
-        if s.id != session.id && out.len() < LIMIT { out.push(s) }
+        let same = !s.id.is_empty() && s.id == session.id
+        let replaced = s.empty && s.agent == session.agent && s.dir == session.dir
+        if !same && !replaced && out.len() < LIMIT { out.push(s) }
     }
     out
+}
+
+/// What names `session` in Recent Sessions: its id, else its agent and folder,
+/// which hold one session with nothing in it at most.
+pub fn key(session: Session) -> String {
+    if session.id.is_empty() { f"new:{session.agent}:{session.dir}" } else { session.id }
 }
 
 /// When `session` began, as Recent Sessions shows it where clocks then ran
@@ -99,9 +124,12 @@ pub fn is_agent(job: String) -> bool {
     job == "claude" || job == "codex" || job == "pi"
 }
 
-/// What to type at a shell prompt to resume `session`; None for an agent
-/// waftty does not know or an id that is not a session id.
+/// What to type at a shell prompt to resume `session`: the agent alone for
+/// a session with nothing in it. None for an agent waftty does not know or
+/// an id that is not a session id.
 pub fn resume_input(session: Session) -> Option<String> {
+    if !is_agent(session.agent) { return None }
+    if session.empty { return Some(f"{session.agent}\r") }
     if session.id.is_empty() || !session.id.chars().all(|c| c.is_ascii_hexdigit() || c == '-') { return None }
     match session.agent {
         "claude" => Some(f"claude --resume {session.id}\r")
@@ -109,6 +137,73 @@ pub fn resume_input(session: Session) -> Option<String> {
         "pi" => Some(f"pi --session {session.id}\r")
         _ => None
     }
+}
+
+/// The session agent `agent`, started at `since` (milliseconds since the
+/// Unix epoch) in folder `dir`, holds now. `live` is the session the agent
+/// registered for itself while it runs, and `known` the one last found for
+/// it. Claude Code names its session from the start, so its own id is
+/// followed; for other agents, the session written last since it started,
+/// else `known`. With none of those, a session with nothing in it yet.
+pub fn current(agent: String, dir: String, since: i64, known: Session, live: Option<Live>) -> Session {
+    let known_here = known.agent == agent && known.dir == dir
+    let began = since + START_SLACK_MS
+    if agent == "claude" {
+        let id = match live { Some(l) => l.id, None => if known_here { known.id } else { "" } }
+        if !id.is_empty() {
+            let started = match live { Some(l) => l.started, None => if known.started > 0 { known.started } else { began } }
+            return claude_by_id(claude_root(), dir, id).unwrap_or(Session { agent: agent, id: id, dir: dir, title: "", used: started, started: started, empty: true })
+        }
+    }
+    if let Some(found) = latest(agent, dir, since) { return found }
+    if known_here && !known.id.is_empty() { return known }
+    Session { agent: agent, id: "", dir: dir, title: "", used: began, started: began, empty: true }
+}
+
+/// The sessions agents of kind `agent` registered for themselves and run
+/// now; none for an agent that registers none. Claude Code keeps one file per
+/// running process, which it removes when it ends.
+pub fn live(agent: String) -> Vec<Live> {
+    if agent != "claude" { return #[] }
+    let Ok(entries) = fs::read_dir(path::join(claude_root(), "sessions")) else { return #[] }
+    let mut out = #[]
+    for e in entries {
+        if !e.is_file || !e.name.ends_with(".json") { continue }
+        let Ok(text) = fs::read_to_string(e.path) else { continue }
+        let Ok(v) = json::parse(text) else { continue }
+        let pid = v.get("pid").and_then(|p| p.as_i64()).unwrap_or(0)
+        let id = v.get("sessionId").and_then(|i| i.as_str()).unwrap_or("")
+        let dir = v.get("cwd").and_then(|c| c.as_str()).unwrap_or("")
+        let started = v.get("startedAt").and_then(|t| t.as_i64()).unwrap_or(0)
+        if pid > 0 && !id.is_empty() { out.push(Live { pid: pid, id: id, dir: dir, started: started }) }
+    }
+    out
+}
+
+/// Where Claude Code keeps the record of its running process `pid`, which
+/// says its state.
+pub fn live_file(pid: i64) -> String {
+    path::join(path::join(claude_root(), "sessions"), f"{pid}.json")
+}
+
+/// The folder to watch for running Claude Code processes' records: the one
+/// holding them, else the nearest folder above it that exists.
+pub fn records_folder() -> String {
+    let records = path::join(claude_root(), "sessions")
+    if fs::is_dir(records) { return records }
+    if fs::is_dir(claude_root()) { return claude_root() }
+    home()
+}
+
+/// The state Claude Code's record `file` gives: "busy", "shell", "idle" or
+/// "waiting", and what it waits for ("permission prompt", "input needed");
+/// None when the record does not read.
+pub fn live_state(file: String) -> Option<(String, String)> {
+    let Ok(text) = fs::read_to_string(file) else { return None }
+    let Ok(v) = json::parse(text) else { return None }
+    let state = v.get("status").and_then(|s| s.as_str()).unwrap_or("")
+    if state.is_empty() { return None }
+    Some((state, v.get("waitingFor").and_then(|w| w.as_str()).unwrap_or("")))
 }
 
 /// The session agent `agent` kept for folder `dir` that was written last,
@@ -245,6 +340,15 @@ fn claude_latest(root: String, dir: String, since: i64) -> Option<Session> {
     chosen(written(folder, since, |_| true).filter_map(|f| claude_read(f, dir)), since)
 }
 
+// Claude Code's session `id` for folder `dir`; None until its record holds
+// something.
+fn claude_by_id(root: String, dir: String, id: String) -> Option<Session> {
+    let name = f"{id}.jsonl"
+    let file = path::join(path::join(path::join(root, "projects"), claude_folder(dir)), name)
+    let Ok(meta) = fs::metadata(file) else { return None }
+    claude_read((file, name, meta.modified_unix_ms), dir)
+}
+
 // The Claude Code session file `found` holds for folder `dir`.
 fn claude_read(found: (String, String, i64), dir: String) -> Option<Session> {
     let file, name, modified = found
@@ -277,7 +381,7 @@ fn claude_read(found: (String, String, i64), dir: String) -> Option<Session> {
     if !cwd.is_empty() && cwd != dir { return None }
     let title = if !custom_title.is_empty() { custom_title } else if !ai_title.is_empty() { ai_title } else { prompt }
     let shown = one_line(title, 80)
-    Some(Session { agent: "claude", id: id, dir: dir, title: shown, used: modified, started: started })
+    Some(Session { agent: "claude", id: id, dir: dir, title: shown, used: modified, started: started, empty: false })
 }
 
 fn codex_latest(root: String, dir: String, since: i64) -> Option<Session> {
@@ -365,7 +469,7 @@ fn codex_read(found: (String, String, i64), dir: String, titles: Map<String, Str
     }
     if cwd != dir { return None }
     let title = titles.get(id).unwrap_or(prompt)
-    Some(Session { agent: "codex", id: id, dir: dir, title: one_line(title, 80), used: modified, started: started })
+    Some(Session { agent: "codex", id: id, dir: dir, title: one_line(title, 80), used: modified, started: started, empty: false })
 }
 
 // The text the user typed, when Codex event `payload` is a prompt: a
@@ -417,7 +521,7 @@ fn pi_read(found: (String, String, i64), dir: String) -> Option<Session> {
     }
     if cwd != dir { return None }
     let title = if name_given.is_empty() { one_line(prompt, 80) } else { one_line(name_given, 80) }
-    Some(Session { agent: "pi", id: id, dir: dir, title: title, used: modified, started: started })
+    Some(Session { agent: "pi", id: id, dir: dir, title: title, used: modified, started: started, empty: false })
 }
 
 // The most parts of a message looked through for its text: a prompt leads
@@ -443,7 +547,7 @@ mod tests {
 
     use clock
 
-    use super::{HEAD_BYTES, Session, claude_folder, claude_latest, codex_day, codex_latest, pi_folder, pi_latest, resume_input, used, uuid7_ms}
+    use super::{HEAD_BYTES, Live, Session, claude_folder, claude_latest, codex_day, codex_latest, current, key, live, pi_folder, pi_latest, resume_input, used, uuid7_ms}
 
     #[test]
     fn claude_names_a_folder_with_every_other_character_a_dash() {
@@ -660,10 +764,100 @@ mod tests {
     }
 
     #[test]
+    fn a_session_with_nothing_in_it_resumes_as_the_agent_afresh() {
+        for agent in #["claude", "codex", "pi"] {
+            assert_eq(resume_input(Session { agent: agent, empty: true, ..Session::default() }), Some(f"{agent}\r"))
+        }
+        let named = Session { agent: "claude", id: "35892bcb-7adb-4d89-8ef3-9a49a87ef33e", empty: true, ..Session::default() }
+        assert_eq(resume_input(named), Some("claude\r"))
+        assert(resume_input(Session { agent: "aider", empty: true, ..Session::default() }).is_none())
+    }
+
+    #[test]
+    fn a_session_with_nothing_in_it_gives_way_to_a_later_one_of_its_agent_and_folder() {
+        let empty = Session { agent: "codex", dir: "/w", empty: true, ..Session::default() }
+        let other_folder = Session { agent: "codex", dir: "/x", empty: true, ..Session::default() }
+        let other_agent = Session { agent: "pi", dir: "/w", empty: true, ..Session::default() }
+        let list = used(used(used(#[], empty), other_folder), other_agent)
+        assert_eq(list.len(), 3)
+        let worked = Session { agent: "codex", id: "019db719-72ac-7671-b651-d0678ea38966", dir: "/w", title: "Fix it", ..Session::default() }
+        let after = used(list, worked)
+        assert_eq(after.map(|s| key(s)), #["019db719-72ac-7671-b651-d0678ea38966", "pi:/w", "codex:/x"].map(|k| if k.starts_with("019") { k } else { f"new:{k}" }))
+        // A session with work stays when one with nothing in it follows.
+        assert_eq(used(after, empty).len(), 4)
+    }
+
+    #[test]
+    fn running_claude_sessions_come_from_its_registry() {
+        let Ok(root) = fs::temp_dir("waftty-claude-") else { panic("no temporary folder") }
+        let folder = path::join(root, "sessions")
+        let _ = fs::create_dir_all(folder)
+        let entry = "{\"pid\":4242,\"sessionId\":\"2a542c80-9539-4702-810a-22e650b3e7a2\",\"cwd\":\"/w\",\"startedAt\":1794622159426,\"kind\":\"interactive\"}"
+        let _ = fs::write(path::join(folder, "4242.json"), entry.bytes())
+        let _ = fs::write(path::join(folder, "4242.0123abcd.key"), "secret".bytes())
+        env::set_var("CLAUDE_CONFIG_DIR", root)
+        let running = live("claude")
+        assert_eq(running, #[Live { pid: 4242, id: "2a542c80-9539-4702-810a-22e650b3e7a2", dir: "/w", started: 1_794_622_159_426 }])
+        assert(live("codex").is_empty())
+        env::unset_var("CLAUDE_CONFIG_DIR")
+        let _ = fs::remove_dir_all(root)
+    }
+
+    #[test]
+    fn a_running_claude_record_says_its_state_and_what_it_waits_for() {
+        let Ok(root) = fs::temp_dir("waftty-claude-") else { panic("no temporary folder") }
+        env::set_var("CLAUDE_CONFIG_DIR", root)
+        assert_eq(super::records_folder(), root)
+        let _ = fs::create_dir_all(path::join(root, "sessions"))
+        assert_eq(super::records_folder(), path::join(root, "sessions"))
+        let file = super::live_file(4242)
+        assert_eq(file, path::join(path::join(root, "sessions"), "4242.json"))
+        assert(super::live_state(file).is_none())
+        let _ = fs::write(file, "{\"pid\":4242,\"status\":\"waiting\",\"waitingFor\":\"permission prompt\"}".bytes())
+        assert_eq(super::live_state(file), Some(("waiting", "permission prompt")))
+        let _ = fs::write(file, "{\"pid\":4242,\"status\":\"busy\"}".bytes())
+        assert_eq(super::live_state(file), Some(("busy", "")))
+        env::unset_var("CLAUDE_CONFIG_DIR")
+        let _ = fs::remove_dir_all(root)
+    }
+
+    #[test]
+    fn a_running_claude_session_is_known_by_its_id_before_its_first_prompt() {
+        let Ok(root) = fs::temp_dir("waftty-claude-") else { panic("no temporary folder") }
+        env::set_var("CLAUDE_CONFIG_DIR", root)
+        let id = "2a542c80-9539-4702-810a-22e650b3e7a2"
+        let running = Live { pid: 4242, id: id, dir: "/w", started: 1_794_622_159_426 }
+        let fresh = current("claude", "/w", 1_794_622_158_000, Session::default(), Some(running))
+        assert_eq(fresh, Session { agent: "claude", id: id, dir: "/w", title: "", used: 1_794_622_159_426, started: 1_794_622_159_426, empty: true })
+        // Once the agent ends, the id the tab kept still finds its record.
+        let folder = path::join(path::join(root, "projects"), "-w")
+        let _ = fs::create_dir_all(folder)
+        let line = "{\"type\":\"user\",\"cwd\":\"/w\",\"message\":{\"content\":\"Tidy the logs\"}}\n"
+        let _ = fs::write(path::join(folder, f"{id}.jsonl"), line.bytes())
+        let ended = current("claude", "/w", 1_794_622_158_000, fresh, None)
+        assert_eq(ended.id, id)
+        assert_eq(ended.title, "Tidy the logs")
+        assert(!ended.empty)
+        env::unset_var("CLAUDE_CONFIG_DIR")
+        let _ = fs::remove_dir_all(root)
+    }
+
+    #[test]
+    fn an_agent_with_no_record_yet_holds_a_session_with_nothing_in_it() {
+        let Ok(root) = fs::temp_dir("waftty-pi-") else { panic("no temporary folder") }
+        env::set_var("PI_CODING_AGENT_SESSION_DIR", root)
+        let since = time::unix_ms() - 60_000
+        let found = current("pi", "/w", since, Session::default(), None)
+        assert_eq(found, Session { agent: "pi", id: "", dir: "/w", title: "", used: since + super::START_SLACK_MS, started: since + super::START_SLACK_MS, empty: true })
+        env::unset_var("PI_CODING_AGENT_SESSION_DIR")
+        let _ = fs::remove_dir_all(root)
+    }
+
+    #[test]
     fn a_saved_list_loads_back() {
         let Ok(root) = fs::temp_dir("waftty-sessions-") else { panic("no temporary folder") }
         env::set_var("XDG_CONFIG_HOME", root)
-        let s = Session { agent: "claude", id: "7d3f8a2e-1b4c-4d5e-9f60-a1b2c3d4e5f6", dir: root, title: "Notes", used: 5, started: 7 }
+        let s = Session { agent: "claude", id: "7d3f8a2e-1b4c-4d5e-9f60-a1b2c3d4e5f6", dir: root, title: "Notes", used: 5, started: 7, empty: false }
         let saved = super::save(#[s])
         assert(saved.is_ok(), f"{saved:?}")
         assert_eq(super::load(), #[s])

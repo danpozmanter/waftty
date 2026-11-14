@@ -55,7 +55,11 @@ pub fn update(m: Model, msg: UiMsg) -> Model {
             }
         }
         UiMsg::Timer(tag) if tag == processes::TIMER || tag == processes::SECOND && n.monitor.interval > 0 => sample(&mut n)
-        UiMsg::Timer(tag) if tag == alerts::TIMER => watch_agents(&mut n)
+        UiMsg::FolderChanged(id) if id == alerts::RECORDS && !n.watched_records.is_empty() => {
+            // The records' folder was made, or removed with its parent.
+            if sessions::records_folder() != n.watched_records { watch_records(&mut n) }
+            watch_agents(&mut n)
+        }
         UiMsg::SortRequested(id, column, ascending) if commands::processes_control(id).is_some() => n.monitor.sort = (column, ascending)
         UiMsg::Selected(id, key) if commands::processes_control(id).is_some() => {
             let window, part = commands::processes_control(id).unwrap_or(("", ""))
@@ -169,11 +173,16 @@ fn keep_timers(m: &mut Model) {
             m.monitor.rows = #[]
         }
     }
-    let watching = m.settings.alerts && m.windows.any(|w| w.tabs.any(|t| !model::agent_of(t).is_empty()))
-    if watching != m.watching {
-        m.watching = watching
-        if watching { gui::perform(Effect::StartTimer(alerts::TIMER, alerts::INTERVAL_MS, true)) } else {
-            gui::perform(Effect::CancelTimer(alerts::TIMER))
+    // Claude Code's state is watched for its sessions as well as for alerts,
+    // only while a tab runs it. The watch reports itself as it begins, which
+    // reads what was written before it.
+    let watching = m.windows.any(|w| w.tabs.any(|t| model::agent_of(t) == "claude"))
+    if watching != !m.watched_records.is_empty() {
+        if watching {
+            watch_records(m)
+        } else {
+            gui::perform(Effect::UnwatchFolder(alerts::RECORDS))
+            m.watched_records = ""
             m.watches = Map::new()
         }
     }
@@ -227,28 +236,55 @@ fn send_to_process(m: &mut Model, w: i64) {
     }
 }
 
-// Looks at each agent's screen, and alerts for an agent in a tab not in
-// front that stopped to wait after working a while.
+// Watches the folder of Claude Code's records, or the nearest folder above
+// it while it does not exist.
+fn watch_records(m: &mut Model) {
+    m.watched_records = sessions::records_folder()
+    gui::perform(Effect::WatchFolder { id: alerts::RECORDS, path: m.watched_records })
+}
+
+// Looks at what each Claude Code in a tab says it is doing, once the folder
+// of their records changed. One that asks for an answer alerts, and one that
+// stopped working has its session recorded as it stands.
 fn watch_agents(m: &mut Model) {
-    let now = time::unix_ms()
-    let after = m.settings.alert_after * 1000
     let mut watches = Map::new()
     let mut w = 0
     while w < m.windows.len() {
         let mut t = 0
         while t < m.windows[w].tabs.len() {
             let tab = m.windows[w].tabs[t]
-            let agent = model::agent_of(tab)
-            if !agent.is_empty() && let Ok(shot) = tab.terminal.snapshot() {
-                let watch, waited = alerts::looked(m.watches.get(tab.key).unwrap_or(alerts::Watch::default()), shot.text, now, after)
-                watches[tab.key] = watch
-                if waited { alert(m, w, t, f"{agent} is waiting", tab.label()) }
+            if model::agent_of(tab) == "claude" {
+                watches[tab.key] = watch_agent(m, w, t, m.watches.get(tab.key).unwrap_or(alerts::Watch::default()))
             }
             t += 1
         }
         w += 1
     }
     m.watches = watches
+}
+
+// `watch` once tab `t` of window `w`'s Claude Code has been looked at.
+fn watch_agent(m: &mut Model, w: i64, t: i64, watch: alerts::Watch) -> alerts::Watch {
+    let tab = m.windows[w].tabs[t]
+    let mut now = watch
+    // Its record is found once, and looked for at each change until then.
+    if now.pid == 0 {
+        let Some(live) = model::live_session(tab, "claude") else { return now }
+        now.pid = live.pid
+        model::note_agent(m, w, t)
+    }
+    // A record gone is an agent ended; one started later is looked for anew.
+    // A record read mid-write is read again at the change that completes it.
+    let file = sessions::live_file(now.pid)
+    if !fs::exists(file) { return alerts::Watch::default() }
+    let Some(said) = sessions::live_state(file) else { return now }
+    let state, waiting_for = said
+    let next, change = alerts::moved(now, state, waiting_for)
+    if change.stopped { model::note_agent(m, w, t) }
+    if m.settings.alerts && let Some(what) = change.alert {
+        alert(m, w, t, "claude needs you", f"{what.substring(0, 1).to_uppercase()}{what.substring(1, what.byte_len())} in {tab.label()}")
+    }
+    next
 }
 
 // Alerts for tab `t` of window `w` when it is not in front: a desktop
@@ -357,8 +393,10 @@ fn open_recent(m: &mut Model, w: i64) {
     gui::perform(Effect::FocusInWindow(m.windows[w].key, commands::recent_field(m.windows[w].key)))
 }
 
-// Shows Recent Sessions over window `w`, its search field focused.
+// Shows Recent Sessions over window `w`, its search field focused, with the
+// sessions agents run now as they stand.
 fn open_sessions(m: &mut Model, w: i64) {
+    model::note_agents(m)
     m.windows[w].palette = false
     m.windows[w].recent = false
     m.windows[w].processes = false
@@ -366,12 +404,13 @@ fn open_sessions(m: &mut Model, w: i64) {
     gui::perform(Effect::FocusInWindow(m.windows[w].key, commands::sessions_field(m.windows[w].key)))
 }
 
-// Resumes recent session `id` in a new tab of window `w`, in its folder:
-// the agent's own resume command typed at the shell's first prompt, so the
-// shell's environment applies and its prompt returns when the agent ends.
-fn resume(m: &mut Model, w: i64, id: String) {
+// Resumes the recent session `key` names in a new tab of window `w`, in its
+// folder: the agent's own resume command typed at the shell's first prompt,
+// so the shell's environment applies and its prompt returns when the agent
+// ends.
+fn resume(m: &mut Model, w: i64, key: String) {
     let window = m.windows[w].key
-    let Some(session) = m.recent_sessions.iter().find(|s| s.id == id) else { return }
+    let Some(session) = m.recent_sessions.iter().find(|s| sessions::key(s) == key) else { return }
     let Some(input) = sessions::resume_input(session) else { return }
     if !fs::is_dir(session.dir) {
         model::report(window, "Couldn't resume the session", errors::new(f"{session.dir} is gone"))
@@ -722,6 +761,9 @@ fn terminal_event(m: &mut Model, id: i64, event: Event) {
         Event::Bell => {
             if m.settings.bell == "sound" { let _ = windowing::system::beep() }
             call_attention(m, w, t)
+            // An agent rings when it needs the user, which ends a stretch of
+            // its work.
+            model::note_agent(m, w, t)
         }
         Event::Notify(title, body) => {
             if m.settings.notifications && !in_front(*m, w, t) {
@@ -729,6 +771,7 @@ fn terminal_event(m: &mut Model, id: i64, event: Event) {
                 gui::perform(Effect::Notify { id: f"notify:{m.windows[w].tabs[t].key}", title: heading, body: body, urgency: Urgency::Normal })
             }
             call_attention(m, w, t)
+            model::note_agent(m, w, t)
         }
         Event::Clipboard(text) => {
             if m.settings.clipboard_write { gui::perform(Effect::SetClipboard(text)) }
@@ -771,6 +814,7 @@ fn terminal_event(m: &mut Model, id: i64, event: Event) {
                 if sessions::is_agent(before.job) {
                     model::finish_agent(m, before)
                     m.windows[w].tabs[t].agent_since = 0
+                    m.windows[w].tabs[t].session = sessions::Session::default()
                 }
                 if sessions::is_agent(job) { m.windows[w].tabs[t].agent_since = time::unix_ms() - sessions::START_SLACK_MS }
             }
@@ -949,7 +993,7 @@ mod tests {
             services::set_config_root("")
             let _ = fs::remove_dir_all(root)
         }
-        let session = sessions::Session { agent: "claude", id: "7d3f8a2e-1b4c-4d5e-9f60-a1b2c3d4e5f6", dir: "/tmp", title: "Notes", used: 1, started: 1 }
+        let session = sessions::Session { agent: "claude", id: "7d3f8a2e-1b4c-4d5e-9f60-a1b2c3d4e5f6", dir: "/tmp", title: "Notes", used: 1, started: 1, empty: false }
         let _ = sessions::save(#[session])
         let mut m = model::new(Settings::default())
         m.recent_sessions = sessions::load()

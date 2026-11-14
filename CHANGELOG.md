@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.1 - Running and empty sessions, alerts only when needed
+
+- Recent Sessions lists agent sessions still running, from every waftty window and process, and updates each as its agent works.
+- A session quit before its first prompt is listed as "New session"; choosing it starts the agent afresh in its folder.
+- An agent's tab alerts only when the agent asks for you, by its own record or notification, not when it ends a turn.
+- An idle agent tab no longer uses CPU.
+- Show Status Bar has a shortcut: Ctrl+Shift+2, the key that types @ (Cmd+Shift+2 on macOS).
+- Builds on gui-engine-gos 0.2.20 and gui-gos 0.2.8.
+
 ## 0.7.0 - Recent sessions, processes, alerts
 
 - Recent Sessions (Ctrl+Shift+. or Cmd+Shift+.) lists the Claude Code, Codex and pi sessions tabs ran, by title, folder and start time, and resumes one in a new tab in its folder.

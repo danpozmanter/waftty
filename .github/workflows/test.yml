@@ -17,8 +17,8 @@ env:
   # these releases; a waftty release changes them with its "Builds on" line,
   # and test.yml and release.yml name the same ones.
   WINDOWING_REF: v0.1.22
-  ENGINE_REF: v0.2.19
-  GUI_REF: v0.2.7
+  ENGINE_REF: v0.2.20
+  GUI_REF: v0.2.8
   RUSTUP_TOOLCHAIN: 1.95.0
   # The journey draws into SDL's offscreen driver; no display is needed.
   SDL_VIDEO_DRIVER: offscreen

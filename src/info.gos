@@ -2,7 +2,7 @@
 
 pub const NAME: String = "waftty"
 pub const APP_ID: String = "dev.gossamer.waftty"
-pub const VERSION: String = "0.7.0"
+pub const VERSION: String = "0.7.1"
 
 /// The operating system's name, as the About window shows it.
 #[cfg(target_os = "linux")]

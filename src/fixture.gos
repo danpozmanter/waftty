@@ -148,7 +148,7 @@ pub fn journey() -> Result<(), errors::Error> {
     // A resumed session types an agent's command; no agent the user has
     // installed may run from the journey.
     env::set_var("PATH", "/usr/bin:/bin")
-    let session = sessions::Session { agent: "claude", id: "7d3f8a2e-1b4c-4d5e-9f60-a1b2c3d4e5f6", dir: config, title: "Release notes draft", used: 1, started: 1_794_594_011_000 }
+    let session = sessions::Session { agent: "claude", id: "7d3f8a2e-1b4c-4d5e-9f60-a1b2c3d4e5f6", dir: config, title: "Release notes draft", used: 1, started: 1_794_594_011_000, empty: false }
     sessions::save(#[session])?
     // Alerts come after a second, so the journey need not wait ten.
     let chosen = Settings { shell: "/bin/sh", alert_after: 1, ..Settings::default() }
@@ -437,7 +437,7 @@ pub fn journey() -> Result<(), errors::Error> {
     await_text(&mut s, 0, "reaped:143")?
     println("processes: its shortcut listed waftty and a job the shell started, and its Send Signal ended the job with SIGTERM")
 
-    s.run_command(0, commands::STATUS_BAR)
+    shortcut(&mut s, commands::STATUS_BAR)?
     s.flush()?
     // The second sample gives the rates.
     await_text(&mut s, 0, "% \u{b7} Memory")?
@@ -445,7 +445,7 @@ pub fn journey() -> Result<(), errors::Error> {
     s.run_command(0, commands::STATUS_BAR)
     s.flush()?
     require(!s.semantics(0).dump().contains("subprocess"), "the status bar stayed")?
-    println("status bar: Show Status Bar showed waftty's CPU, memory and subprocesses, and hid them again")
+    println("status bar: Show Status Bar's shortcut showed waftty's CPU, memory and subprocesses, and the command hid them again")
 
     enter(&mut s, "sleep 2; echo napped")?
     shortcut(&mut s, commands::NEW_TAB)?
@@ -454,19 +454,71 @@ pub fn journey() -> Result<(), errors::Error> {
     await_text(&mut s, 0, "\nnapped")?
     println("alerts: a command that ran past the alert time marked its tab once it finished out of view")
 
-    // A program named claude stands in for the agent: it works, its screen
-    // changing, then waits for a line. It works long enough for two looks
-    // at agents' screens to see it change.
+    // A program named claude stands in for the agent, keeping a record of
+    // its state as Claude Code does. The first run works, ends its turn with
+    // a transcript, waits for the journey to write to its pipe, works again,
+    // then asks for a permission and waits for a line.
     let bin = f"{config}/bin"
     fs::create_dir_all(bin)?
-    enter(&mut s, f"cp {AGENT_STAND_IN} {bin}/claude && {bin}/claude -c 'for i in 1 2 3 4 5 6 7 8; do echo working $i; sleep 0.5; done; read x; echo answered'")?
-    await_text(&mut s, 0, "\nworking 1")?
+    let records = f"{config}/sessions"
+    let agent = """
+    r="$CLAUDE_CONFIG_DIR/sessions"; mkdir -p "$r"; mkfifo "$r/go"
+    say() { printf '{"pid":%s,"sessionId":"%s","cwd":"%s","startedAt":0,"status":"%s","waitingFor":"%s"}' $$ "$1" "$PWD" "$2" "$3" > "$r/$$.tmp" && mv "$r/$$.tmp" "$r/$$.json"; }
+    if [ "$1" = transcript ]; then
+        id=0f0e0d0c-0000-4000-8000-0000000000aa
+        say $id busy; echo working
+        p="$CLAUDE_CONFIG_DIR/projects/$(printf %s "$PWD" | tr -c 'A-Za-z0-9' '-')"; mkdir -p "$p"
+        printf '{"type":"user","cwd":"%s","message":{"content":"First turn"}}\n' "$PWD" > "$p/$id.jsonl"
+        say $id idle; read go < "$r/go"
+        say $id busy
+        say $id waiting "permission prompt"
+    else
+        say 0f0e0d0c-0000-4000-8000-0000000000ab busy; echo started
+    fi
+    read x; echo "done ${1:-plain}"
+    rm -f "$r/$$.json" "$r/go"
+    """
+    fs::write(f"{bin}/agent.sh", agent.bytes())?
+    enter(&mut s, f"cp {AGENT_STAND_IN} {bin}/claude && {bin}/claude {bin}/agent.sh transcript")?
+    await_text(&mut s, 0, "\nworking")?
     shortcut(&mut s, commands::NEW_TAB)?
+    // Its session is recorded with its transcript's title once waftty has
+    // read that it ended its turn, which leaves its tab alone.
+    while !sessions::load().any(|e| e.title == "First turn") {
+        require(s.step()?, "the session ended before the agent's turn was recorded")?
+    }
+    require(!s.semantics(0).dump().contains("needs attention"), "an agent ending its turn marked its tab")?
+    fs::write(f"{records}/go", "go\n".bytes())?
     await_text(&mut s, 0, "needs attention")?
     shortcut(&mut s, commands::CLOSE_TAB)?
     s.press(Key::Return, Mods::default())?
-    await_text(&mut s, 0, "\nanswered")?
-    println("alerts: an agent that worked, then stopped to wait in a tab out of view, marked it")
+    await_text(&mut s, 0, "\ndone transcript")?
+    println("alerts: an agent ending its turn in a tab out of view left it alone, and its asking for a permission marked it")
+
+    // The second run keeps no transcript, so its session has nothing in it
+    // yet; the list offers it while it runs, and resuming it starts the
+    // agent afresh.
+    enter(&mut s, f"{bin}/claude {bin}/agent.sh")?
+    await_text(&mut s, 0, "\nstarted")?
+    while !sessions::load().any(|e| e.id == "0f0e0d0c-0000-4000-8000-0000000000ab") {
+        require(s.step()?, "the session ended before the agent's session was recorded")?
+    }
+    shortcut(&mut s, commands::RECENT_SESSIONS)?
+    s.flush()?
+    s.type_text("new session")?
+    s.press(Key::Return, Mods::default())?
+    s.flush()?
+    // The journey's PATH holds no claude, so the shell reports it missing.
+    await_text(&mut s, 0, "not found")?
+    shortcut(&mut s, commands::CLOSE_TAB)?
+    while s.semantics(0).dump().contains("not found") {
+        require(s.step()?, "the session ended before the resumed tab closed")?
+    }
+    s.press(Key::Return, Mods::default())?
+    await_text(&mut s, 0, "\ndone plain")?
+    let empties = sessions::load().filter(|e| e.agent == "claude" && e.empty)
+    require(empties.map(|e| e.id) == #["0f0e0d0c-0000-4000-8000-0000000000ab"], f"the ended agent's session is recorded other than once: {sessions::load():?}")?
+    println("sessions: a running agent's session with nothing in it yet was offered, resumed as the agent alone, and recorded once after the agent ended")
 
     s.press(Key::F10, Mods { shift: true, ..Mods::default() })?
     s.flush()?

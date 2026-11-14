@@ -127,14 +127,14 @@ fn processes_panel(m: Model, w: i64) -> Widget {
 // without any whose folder is gone.
 fn sessions(m: Model, w: i64) -> Widget {
     let shown = m.recent_sessions.filter(|s| fs::is_dir(s.dir))
-    let items = Widget::items(shown.map(|s| (s.id, session_label(s))))
+    let items = Widget::items(shown.map(|s| (sessions::key(s), session_label(s))))
     Widget::quick_pick(commands::sessions_field(m.windows[w].key), items, "Recent sessions", "No recent sessions")
 }
 
 // "claude · Login page fix · ~/dev/site · 11/13/26 1:20PM": the agent, the
 // session's title, its folder, and when it began.
 fn session_label(s: sessions::Session) -> String {
-    let title = if s.title.is_empty() { "Untitled session" } else { s.title }
+    let title = if s.empty { "New session" } else if s.title.is_empty() { "Untitled session" } else { s.title }
     let label = f"{s.agent} \u{b7} {title} \u{b7} {model::shortened(s.dir)}"
     let started = sessions::started_text(s, clock::local_offset(s.started))
     if started.is_empty() { label } else { f"{label} \u{b7} {started}" }

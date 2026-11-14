@@ -94,10 +94,9 @@ pub struct Settings {
     /// Whether programs' notifications (OSC 9 and 777) reach the desktop.
     pub notifications: bool
     /// Whether a tab not in front alerts when a command that ran a while
-    /// finishes or an agent stops to wait.
+    /// finishes or an agent asks the user something.
     pub alerts: bool
-    /// How long a command or an agent works before its end alerts, in
-    /// seconds.
+    /// How long a command runs before its end alerts, in seconds.
     pub alert_after: i64
     /// Whether a bar under the terminal shows waftty's CPU, memory and disk
     /// use, its processes' included.
@@ -364,8 +363,8 @@ pub fn dialog(s: Settings, fonts: Vec<String>, offered: Vec<schemes::Entry>, reg
         toggle("confirm_paste", "Ask before pasting several lines", s.confirm_paste, d.confirm_paste, "Also asks before pasting control characters.")
         field("bell", "Bell", PreferenceKind::Choice(bells), s.bell, d.bell, "A tab that rings while hidden is always marked.")
         toggle("notifications", "Show notifications from programs", s.notifications, d.notifications, "")
-        toggle("alerts", "Alert when a long command finishes or an agent waits", s.alerts, d.alerts, "For a tab you are not looking at: a desktop notification, and a mark on the tab.")
-        field("alert_after", "Alert after", PreferenceKind::Integer(1, ALERT_AFTER_MAX), f"{s.alert_after}", f"{d.alert_after}", "Seconds a command or an agent works before its end alerts.")
+        toggle("alerts", "Alert when a long command finishes or an agent asks for you", s.alerts, d.alerts, "For a tab you are not looking at: a desktop notification, and a mark on the tab.")
+        field("alert_after", "Alert after", PreferenceKind::Integer(1, ALERT_AFTER_MAX), f"{s.alert_after}", f"{d.alert_after}", "Seconds a command runs before its end alerts.")
         field("process_sort", "Sort processes by", PreferenceKind::Choice(#[("cpu", "CPU"), ("memory", "Memory")]), s.process_sort, d.process_sort, "How Processes opens; click a column to sort by it.")
         field("process_order", "Process order", PreferenceKind::Choice(#[("descending", "Highest first"), ("ascending", "Lowest first")]), s.process_order, d.process_order, "")
         toggle("clipboard_write", "Let programs copy to the clipboard", s.clipboard_write, d.clipboard_write, "Programs can never read it.")

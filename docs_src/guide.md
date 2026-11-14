@@ -40,6 +40,7 @@ the menu bar. **Edit > Settings > Shortcuts** changes any of them.
 | Recent Directories | ++ctrl+shift+r++ | ++cmd+shift+r++ |
 | Recent Sessions | ++ctrl+shift+period++ | ++cmd+shift+period++ |
 | Processes | ++ctrl+shift+backslash++ | ++cmd+shift+backslash++ |
+| Show Status Bar | ++ctrl+shift+2++ (the key that types @) | ++cmd+shift+2++ |
 | Next Tab / Previous Tab | ++ctrl+tab++ / ++ctrl+shift+tab++ (also ++ctrl+page-down++ / ++ctrl+page-up++) | the same, or ++cmd+shift+bracket-right++ / ++cmd+shift+bracket-left++ |
 | Tab 1 to 8 / Last Tab | ++alt+1++ to ++alt+8++ / ++alt+9++ | ++cmd+1++ to ++cmd+8++ / ++cmd+9++ |
 | Switch to Last Tab | ++ctrl+shift+l++ | ++cmd+shift+l++ |
@@ -101,19 +102,24 @@ Recent Directories** (or the palette) forgets every folder on it.
 
 ## Recent Sessions
 
-When Claude Code, Codex or pi runs in a tab and then exits (or its tab
-closes), waftty notes the session it ran: the agent, the session's title or
-first prompt, the folder it worked in, and when it began. waftty reads these
-from the session records the agents keep themselves (`~/.claude`,
-`~/.codex` and `~/.pi`, or the folders `CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
-`PI_CODING_AGENT_DIR` and `PI_CODING_AGENT_SESSION_DIR` name), so nothing is
-taken from the screen. ++ctrl+shift+period++ (++cmd+shift+period++ on macOS)
-lists the last 20, latest first, as
+When Claude Code, Codex or pi runs in a tab, waftty notes the
+session it runs: the agent, the session's title or first prompt, the folder
+it works in, and when it began. A running session is noted each time the
+agent stops working or asks for something, and again when it exits (or its
+tab closes), so sessions still running are listed too, from every waftty window and
+process. waftty reads these from the session records the agents keep
+themselves (`~/.claude`, `~/.codex` and `~/.pi`, or the folders
+`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `PI_CODING_AGENT_DIR` and
+`PI_CODING_AGENT_SESSION_DIR` name), so nothing is taken from the screen. ++ctrl+shift+period++
+(++cmd+shift+period++ on macOS) lists the last 20, latest first, as
 `claude · Version 0.6.1 release · ~/dev/waftty · 11/13/26 1:20PM`. Type
 part of an entry to narrow the list; ++enter++ or a click opens a new tab in
 the session's folder and types `claude --resume`, `codex resume` or
-`pi --session` with its id, so the shell's own environment applies and its
-prompt comes back when the agent ends. Private tabs add nothing, and
+`pi --session` with its id, so the shell's own
+environment applies and its prompt comes back when the agent ends. A session
+the agent was never given a prompt in has nothing to resume: it is listed as
+"New session", and choosing it starts the agent afresh in its folder.
+Private tabs add nothing, and
 **Terminal > Clear Recent Sessions** forgets the list. Sessions are noted on
 Linux, macOS and FreeBSD, where waftty can see which program runs in a tab.
 
@@ -129,7 +135,8 @@ and press **Send Signal** to send it (Terminate by default); on Windows
 **End Process** ends it. ++escape++ or **Close** closes the list. FreeBSD
 shows no disk figures.
 
-**View > Show Status Bar** shows the totals of that list under the terminal:
+**View > Show Status Bar** (++ctrl+shift+2++, the key that types @; ++cmd+shift+2++
+on macOS) shows the totals of that list under the terminal:
 `CPU 3.2% · Memory 412 MB · Disk 0 B/s read, 12 KB/s written · 5
 subprocesses`. It reads the processes every two seconds while it is shown,
 and not at all while it is hidden or the quick terminal is put away;
@@ -141,11 +148,13 @@ are averages since the last reading.
 
 When a command that ran a while finishes in a tab you are not looking at,
 waftty marks the tab and posts a desktop notification, such as "make
-finished", with how long it ran and the tab's name. It does the same when Claude Code,
-Codex or pi has worked for a while and then stops to wait for you: an agent
-redraws its screen while it works, so one whose screen stays still for a few
-seconds after working is waiting. Settings > Behavior turns alerts off and
-sets how many seconds of work count (10 by default).
+finished", with how long it ran and the tab's name. It does the same when
+Claude Code asks you something, such as a permission, going by the state
+Claude Code itself records; an agent ending its turn, or still running
+commands it started, does not alert. Codex, pi and other programs alert the
+same way through the notifications and bells they send to the terminal
+themselves (Codex's `tui.notifications`). Settings > Behavior turns alerts
+off and sets how many seconds a command must run (10 by default).
 
 ## Private Tabs and Windows
 
@@ -360,8 +369,8 @@ Coding agents in a background tab can tell you when they need you:
 - **Any long command:** end it with `; printf '\a'` to ring the bell when it
   finishes.
 
-waftty also notices on its own when an agent stops to wait or a long command
-ends; see [Alerts](#alerts).
+waftty also alerts on its own when Claude Code asks you something or a long
+command ends; see [Alerts](#alerts).
 
 ## Starting waftty
 

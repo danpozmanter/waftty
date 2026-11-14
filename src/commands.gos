@@ -303,7 +303,8 @@ pub fn registry(m: Model, key: String) -> Vec<Command> {
         Command::new(CLOSE_SESSIONS, "Close Recent Sessions").key("Escape").category("Terminal").in_scope(sessions_field(key)).visible(false)
         Command::new(PROCESSES, "Processes…").key(chord("Ctrl+Shift+\\", "Cmd+Shift+\\")).category("View")
         Command::new(CLOSE_PROCESSES, "Close Processes").key("Escape").category("View").in_scope(processes_table(key)).visible(false)
-        Command::new(STATUS_BAR, "Show Status Bar").category("View").checked(m.settings.status_bar)
+        // Shortcuts name keys as unshifted: 2 is the key that types @.
+        Command::new(STATUS_BAR, "Show Status Bar").key(chord("Ctrl+Shift+2", "Cmd+Shift+2")).category("View").checked(m.settings.status_bar)
         Command::new(PREVIOUS_TAB, "Previous Tab").key("Ctrl+Shift+Tab").key(chord("Ctrl+PageUp", "Cmd+Shift+[")).category("Tabs").enabled(tabs > 1)
         Command::new(NEXT_TAB, "Next Tab").key("Ctrl+Tab").key(chord("Ctrl+PageDown", "Cmd+Shift+]")).category("Tabs").enabled(tabs > 1)
         Command::new(LAST_TAB, "Switch to Last Tab").key(chord("Ctrl+Shift+L", "Cmd+Shift+L")).category("Tabs").enabled(window.index_of(window.previous).is_some())
@@ -453,7 +454,7 @@ mod tests {
     #[test]
     fn the_link_entries_show_only_over_a_link_and_the_email_entry_over_an_address() {
         let mut m = model::new(Settings::default())
-        m.windows[0].tabs.push(model::Tab { key: "tab-1", terminal: Terminal { id: 0 }, title: "", name: "", encoding: "", pinned: false, link: "", attention: false, fixed_title: "", hold: false, group: "", job: "", cwd: "", private: false, agent_since: 0, job_since: 0 })
+        m.windows[0].tabs.push(model::Tab { key: "tab-1", terminal: Terminal { id: 0 }, title: "", name: "", encoding: "", pinned: false, link: "", attention: false, fixed_title: "", hold: false, group: "", job: "", cwd: "", private: false, agent_since: 0, job_since: 0, session: sessions::Session::default() })
         m.windows[0].active = "tab-1"
         assert(!shown(m, super::OPEN_LINK) && !shown(m, super::COPY_LINK) && !shown(m, super::COPY_EMAIL))
         m.windows[0].tabs[0].link = "https://example.org/"

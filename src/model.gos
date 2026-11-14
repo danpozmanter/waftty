@@ -67,6 +67,9 @@ pub struct Tab {
     /// When the job in front of the tab's shell came there, in milliseconds
     /// since the Unix epoch; 0 while the shell is in front.
     pub job_since: i64
+    /// The session last found for the agent in front of the tab, which
+    /// names it once the agent has gone; the default while none is known.
+    pub session: sessions::Session
 }
 
 impl Tab {
@@ -260,8 +263,9 @@ pub struct Model {
     pub monitor: Monitor
     /// What alerts know of each tab's agent, by tab key.
     pub watches: Map<String, alerts::Watch>
-    /// Whether the agents' screens are being looked at.
-    pub watching: bool
+    /// The folder of Claude Code's records watched while a tab runs it; ""
+    /// while none does.
+    pub watched_records: String
 }
 
 /// The processes waftty runs, as Processes and the status bar show them.
@@ -310,7 +314,7 @@ pub fn new(s: Settings) -> Model {
         recent_sessions: #[]
         monitor: Monitor { sort: (s.process_sort, s.process_order == "ascending"), signal: 15, ..Monitor::default() }
         watches: Map::new()
-        watching: false
+        watched_records: ""
     }
 }
 
@@ -398,7 +402,7 @@ fn start(m: &mut Model, command: gui::terminal::Command, group: String, private:
     }
     let key = f"tab-{m.next}"
     m.next += 1
-    Ok(Tab { key: key, terminal: terminal, title: "", name: program_name(command.program), encoding: s.encoding, pinned: false, link: "", attention: false, fixed_title: "", hold: false, group: group, job: "", cwd: "", private: private, agent_since: if sessions::is_agent(program_name(command.program)) { time::unix_ms() - sessions::START_SLACK_MS } else { 0 }, job_since: 0 })
+    Ok(Tab { key: key, terminal: terminal, title: "", name: program_name(command.program), encoding: s.encoding, pinned: false, link: "", attention: false, fixed_title: "", hold: false, group: group, job: "", cwd: "", private: private, agent_since: if sessions::is_agent(program_name(command.program)) { time::unix_ms() - sessions::START_SLACK_MS } else { 0 }, job_since: 0, session: sessions::Session::default() })
 }
 
 /// `dir` with the home folder written as `~`.
@@ -653,20 +657,71 @@ pub fn agent_of(tab: Tab) -> String {
     ""
 }
 
-/// Records in the recent sessions the session of the agent in front of
-/// `tab`'s shell, when one is and the tab is not private.
+/// Records in the recent sessions the session of the agent leaving the
+/// front of `tab`'s shell, when one is and the tab is not private.
 pub fn finish_agent(m: &mut Model, tab: Tab) {
-    if tab.private || tab.agent_since == 0 { return }
-    // The agent runs as a job of the tab's shell, or is the tab's program.
-    let agent = if sessions::is_agent(tab.job) { tab.job } else if sessions::is_agent(tab.name) { tab.name } else { return }
-    note_session(m, agent, tab.cwd, tab.agent_since)
+    let Some(found) = session_now(tab) else { return }
+    record_session(m, found)
 }
 
-/// Records in the recent sessions the last session agent `agent` kept for
-/// folder `dir` since `since`, when it kept one.
-pub fn note_session(m: &mut Model, agent: String, dir: String, since: i64) {
-    let Some(found) = sessions::latest(agent, dir, since) else { return }
-    m.recent_sessions = sessions::used(m.recent_sessions, found)
+/// Records in the recent sessions the session the agent in front of tab `t`
+/// of window `w` holds now, when one is and the tab is not private, and keeps
+/// it on the tab. A session recorded already is left as it is.
+pub fn note_agent(m: &mut Model, w: i64, t: i64) {
+    let tab = m.windows[w].tabs[t]
+    let Some(found) = session_now(tab) else { return }
+    if found == tab.session { return }
+    m.windows[w].tabs[t].session = found
+    record_session(m, found)
+}
+
+/// Records in the recent sessions the session of every agent running in a
+/// tab, and takes in what other waftty processes recorded.
+pub fn note_agents(m: &mut Model) {
+    m.recent_sessions = sessions::load()
+    for w in 0..m.windows.len() {
+        for t in 0..m.windows[w].tabs.len() { note_agent(m, w, t) }
+    }
+}
+
+// The session of the agent in front of `tab`'s shell; None when no agent is
+// or the tab is private.
+fn session_now(tab: Tab) -> Option<sessions::Session> {
+    if tab.private || tab.agent_since == 0 { return None }
+    // The agent runs as a job of the tab's shell, or is the tab's program.
+    let agent = if sessions::is_agent(tab.job) { tab.job } else if sessions::is_agent(tab.name) { tab.name } else { return None }
+    Some(sessions::current(agent, tab.cwd, tab.agent_since, tab.session, live_session(tab, agent)))
+}
+
+/// The session agent `agent` registered for itself while it runs in `tab`:
+/// the one whose process is the tab's program or descends from it.
+pub fn live_session(tab: Tab, agent: String) -> Option<sessions::Live> {
+    let registered = sessions::live(agent)
+    if registered.is_empty() { return None }
+    let Ok(shot) = tab.terminal.snapshot() else { return None }
+    let mut parents = Map::new()
+    for p in processes::sample().processes { parents[p.pid] = p.parent }
+    registered.iter().find(|l| descends(l.pid, shot.pid, parents))
+}
+
+// Whether process `pid` is `ancestor` or descends from it, by `parents`, each
+// process's parent.
+fn descends(pid: i64, ancestor: i64, parents: Map<i64, i64>) -> bool {
+    let mut at = pid
+    // A tree holds no longer chain than it has processes.
+    for _ in 0..parents.len() + 1 {
+        if at == ancestor { return true }
+        let Some(up) = parents.get(at) else { return false }
+        if up == at { return false }
+        at = up
+    }
+    false
+}
+
+// Records `found` first in the recent sessions, read again first so what
+// other waftty processes recorded stays.
+fn record_session(m: &mut Model, found: sessions::Session) {
+    m.recent_sessions = sessions::used(sessions::load(), found)
     // A list that can't be saved still serves this run.
     if let Err(why) = sessions::save(m.recent_sessions) { eprintln(f"{info::NAME}: couldn't save the recent sessions: {why}") }
 }
@@ -952,7 +1007,7 @@ mod tests {
     use settings::Settings
 
     fn agent_tab(name: String, job: String, dir: String, private: bool) -> super::Tab {
-        super::Tab { key: "tab-1", terminal: gui::terminal::Terminal { id: 0 }, title: "", name: name, encoding: "", pinned: false, link: "", attention: false, fixed_title: "", hold: false, group: "", job: job, cwd: dir, private: private, agent_since: 1, job_since: 0 }
+        super::Tab { key: "tab-1", terminal: gui::terminal::Terminal { id: 0 }, title: "", name: name, encoding: "", pinned: false, link: "", attention: false, fixed_title: "", hold: false, group: "", job: job, cwd: dir, private: private, agent_since: 1, job_since: 0, session: sessions::Session::default() }
     }
 
     #[test]
@@ -983,9 +1038,39 @@ mod tests {
     }
 
     #[test]
+    fn a_running_agent_with_nothing_recorded_yet_is_listed_once() {
+        let Ok(root) = fs::temp_dir("waftty-agents-") else { panic("no temporary folder") }
+        env::set_var("XDG_CONFIG_HOME", root)
+        env::set_var("CLAUDE_CONFIG_DIR", root)
+        let mut m = super::new(Settings::default())
+        let mut win = super::window("main")
+        win.tabs.push(agent_tab("bash", "claude", root, false))
+        m.windows.push(win)
+        let w = m.windows.len() - 1
+        super::note_agent(&mut m, w, 0)
+        assert_eq(m.recent_sessions.map(|s| (s.agent, s.empty)), #[("claude", true)])
+        assert(m.windows[w].tabs[0].session.empty)
+        // Looked at again unchanged, it is not recorded twice.
+        super::note_agent(&mut m, w, 0)
+        super::note_agents(&mut m)
+        assert_eq(m.recent_sessions.len(), 1)
+        env::unset_var("CLAUDE_CONFIG_DIR")
+        let _ = fs::remove_dir_all(root)
+    }
+
+    #[test]
+    fn a_process_descends_from_its_ancestors_only() {
+        let parents = { 10: 1, 20: 10, 30: 20, 40: 1, 1: 1 }
+        assert(super::descends(30, 10, parents))
+        assert(super::descends(10, 10, parents))
+        assert(!super::descends(40, 10, parents))
+        assert(!super::descends(99, 10, parents))
+    }
+
+    #[test]
     fn a_tab_is_named_for_the_command_in_front_and_its_directory() {
         let home = env::home_dir().unwrap_or("/home/someone")
-        let mut tab = super::Tab { key: "tab-1", terminal: gui::terminal::Terminal { id: 0 }, title: "user@host: ~", name: "bash", encoding: "", pinned: false, link: "", attention: false, fixed_title: "", hold: false, group: "", job: "", cwd: "", private: false, agent_since: 0, job_since: 0 }
+        let mut tab = super::Tab { key: "tab-1", terminal: gui::terminal::Terminal { id: 0 }, title: "user@host: ~", name: "bash", encoding: "", pinned: false, link: "", attention: false, fixed_title: "", hold: false, group: "", job: "", cwd: "", private: false, agent_since: 0, job_since: 0, session: sessions::Session::default() }
         assert_eq(tab.label(), "user@host: ~")
         tab.cwd = f"{home}/dev/waftty"
         assert_eq(tab.label(), "bash: ~/dev/waftty")
