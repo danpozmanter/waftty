@@ -151,7 +151,8 @@ pub fn current(agent: String, dir: String, since: i64, known: Session, live: Opt
     if agent == "claude" {
         let id = match live { Some(l) => l.id, None => if known_here { known.id } else { "" } }
         if !id.is_empty() {
-            let started = match live { Some(l) => l.started, None => if known.started > 0 { known.started } else { began } }
+            let given = match live { Some(l) => l.started, None => known.started }
+            let started = if given > 0 { given } else { began }
             return claude_by_id(claude_root(), dir, id).unwrap_or(Session { agent: agent, id: id, dir: dir, title: "", used: started, started: started, empty: true })
         }
     }
@@ -831,6 +832,10 @@ mod tests {
         let running = Live { pid: 4242, id: id, dir: "/w", started: 1_794_622_159_426 }
         let fresh = current("claude", "/w", 1_794_622_158_000, Session::default(), Some(running))
         assert_eq(fresh, Session { agent: "claude", id: id, dir: "/w", title: "", used: 1_794_622_159_426, started: 1_794_622_159_426, empty: true })
+        // A record that gives no start time leaves the one waftty saw.
+        let untimed = current("claude", "/w", 1_794_622_158_000, Session::default(), Some(Live { started: 0, ..running }))
+        assert_eq(untimed.started, 1_794_622_158_000 + super::START_SLACK_MS)
+        assert_eq(untimed.used, untimed.started)
         // Once the agent ends, the id the tab kept still finds its record.
         let folder = path::join(path::join(root, "projects"), "-w")
         let _ = fs::create_dir_all(folder)

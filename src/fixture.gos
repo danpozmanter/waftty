@@ -461,18 +461,21 @@ pub fn journey() -> Result<(), errors::Error> {
     // A program named claude stands in for the agent, keeping a record of
     // its state as Claude Code does. The first run works, ends its turn with
     // a transcript, waits for the journey to write to its pipe, works again,
-    // then asks for a permission and waits for a line.
+    // then asks for a permission and waits for a line. Like Claude Code, it
+    // names its folder by the path with links resolved, as the system gives
+    // the tab's folder; the journey's own may lie behind a link (/var on
+    // macOS).
     let bin = f"{config}/bin"
     fs::create_dir_all(bin)?
     let records = f"{config}/sessions"
     let agent = """
-    r="$CLAUDE_CONFIG_DIR/sessions"; mkdir -p "$r"; mkfifo "$r/go"
-    say() { printf '{"pid":%s,"sessionId":"%s","cwd":"%s","startedAt":0,"status":"%s","waitingFor":"%s"}' $$ "$1" "$PWD" "$2" "$3" > "$r/$$.tmp" && mv "$r/$$.tmp" "$r/$$.json"; }
+    r="$CLAUDE_CONFIG_DIR/sessions"; mkdir -p "$r"; mkfifo "$r/go"; d=$(pwd -P); t=$(date +%s)000
+    say() { printf '{"pid":%s,"sessionId":"%s","cwd":"%s","startedAt":%s,"status":"%s","waitingFor":"%s"}' $$ "$1" "$d" $t "$2" "$3" > "$r/$$.tmp" && mv "$r/$$.tmp" "$r/$$.json"; }
     if [ "$1" = transcript ]; then
         id=0f0e0d0c-0000-4000-8000-0000000000aa
         say $id busy; echo working
-        p="$CLAUDE_CONFIG_DIR/projects/$(printf %s "$PWD" | tr -c 'A-Za-z0-9' '-')"; mkdir -p "$p"
-        printf '{"type":"user","cwd":"%s","message":{"content":"First turn"}}\n' "$PWD" > "$p/$id.jsonl"
+        p="$CLAUDE_CONFIG_DIR/projects/$(printf %s "$d" | tr -c 'A-Za-z0-9' '-')"; mkdir -p "$p"
+        printf '{"type":"user","cwd":"%s","message":{"content":"First turn"}}\n' "$d" > "$p/$id.jsonl"
         say $id idle; read go < "$r/go"
         say $id busy
         say $id waiting "permission prompt"
