@@ -281,10 +281,18 @@ fn watch_agent(m: &mut Model, w: i64, t: i64, watch: alerts::Watch) -> alerts::W
     let state, waiting_for = said
     let next, change = alerts::moved(now, state, waiting_for)
     if change.stopped { model::note_agent(m, w, t) }
-    if m.settings.alerts && let Some(what) = change.alert {
-        alert(m, w, t, "claude needs you", f"{what.substring(0, 1).to_uppercase()}{what.substring(1, what.byte_len())} in {tab.label()}")
+    // A Claude Code that reports its status through the terminal alerts from
+    // those reports.
+    if m.settings.alerts && !tab.reported.reporting && let Some(what) = change.alert {
+        needs_you(m, w, t, "claude", what)
     }
     next
+}
+
+// Alerts that the program `app` in tab `t` of window `w` waits for `what`.
+fn needs_you(m: &mut Model, w: i64, t: i64, app: String, what: String) {
+    let label = m.windows[w].tabs[t].label()
+    alert(m, w, t, f"{app} needs you", f"{what.substring(0, 1).to_uppercase()}{what.substring(1, what.byte_len())} in {label}")
 }
 
 // Alerts for tab `t` of window `w` when it is not in front: a desktop
@@ -760,18 +768,41 @@ fn terminal_event(m: &mut Model, id: i64, event: Event) {
         }
         Event::Bell => {
             if m.settings.bell == "sound" { let _ = windowing::system::beep() }
-            call_attention(m, w, t)
+            // A program that reports its status says by that when it needs
+            // the user, so its bells and notifications do not mark the tab.
+            if !m.windows[w].tabs[t].reported.reporting { call_attention(m, w, t) }
             // An agent rings when it needs the user, which ends a stretch of
             // its work.
             model::note_agent(m, w, t)
         }
         Event::Notify(title, body) => {
-            if m.settings.notifications && !in_front(*m, w, t) {
-                let heading = if title.is_empty() { m.windows[w].tabs[t].label() } else { title }
-                gui::perform(Effect::Notify { id: f"notify:{m.windows[w].tabs[t].key}", title: heading, body: body, urgency: Urgency::Normal })
+            if !m.windows[w].tabs[t].reported.reporting {
+                if m.settings.notifications && !in_front(*m, w, t) {
+                    let heading = if title.is_empty() { m.windows[w].tabs[t].label() } else { title }
+                    gui::perform(Effect::Notify { id: f"notify:{m.windows[w].tabs[t].key}", title: heading, body: body, urgency: Urgency::Normal })
+                }
+                call_attention(m, w, t)
             }
-            call_attention(m, w, t)
             model::note_agent(m, w, t)
+        }
+        Event::Attention(asked) => {
+            if !asked {
+                m.windows[w].tabs[t].attention = false
+            } else if m.settings.alerts {
+                let tab = m.windows[w].tabs[t]
+                needs_you(m, w, t, if tab.job.is_empty() { tab.name } else { tab.job }, "attention requested")
+            }
+        }
+        Event::Status(status) => {
+            let held, change = alerts::reported(m.windows[w].tabs[t].reported, status)
+            m.windows[w].tabs[t].reported = held
+            // A program that stopped working may have written its session.
+            if change.stopped { model::note_agent(m, w, t) }
+            if m.settings.alerts && let Some(what) = change.alert {
+                let tab = m.windows[w].tabs[t]
+                let app = if !status.app.is_empty() { status.app } else if !tab.job.is_empty() { tab.job } else { tab.name }
+                needs_you(m, w, t, app, what)
+            }
         }
         Event::Clipboard(text) => {
             if m.settings.clipboard_write { gui::perform(Effect::SetClipboard(text)) }
@@ -804,9 +835,11 @@ fn terminal_event(m: &mut Model, id: i64, event: Event) {
             let before = m.windows[w].tabs[t]
             if job != before.job {
                 let now = time::unix_ms()
+                // What a program reported ends with it.
+                m.windows[w].tabs[t].reported = alerts::Reported::default()
                 // An agent's end is the user's own doing; waiting alerts
                 // for it instead.
-                if m.settings.alerts && !before.job.is_empty() && !sessions::is_agent(before.job) && alerts::ran_long(before.job_since, now, m.settings.alert_after * 1000) {
+                if m.settings.command_alerts && !before.job.is_empty() && !sessions::is_agent(before.job) && alerts::ran_long(before.job_since, now, m.settings.alert_after * 1000) {
                     alert(m, w, t, f"{before.job} finished", f"After {alerts::duration_text(now - before.job_since)} in {before.label()}")
                 }
                 m.windows[w].tabs[t].job_since = if job.is_empty() { 0 } else { now }

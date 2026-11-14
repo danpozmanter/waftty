@@ -87,7 +87,7 @@ Open a private window or tab to work in a temporary directory or run dangerous c
 
 ### Shell-Aware and Agent-Ready
 
-Jump between command prompts, select command output, and receive notifications from background tasks and coding agents such as Codex.
+Jump between command prompts, select command output, and get alerted when a long command finishes or a coding agent such as Codex, Claude Code, pi or mini-swe-agent needs you.
 
 </div>
 

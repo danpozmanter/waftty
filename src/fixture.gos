@@ -149,6 +149,7 @@ pub fn journey() -> Result<(), errors::Error> {
     // desktop; the tabs' marks show them. Agents keep no records here.
     env::set_var("DBUS_SESSION_BUS_ADDRESS", f"unix:path={config}/no-bus")
     env::set_var("CLAUDE_CONFIG_DIR", config)
+    env::set_var("CODEX_HOME", config)
     // A resumed session types an agent's command; no agent the user has
     // installed may run from the journey.
     env::set_var("PATH", "/usr/bin:/bin")
@@ -526,6 +527,39 @@ pub fn journey() -> Result<(), errors::Error> {
     let empties = sessions::load().filter(|e| e.agent == "claude" && e.empty)
     require(empties.map(|e| e.id) == #["0f0e0d0c-0000-4000-8000-0000000000ab"], f"the ended agent's session is recorded other than once: {sessions::load():?}")?
     println("sessions: a running agent's session with nothing in it yet was offered, resumed as the agent alone, and recorded once after the agent ended")
+
+    // A program named codex reports its status as Codex does (OSC 7501).
+    // It asks whether the terminal listens and shows the answer, works,
+    // waits for the journey to write to its pipe, then asks for a permission
+    // and waits for a line.
+    let reporter = """
+    gate="$CODEX_HOME/go"; mkfifo "$gate"
+    stty -echo -icanon min 1 time 0
+    printf '\\033]7501;?\\033\\\\'
+    answer=$(dd bs=1 count=10 2>/dev/null | od -An -tx1 | tr -d ' \\n')
+    stty echo icanon
+    echo "answer $answer"
+    printf '\\033]7501;state=working:app=codex\\033\\\\'; echo coding
+    read go < "$gate"
+    printf '\\033]7501;state=blocked:app=codex:kind=permission\\033\\\\'
+    read x; echo "done codex"
+    rm -f "$gate"
+    """
+    fs::write(f"{bin}/reporter.sh", reporter.bytes())?
+    enter(&mut s, f"cp {AGENT_STAND_IN} {bin}/codex && {bin}/codex {bin}/reporter.sh")?
+    await_text(&mut s, 0, "\nanswer ")?
+    // ESC ] 7501 ; ? ESC \, in hexadecimal.
+    require(s.semantics(0).dump().contains("answer 1b5d373530313b3f1b5c"), "the terminal did not answer the program status query")?
+    await_text(&mut s, 0, "\ncoding")?
+    shortcut(&mut s, commands::NEW_TAB)?
+    s.flush()?
+    require(!s.semantics(0).dump().contains("needs attention"), "a program at work marked its tab")?
+    fs::write(f"{config}/go", "go\n".bytes())?
+    await_text(&mut s, 0, "needs attention")?
+    shortcut(&mut s, commands::CLOSE_TAB)?
+    s.press(Key::Return, Mods::default())?
+    await_text(&mut s, 0, "\ndone codex")?
+    println("alerts: a program reporting its status heard the terminal answer, and asking for a permission marked its tab out of view")
 
     s.press(Key::F10, Mods { shift: true, ..Mods::default() })?
     s.flush()?

@@ -208,8 +208,7 @@ pub fn edited(values: Map<String, String>) -> Entry {
 
 /// Saves user scheme `e` as its scheme file.
 pub fn write(e: Entry) -> Result<(), errors::Error> {
-    fs::create_dir_all(services::config_dir(info::APP_ID))?
-    fs::write(file_for(e.id.substring(USER_PREFIX.byte_len(), e.id.byte_len())), text(e).bytes())
+    services::write_atomic(file_for(e.id.substring(USER_PREFIX.byte_len(), e.id.byte_len())), text(e).bytes())
 }
 
 /// Scheme `e` as a scheme file's text, which waftty reads back.

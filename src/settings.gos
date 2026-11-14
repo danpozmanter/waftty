@@ -91,11 +91,14 @@ pub struct Settings {
     /// What a program's bell does besides marking its tab: "none", "flash"
     /// or "sound".
     pub bell: String
-    /// Whether programs' notifications (OSC 9 and 777) reach the desktop.
+    /// Whether programs' notifications (OSC 9, 99 and 777) reach the desktop.
     pub notifications: bool
-    /// Whether a tab not in front alerts when a command that ran a while
-    /// finishes or an agent asks the user something.
+    /// Whether a tab not in front alerts when its program asks the user
+    /// something, such as a permission.
     pub alerts: bool
+    /// Whether a tab not in front alerts when a command that ran a while
+    /// finishes.
+    pub command_alerts: bool
     /// How long a command runs before its end alerts, in seconds.
     pub alert_after: i64
     /// Whether a bar under the terminal shows waftty's CPU, memory and disk
@@ -135,7 +138,7 @@ impl Default for Settings {
         Settings {
             shell: "", directory: "", new_tabs: "current", encoding: encodings::DEFAULT, restore: false, columns: 90, rows: 28, remember_size: true, confirm_close: true
             font: "", font_size: 10.0, font_weight: 400, ligatures: true, scheme: schemes::SYSTEM, cursor: "block", cursor_blink: false, bold_bright: false, legible: true, padding: 4, opacity: 100, line_spacing: 1.0, scrollbar: "always", scrollbar_side: "right", menu_bar: true, tab_bar: "several"
-            scrollback: 1_000, scroll_on_output: false, scroll_on_keystroke: true, word_chars: WORD_CHARS, copy_on_select: false, confirm_paste: false, bell: "none", notifications: true, alerts: true, alert_after: 10, status_bar: false, status_every: 2, process_sort: "cpu", process_order: "descending", clipboard_write: true, editor: "", option_as_meta: false, input_method: "auto"
+            scrollback: 1_000, scroll_on_output: false, scroll_on_keystroke: true, word_chars: WORD_CHARS, copy_on_select: false, confirm_paste: false, bell: "none", notifications: true, alerts: true, command_alerts: true, alert_after: 10, status_bar: false, status_every: 2, process_sort: "cpu", process_order: "descending", clipboard_write: true, editor: "", option_as_meta: false, input_method: "auto"
             drop_down_key: "F12", drop_down_position: "top", drop_down_width: 100, drop_down_height: 50
         }
     }
@@ -228,7 +231,7 @@ fn values(s: Settings) -> Vec<(String, String)> {
         ("scrollback", f"{s.scrollback}"), ("scroll_on_output", flag(s.scroll_on_output)), ("scroll_on_keystroke", flag(s.scroll_on_keystroke))
         ("word_chars", s.word_chars), ("copy_on_select", flag(s.copy_on_select)), ("confirm_paste", flag(s.confirm_paste))
         ("bell", s.bell), ("notifications", flag(s.notifications)), ("clipboard_write", flag(s.clipboard_write))
-        ("alerts", flag(s.alerts)), ("alert_after", f"{s.alert_after}"), ("status_bar", flag(s.status_bar)), ("status_every", f"{s.status_every}"), ("process_sort", s.process_sort), ("process_order", s.process_order)
+        ("alerts", flag(s.alerts)), ("command_alerts", flag(s.command_alerts)), ("alert_after", f"{s.alert_after}"), ("status_bar", flag(s.status_bar)), ("status_every", f"{s.status_every}"), ("process_sort", s.process_sort), ("process_order", s.process_order)
         ("editor", s.editor), ("option_as_meta", flag(s.option_as_meta)), ("input_method", s.input_method)
         ("drop_down_key", s.drop_down_key), ("drop_down_position", s.drop_down_position), ("drop_down_width", f"{s.drop_down_width}"), ("drop_down_height", f"{s.drop_down_height}")
     ]
@@ -294,6 +297,9 @@ pub fn with_values(s: Settings, values: Map<String, String>) -> Settings {
     if let Some(v) = values.get("notifications").and_then(flag_of) { out.notifications = v }
     if let Some(v) = values.get("clipboard_write").and_then(flag_of) { out.clipboard_write = v }
     if let Some(v) = values.get("alerts").and_then(flag_of) { out.alerts = v }
+    // Before command alerts had a setting of their own, one setting turned
+    // both kinds of alert on or off.
+    if let Some(v) = values.get("command_alerts").or(values.get("alerts")).and_then(flag_of) { out.command_alerts = v }
     if let Some(v) = values.get("alert_after").and_then(|v| number_in(v, 1, ALERT_AFTER_MAX)) { out.alert_after = v }
     if let Some(v) = values.get("status_bar").and_then(flag_of) { out.status_bar = v }
     if let Some(v) = values.get("status_every").and_then(|v| number_in(v, 1, STATUS_EVERY_MAX)) { out.status_every = v }
@@ -361,9 +367,10 @@ pub fn dialog(s: Settings, fonts: Vec<String>, offered: Vec<schemes::Entry>, reg
         field("word_chars", "Word characters", PreferenceKind::Text, s.word_chars, d.word_chars, "Characters a double click selects along with letters and digits.")
         toggle("copy_on_select", "Copy selected text", s.copy_on_select, d.copy_on_select, "Selecting text also copies it to the clipboard.")
         toggle("confirm_paste", "Ask before pasting several lines", s.confirm_paste, d.confirm_paste, "Also asks before pasting control characters.")
-        field("bell", "Bell", PreferenceKind::Choice(bells), s.bell, d.bell, "A tab that rings while hidden is always marked.")
+        field("bell", "Bell", PreferenceKind::Choice(bells), s.bell, d.bell, "A tab that rings while hidden is marked, unless its program reports its status, which alerts instead.")
         toggle("notifications", "Show notifications from programs", s.notifications, d.notifications, "")
-        toggle("alerts", "Alert when a long command finishes or an agent asks for you", s.alerts, d.alerts, "For a tab you are not looking at: a desktop notification, and a mark on the tab.")
+        toggle("alerts", "Alert when a program asks for you", s.alerts, d.alerts, "A permission, a question or a sign-in, in a tab you are not looking at: a desktop notification, and a mark on the tab.")
+        toggle("command_alerts", "Alert when a long command finishes", s.command_alerts, d.command_alerts, "In a tab you are not looking at.")
         field("alert_after", "Alert after", PreferenceKind::Integer(1, ALERT_AFTER_MAX), f"{s.alert_after}", f"{d.alert_after}", "Seconds a command runs before its end alerts.")
         field("process_sort", "Sort processes by", PreferenceKind::Choice(#[("cpu", "CPU"), ("memory", "Memory")]), s.process_sort, d.process_sort, "How Processes opens; click a column to sort by it.")
         field("process_order", "Process order", PreferenceKind::Choice(#[("descending", "Highest first"), ("ascending", "Lowest first")]), s.process_order, d.process_order, "")
@@ -609,6 +616,16 @@ mod tests {
         let mut map: Map<String, String> = Map::new()
         for (k, v) in super::values(s) { map[k] = v }
         assert_eq(super::with_values(Settings::default(), map), s)
+    }
+
+    #[test]
+    fn alerts_turned_off_before_command_alerts_had_a_setting_stay_off() {
+        let old = super::with_values(Settings::default(), { "alerts": "false" })
+        assert(!old.alerts && !old.command_alerts)
+        let apart = super::with_values(Settings::default(), { "alerts": "false", "command_alerts": "true" })
+        assert(!apart.alerts && apart.command_alerts)
+        let kept = super::with_values(Settings { command_alerts: false, ..Settings::default() }, { "bell": "flash" })
+        assert(!kept.command_alerts)
     }
 
     #[test]

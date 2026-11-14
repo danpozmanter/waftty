@@ -113,9 +113,10 @@ pub fn chords(text: String) -> Vec<String> {
 
 /// Whether Settings offers a shortcut for command `id`: the commands of the
 /// Send Signal, Set Encoding and tab lists are many and change, so they
-/// are bound in the shortcuts file only.
+/// are bound in the shortcuts file only, and the toolkit's palette and Quit
+/// are waftty's own.
 pub fn bindable(id: String) -> bool {
-    !id.starts_with("terminal.signal:") && !id.starts_with("terminal.encoding:") && !id.starts_with("tabs.show:")
+    !id.starts_with("terminal.signal:") && !id.starts_with("terminal.encoding:") && !id.starts_with("tabs.show:") && id != "gui.command-palette" && id != "gui.quit"
 }
 
 // `text` quoted as a TOML basic string.
@@ -132,8 +133,7 @@ pub fn save(chosen: Map<String, Vec<String>>) -> Result<(), errors::Error> {
     for id in ids {
         text += f"{quoted(id)} = [{chosen[id].map(quoted).join(", ")}]\n"
     }
-    fs::create_dir_all(services::config_dir(info::APP_ID))?
-    fs::write(file(), text.bytes())
+    services::write_atomic(file(), text.bytes())
 }
 
 /// The problems with `chosen` against the commands `registry` offers: ids

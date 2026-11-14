@@ -149,12 +149,13 @@ are averages since the last reading.
 When a command that ran a while finishes in a tab you are not looking at,
 waftty marks the tab and posts a desktop notification, such as "make
 finished", with how long it ran and the tab's name. It does the same when
-Claude Code asks you something, such as a permission, going by the state
-Claude Code itself records; an agent ending its turn, or still running
-commands it started, does not alert. Codex, pi and other programs alert the
-same way through the notifications and bells they send to the terminal
-themselves (Codex's `tui.notifications`). Settings > Behavior turns alerts
-off and sets how many seconds a command must run (10 by default).
+a program asks you something, such as a permission, a question or a
+sign-in, going by what the program itself says: Codex, Claude Code and other
+programs report their status to the terminal (OSC 7501, the Program Status
+Protocol), and Claude Code also records its state. A program ending its
+turn, finishing, or still running commands it started does not alert.
+Settings > Behavior turns off each kind of alert apart and sets how many
+seconds a command must run (10 by default).
 
 ## Private Tabs and Windows
 
@@ -353,24 +354,31 @@ they always had.
 
 ## Notifications from Agents
 
-waftty marks a hidden tab whose program rings the bell or posts a desktop
-notification (OSC 9 or OSC 777), and passes the notification to the desktop.
-Coding agents in a background tab can tell you when they need you:
+waftty alerts only when a program needs you, going by what the program
+itself says:
 
-- **Agents with hooks:** turn on the terminal bell in the agent's settings, or
-  add a hook for the events where it waits for you or finishes that posts one:
+- **Codex and Claude Code** report their status to the terminal (OSC 7501,
+  the Program Status Protocol); nothing to set up. A permission prompt or a
+  question in a tab out of view alerts; a finished turn does not.
+- **pi:** copy [`waftty-status.ts`](https://github.com/danpozmanter/waftty/blob/main/extras/pi/waftty-status.ts)
+  to `~/.pi/agent/extensions/`. Whenever an extension asks you something,
+  such as a permission or a choice, the tab alerts.
+- **mini-swe-agent:** put [`waftty_status.py`](https://github.com/danpozmanter/waftty/blob/main/extras/mini/waftty_status.py)
+  in a folder on `PYTHONPATH` and run
+  `mini --agent-class waftty_status.ReportingAgent`. Asking you to confirm
+  its commands alerts.
+- **Any program** can do the same: report `blocked` by OSC 7501, ask with
+  iTerm2's `OSC 1337 ; RequestAttention=yes`, or ring the bell or post a
+  desktop notification (OSC 9, 99 or 777), which mark a hidden tab:
 
     ```sh
-    printf '\033]777;notify;Agent;%s\007' "Waiting for you" > /dev/tty
+    printf '\033]7501;state=blocked:app=deploy:kind=question\033\\'
     ```
 
-- **Codex:** set `notify` in `~/.codex/config.toml` to a script that posts a
-  notification the same way when a turn finishes.
-- **Any long command:** end it with `; printf '\a'` to ring the bell when it
-  finishes.
-
-waftty also alerts on its own when Claude Code asks you something or a long
-command ends; see [Alerts](#alerts).
+A program that reports its status alerts through those reports alone, so
+its bells and notifications do not mark the tab as well. Settings >
+Behavior turns these alerts off, and long command alerts apart from them;
+see [Alerts](#alerts).
 
 ## Starting waftty
 
@@ -519,6 +527,9 @@ which entries it could not use.
 "view.fullscreen" = []
 ```
 
-The ids of the Send Signal, Set Encoding and tab-list entries
-(`terminal.signal:15`, `terminal.encoding:KOI8-R`, `tabs.number:3`) can only
-be bound in the file.
+Every command can be rebound, including Undo, Redo and Cut in waftty's text
+fields and the toolkit's Toggle Inspector. The Send Signal and Set Encoding
+entries (`terminal.signal:15`, `terminal.encoding:KOI8-R`) can only be bound
+in the file. A command bound to Ctrl+Shift+C, Ctrl+Shift+V, Shift+PageUp or
+Shift+PageDown takes the chord from the terminal's own copy, paste and
+scrolling.

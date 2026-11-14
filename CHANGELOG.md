@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.7.2 - Alerts for every agent
+
+- Alerts follow the Program Status Protocol (OSC 7501): Codex and Claude Code as they are, pi and mini-swe-agent with a file from `extras/`.
+- iTerm2's attention requests (OSC 1337 RequestAttention) alert, and kitty notifications (OSC 99) reach the desktop.
+- A program that reports its status no longer also marks its tab by bells and notifications.
+- Long command alerts have their own setting.
+- Every command can be rebound, Undo, Redo, Cut and Toggle Inspector included.
+- Ctrl+Q in a text field no longer quits.
+- Rebinding Ctrl+Shift+C, Ctrl+Shift+V, Shift+PageUp or Shift+PageDown takes effect in the terminal.
+- Saved lists are replaced whole, so another waftty process never reads one half written.
+- Builds on Gossamer 0.79.0, gui-engine-gos 0.2.21 and gui-gos 0.2.9.
+
 ## 0.7.1 - Running and empty sessions, alerts only when needed
 
 - Recent Sessions lists agent sessions still running, from every waftty window and process, and updates each as its agent works.

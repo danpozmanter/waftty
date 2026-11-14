@@ -74,9 +74,8 @@ pub fn load() -> Vec<Session> {
 
 /// Saves `sessions` as the list.
 pub fn save(sessions: Vec<Session>) -> Result<(), errors::Error> {
-    fs::create_dir_all(services::config_dir(info::APP_ID))?
-    fs::write(file(), json::encode(Saved { sessions: sessions }).bytes())?
-    Ok(())
+    // Replaced whole, so another waftty process never reads it half written.
+    services::write_atomic(file(), json::encode(Saved { sessions: sessions }).bytes())
 }
 
 /// Forgets every session: the list is empty from here on.

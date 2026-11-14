@@ -2,7 +2,7 @@
 // can be told to. Each keeps the session's own history in memory, so earlier
 // lines stay a keypress away, and none of it reaches the history file.
 
-use std::{env, errors, fs, os, path}
+use std::{env, errors, os, path}
 
 use gui::services
 use gui::terminal::Command
@@ -53,9 +53,9 @@ pub const SHELLS: String = "bash, zsh, fish, nushell, xonsh, PowerShell, sh and 
 // answering its path.
 fn startup_file(folder: String, name: String, text: String) -> Result<String, errors::Error> {
     let dir = path::join(services::cache_dir(info::APP_ID), folder)
-    fs::create_dir_all(dir)?
-    let file = path::join(dir, name)
-    fs::write(file, text.bytes())?
+    // Replaced whole, so a shell starting in another waftty process never
+    // reads it half written.
+    services::write_atomic(path::join(dir, name), text.bytes())?
     Ok(dir)
 }
 
