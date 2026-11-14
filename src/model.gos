@@ -1004,6 +1004,8 @@ pub fn scheme(m: Model) -> schemes::Entry {
 mod tests {
     use std::{env, fs, path}
 
+    use gui::services
+
     use settings::Settings
 
     fn agent_tab(name: String, job: String, dir: String, private: bool) -> super::Tab {
@@ -1013,7 +1015,8 @@ mod tests {
     #[test]
     fn a_finished_agent_is_recorded_whether_a_job_of_the_shell_or_the_tabs_program() {
         let Ok(root) = fs::temp_dir("waftty-agents-") else { panic("no temporary folder") }
-        env::set_var("XDG_CONFIG_HOME", root)
+        services::set_config_root(root)
+        defer services::set_config_root("")
         env::set_var("CLAUDE_CONFIG_DIR", root)
         let dir = path::join(root, "work")
         let _ = fs::create_dir_all(dir)
@@ -1040,7 +1043,8 @@ mod tests {
     #[test]
     fn a_running_agent_with_nothing_recorded_yet_is_listed_once() {
         let Ok(root) = fs::temp_dir("waftty-agents-") else { panic("no temporary folder") }
-        env::set_var("XDG_CONFIG_HOME", root)
+        services::set_config_root(root)
+        defer services::set_config_root("")
         env::set_var("CLAUDE_CONFIG_DIR", root)
         let mut m = super::new(Settings::default())
         let mut win = super::window("main")

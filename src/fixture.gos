@@ -6,6 +6,7 @@ use std::{env, errors, fs, runtime}
 
 use gui
 use gui::Outcome
+use gui::services
 use gui::services::clipboard
 use gui::terminal::Command
 use gui::widgets::menus
@@ -131,6 +132,9 @@ pub fn journey() -> Result<(), errors::Error> {
     // Window placements and settings go to a directory of the journey's own,
     // never to the user's configuration.
     let config = fs::temp_dir("waftty-journey")?
+    // The configuration folder on every system, and the one the tabs'
+    // programs read on Linux and FreeBSD.
+    services::set_config_root(config)
     env::set_var("XDG_CONFIG_HOME", config)
     defer { let _ = fs::remove_dir_all(config) }
     // sh prompts with "# " for the superuser; every shell the journey opens

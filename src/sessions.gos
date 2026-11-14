@@ -545,6 +545,8 @@ fn first_text(content: Option<json::Value>) -> String {
 mod tests {
     use std::{env, fs, path, strconv, time}
 
+    use gui::services
+
     use clock
 
     use super::{HEAD_BYTES, Live, Session, claude_folder, claude_latest, codex_day, codex_latest, current, key, live, pi_folder, pi_latest, resume_input, used, uuid7_ms}
@@ -856,7 +858,8 @@ mod tests {
     #[test]
     fn a_saved_list_loads_back() {
         let Ok(root) = fs::temp_dir("waftty-sessions-") else { panic("no temporary folder") }
-        env::set_var("XDG_CONFIG_HOME", root)
+        services::set_config_root(root)
+        defer services::set_config_root("")
         let s = Session { agent: "claude", id: "7d3f8a2e-1b4c-4d5e-9f60-a1b2c3d4e5f6", dir: root, title: "Notes", used: 5, started: 7, empty: false }
         let saved = super::save(#[s])
         assert(saved.is_ok(), f"{saved:?}")
