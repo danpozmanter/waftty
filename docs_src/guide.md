@@ -114,7 +114,8 @@ themselves (`~/.claude`, `~/.codex` and `~/.pi`, or the folders
 (++cmd+shift+period++ on macOS) lists the last 20, latest first, as
 `claude · Version 0.6.1 release · ~/dev/waftty · 11/13/26 1:20PM`. Type
 part of an entry to narrow the list; ++enter++ or a click opens a new tab in
-the session's folder and types `claude --resume`, `codex resume` or
+the session's folder, types a `cd` to that folder (a shell's startup file
+may change folders first) and then `claude --resume`, `codex resume` or
 `pi --session` with its id, so the shell's own
 environment applies and its prompt comes back when the agent ends. A session
 the agent was never given a prompt in has nothing to resume: it is listed as

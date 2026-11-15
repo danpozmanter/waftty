@@ -54,42 +54,43 @@ fn plain(dir: String, windows: bool) -> bool {
     !dir.is_empty() && dir.chars().all(|c| c.is_alphanumeric() || "/._-+,@%=".contains(c.to_string()) || (windows && (c == '\\' || c == ':')))
 }
 
-/// What to type at the prompt of the shell named `shell` to move to `dir`,
-/// clearing what was typed there first: `cd dir`, quoted only when the
-/// folder's name needs it. None for a program that is not a shell waftty
-/// knows.
-pub fn cd_input(shell: String, dir: String) -> Option<String> {
-    match shell {
-        // Ctrl+E then Ctrl+U clear the line from its end.
-        "bash" | "zsh" | "sh" | "dash" | "ash" | "ksh" | "mksh" => {
-            let target = if plain(dir, false) { dir } else { f"'{dir.replace("'", "'\\''")}'" }
-            Some(f"\u{5}\u{15}cd {target}\r")
-        }
+/// The line that moves the shell named `shell` to `dir`: `cd dir`, quoted
+/// only when the folder's name needs it, and its Enter. None for a program
+/// that is not a shell waftty knows.
+pub fn cd_line(shell: String, dir: String) -> Option<String> {
+    let target = match shell {
+        "bash" | "zsh" | "sh" | "dash" | "ash" | "ksh" | "mksh" => if plain(dir, false) { dir } else { f"'{dir.replace("'", "'\\''")}'" }
         // nushell's double-quoted strings take backslash escapes.
-        "nu" => {
-            let target = if plain(dir, false) { dir } else { f"\"{dir.replace("\\", "\\\\").replace("\"", "\\\"")}\"" }
-            Some(f"\u{5}\u{15}cd {target}\r")
-        }
+        "nu" => if plain(dir, false) { dir } else { f"\"{dir.replace("\\", "\\\\").replace("\"", "\\\"")}\"" }
         // fish's single quotes, and xonsh's (a Python string literal), take
         // a backslash before a quote or a backslash.
-        "fish" | "xonsh" => {
-            let target = if plain(dir, false) { dir } else { f"'{dir.replace("\\", "\\\\").replace("'", "\\'")}'" }
-            Some(f"\u{5}\u{15}cd {target}\r")
-        }
-        // Ctrl+C cancels the line PSReadLine is editing; a quoted path goes
-        // in literally, since `cd` reads brackets as a wildcard.
-        "pwsh" | "powershell" => {
-            let target = if plain(dir, true) { dir } else { f"-LiteralPath '{dir.replace("'", "''")}'" }
-            Some(f"\u{3}cd {target}\r")
-        }
-        // Escape clears cmd's line; /d also changes the drive. A Windows path
-        // holds no double quote.
-        "cmd" => {
-            let target = if plain(dir, true) { dir } else { f"\"{dir}\"" }
-            Some(f"\u{1b}cd /d {target}\r")
-        }
-        _ => None
+        "fish" | "xonsh" => if plain(dir, false) { dir } else { f"'{dir.replace("\\", "\\\\").replace("'", "\\'")}'" }
+        // A quoted path goes in literally, since `cd` reads brackets as a
+        // wildcard.
+        "pwsh" | "powershell" => if plain(dir, true) { dir } else { f"-LiteralPath '{dir.replace("'", "''")}'" }
+        // A Windows path holds no double quote.
+        "cmd" => if plain(dir, true) { dir } else { f"\"{dir}\"" }
+        _ => return None
     }
+    // cmd's /d also changes the drive.
+    let verb = if shell == "cmd" { "cd /d" } else { "cd" }
+    Some(f"{verb} {target}\r")
+}
+
+/// What to type at the prompt of the shell named `shell` to move to `dir`,
+/// clearing what was typed there first: `cd_line` behind the shell's own
+/// line-clearing keys.
+pub fn cd_input(shell: String, dir: String) -> Option<String> {
+    let line = cd_line(shell, dir)?
+    let clear = match shell {
+        // Ctrl+C cancels the line PSReadLine is editing.
+        "pwsh" | "powershell" => "\u{3}"
+        // Escape clears cmd's line.
+        "cmd" => "\u{1b}"
+        // Ctrl+E then Ctrl+U clear the line from its end.
+        _ => "\u{5}\u{15}"
+    }
+    Some(f"{clear}{line}")
 }
 
 #[cfg(test)]
@@ -121,5 +122,13 @@ mod tests {
         assert_eq(super::cd_input("cmd", "C:\\x y"), Some("\u{1b}cd /d \"C:\\x y\"\r"))
         assert_eq(super::cd_input("cmd", "D:\\src"), Some("\u{1b}cd /d D:\\src\r"))
         assert_eq(super::cd_input("htop", "/tmp"), None)
+    }
+
+    #[test]
+    fn a_cd_line_is_the_cd_alone_without_clearing_keys() {
+        assert_eq(super::cd_line("bash", "/tmp/it's here"), Some("cd '/tmp/it'\\''s here'\r"))
+        assert_eq(super::cd_line("pwsh", "C:\\it's"), Some("cd -LiteralPath 'C:\\it''s'\r"))
+        assert_eq(super::cd_line("cmd", "D:\\src"), Some("cd /d D:\\src\r"))
+        assert_eq(super::cd_line("htop", "/tmp"), None)
     }
 }

@@ -423,7 +423,7 @@ fn open_sessions(m: &mut Model, w: i64) {
 fn resume(m: &mut Model, w: i64, key: String) {
     let window = m.windows[w].key
     let Some(session) = m.recent_sessions.iter().find(|s| sessions::key(s) == key) else { return }
-    let Some(input) = sessions::resume_input(session) else { return }
+    if sessions::resume_input(session).is_none() { return }
     if !fs::is_dir(session.dir) {
         model::report(window, "Couldn't resume the session", errors::new(f"{session.dir} is gone"))
         return
@@ -433,7 +433,9 @@ fn resume(m: &mut Model, w: i64, key: String) {
         model::report(window, "Couldn't open a tab", why)
         return
     }
-    if let Some(tab) = m.windows[w].current() && let Err(why) = tab.terminal.input(input) {
+    let Some(tab) = m.windows[w].current() else { return }
+    let Some(input) = sessions::resume_typing(tab.name, session) else { return }
+    if let Err(why) = tab.terminal.input(input) {
         model::report(window, "Couldn't resume the session", why)
     }
 }

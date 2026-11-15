@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.1 - Resumed sessions in their folder
+
+- Resuming a recent session moves the shell to the session's folder first, so a shell startup file that changes folders no longer starts the agent elsewhere.
+- A tab in the back no longer keeps waftty busy after its last output.
+- Builds on gui-engine-gos 0.2.24 and gui-gos 0.2.11.
+
 ## 0.8.0 - Font features, variations and styles
 
 - Font features turn OpenType features on or off, such as `ss01 zero -calt` or `cv01=2`.

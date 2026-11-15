@@ -12,6 +12,7 @@ use gui::services
 
 use clock
 use info
+use recent
 
 /// The most sessions the list keeps.
 pub const LIMIT: i64 = 20
@@ -121,6 +122,15 @@ fn instant(text: String) -> i64 {
 /// Whether program `job` is an agent whose sessions can be resumed.
 pub fn is_agent(job: String) -> bool {
     job == "claude" || job == "codex" || job == "pi"
+}
+
+/// What to type at the first prompt of the shell named `shell`, in a tab
+/// opened in `session`'s folder, to resume it there. A shell's startup files
+/// may move it elsewhere before that prompt, so the folder is typed ahead of
+/// the agent's command; a shell waftty does not know gets the command alone.
+pub fn resume_typing(shell: String, session: Session) -> Option<String> {
+    let input = resume_input(session)?
+    Some(recent::cd_line(shell, session.dir).unwrap_or("") + input)
 }
 
 /// What to type at a shell prompt to resume `session`: the agent alone for
@@ -549,7 +559,7 @@ mod tests {
 
     use clock
 
-    use super::{HEAD_BYTES, Live, Session, claude_folder, claude_latest, codex_day, codex_latest, current, key, live, pi_folder, pi_latest, resume_input, used, uuid7_ms}
+    use super::{HEAD_BYTES, Live, Session, claude_folder, claude_latest, codex_day, codex_latest, current, key, live, pi_folder, pi_latest, resume_input, resume_typing, used, uuid7_ms}
 
     #[test]
     fn claude_names_a_folder_with_every_other_character_a_dash() {
@@ -773,6 +783,16 @@ mod tests {
         let named = Session { agent: "claude", id: "35892bcb-7adb-4d89-8ef3-9a49a87ef33e", empty: true, ..Session::default() }
         assert_eq(resume_input(named), Some("claude\r"))
         assert(resume_input(Session { agent: "aider", empty: true, ..Session::default() }).is_none())
+    }
+
+    #[test]
+    fn resuming_moves_the_shell_to_the_sessions_folder_before_the_agent_starts() {
+        let claude = Session { agent: "claude", id: "35892bcb-7adb-4d89-8ef3-9a49a87ef33e", dir: "/home/me/dev/waftty", ..Session::default() }
+        assert_eq(resume_typing("bash", claude), Some("cd /home/me/dev/waftty\rclaude --resume 35892bcb-7adb-4d89-8ef3-9a49a87ef33e\r"))
+        let spaced = Session { agent: "codex", dir: "C:\\My Work", empty: true, ..Session::default() }
+        assert_eq(resume_typing("pwsh", spaced), Some("cd -LiteralPath 'C:\\My Work'\rcodex\r"))
+        assert_eq(resume_typing("tmux", claude), Some("claude --resume 35892bcb-7adb-4d89-8ef3-9a49a87ef33e\r"))
+        assert(resume_typing("bash", Session { agent: "aider", dir: "/w", ..Session::default() }).is_none())
     }
 
     #[test]

@@ -515,20 +515,29 @@ pub fn journey() -> Result<(), errors::Error> {
 
     // The second run keeps no transcript, so its session has nothing in it
     // yet; the list offers it while it runs, and resuming it starts the
-    // agent afresh.
+    // agent afresh in the session's folder, though the shell's startup file
+    // moves it elsewhere first, as many do.
     enter(&mut s, f"{bin}/claude {bin}/agent.sh")?
     await_text(&mut s, 0, "\nstarted")?
-    while !sessions::load().any(|e| e.id == "0f0e0d0c-0000-4000-8000-0000000000ab") {
-        require(s.step()?, "the session ended before the agent's session was recorded")?
+    let mut fresh = None
+    while fresh.is_none() {
+        fresh = sessions::load().find(|e| e.id == "0f0e0d0c-0000-4000-8000-0000000000ab")
+        if fresh.is_none() { require(s.step()?, "the session ended before the agent's session was recorded")? }
     }
+    let folder = fresh.map(|e| e.dir).unwrap_or("")
+    fs::write(f"{config}/away.sh", "cd /\n".bytes())?
+    env::set_var("ENV", f"{config}/away.sh")
     shortcut(&mut s, commands::RECENT_SESSIONS)?
     s.flush()?
     s.type_text("new session")?
     s.press(Key::Return, Mods::default())?
     s.flush()?
+    env::unset_var("ENV")
     // The journey's PATH holds no claude, so the shell reports it missing.
     await_text(&mut s, 0, "not found")?
+    enter(&mut s, "pwd -P")?
     await_shell(&mut s, 0, "restarted")?
+    require(s.semantics(0).dump().contains(f"\n{folder} "), f"the resumed agent did not start in {folder}:\n{s.semantics(0).dump()}")?
     shortcut(&mut s, commands::CLOSE_TAB)?
     while s.semantics(0).dump().contains("not found") {
         require(s.step()?, "the session ended before the resumed tab closed")?
@@ -537,7 +546,7 @@ pub fn journey() -> Result<(), errors::Error> {
     await_text(&mut s, 0, "\ndone plain")?
     let empties = sessions::load().filter(|e| e.agent == "claude" && e.empty)
     require(empties.map(|e| e.id) == #["0f0e0d0c-0000-4000-8000-0000000000ab"], f"the ended agent's session is recorded other than once: {sessions::load():?}")?
-    println("sessions: a running agent's session with nothing in it yet was offered, resumed as the agent alone, and recorded once after the agent ended")
+    println("sessions: a running agent's session with nothing in it yet was offered, resumed as the agent alone in its folder past a startup file's cd, and recorded once after the agent ended")
 
     // A program named codex reports its status as Codex does (OSC 7501).
     // It asks whether the terminal listens and shows the answer, works,
