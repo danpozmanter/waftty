@@ -1,11 +1,11 @@
 # Terminal benchmark
 
-Scrollback 10000 lines, window [1000, 700], vsync off: False. The run took 25m 41s, finishing 2026-11-11 15:33 EST.
+Scrollback 10000 lines, window [1000, 700], vsync off: False. The run took 23m 45s, finishing 2026-11-14 20:30 EST.
 
 | Terminal | Version |
 | --- | --- |
-| waftty | waftty 0.5.16 |
-| waftty quick | waftty 0.5.16 |
+| waftty | waftty 0.8.0 |
+| waftty quick | waftty 0.8.0 |
 | xfce4-terminal | xfce4-terminal 1.1.3 (Xfce 4.18) |
 | guake | Guake Terminal: 3.10 |
 | alacritty | alacritty 0.13.2 |
@@ -24,15 +24,15 @@ PSS shares each library page among the processes that map it; USS is the termina
 
 | Terminal | Idle PSS | Idle USS | Heavy PSS | Heavy USS | Idle, cursor rested | Heavy, cursor rested | X server pixmaps | GPU |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| waftty | 17.0 MiB | 15.3 MiB | 25.2 MiB | 23.5 MiB | 17.1 MiB | 25.2 MiB | 0.0 MiB | 0 MiB |
-| waftty quick | 19.7 MiB | 18.1 MiB | 27.8 MiB | 26.2 MiB | 19.7 MiB | 27.8 MiB | 0.0 MiB | 0 MiB |
-| xfce4-terminal | 13.8 MiB | 7.7 MiB | 24.8 MiB | 18.7 MiB | 13.9 MiB | 24.8 MiB | 0.1 MiB | 0 MiB |
-| guake | 45.5 MiB | 35.9 MiB | 53.5 MiB | 43.9 MiB | 45.5 MiB | 53.5 MiB | 0.0 MiB | 0 MiB |
-| alacritty | 60.8 MiB | 54.5 MiB | 79.2 MiB | 72.9 MiB | 60.8 MiB | 79.2 MiB | 0.0 MiB | 9 MiB |
-| kitty | 76.7 MiB | 68.8 MiB | 102.1 MiB | 94.1 MiB | 78.7 MiB | 102.1 MiB | 0.0 MiB | 3 MiB |
-| ghostty | 178.8 MiB | 168.2 MiB | 180.9 MiB | 170.2 MiB | 176.8 MiB | 180.9 MiB | 1.0 MiB | 44 MiB |
-| wezterm | 133.7 MiB | 128.0 MiB | 162.7 MiB | 157.0 MiB | 137.5 MiB | 166.5 MiB | 0.0 MiB | 3 MiB |
-| rio | 141.9 MiB | 135.3 MiB | 164.9 MiB | 158.3 MiB | 141.9 MiB | 164.8 MiB | 0.0 MiB | 14 MiB |
+| waftty | 14.4 MiB | 12.9 MiB | 21.5 MiB | 20.0 MiB | 14.4 MiB | 21.5 MiB | 0.0 MiB | 0 MiB |
+| waftty quick | 18.0 MiB | 16.5 MiB | 25.4 MiB | 23.9 MiB | 18.0 MiB | 25.4 MiB | 0.0 MiB | 0 MiB |
+| xfce4-terminal | 10.9 MiB | 8.1 MiB | 20.3 MiB | 17.7 MiB | 10.9 MiB | 20.3 MiB | 0.1 MiB | 0 MiB |
+| guake | 39.6 MiB | 33.8 MiB | 48.2 MiB | 42.3 MiB | 39.6 MiB | 48.2 MiB | 0.0 MiB | 0 MiB |
+| alacritty | 57.1 MiB | 53.7 MiB | 75.7 MiB | 72.3 MiB | 57.1 MiB | 75.7 MiB | 0.0 MiB | 9 MiB |
+| kitty | 72.3 MiB | 67.5 MiB | 97.6 MiB | 92.8 MiB | 74.3 MiB | 97.6 MiB | 0.0 MiB | 3 MiB |
+| ghostty | 137.9 MiB | 126.2 MiB | 141.4 MiB | 129.6 MiB | 135.9 MiB | 141.4 MiB | 1.0 MiB | 44 MiB |
+| wezterm | 97.4 MiB | 88.6 MiB | 126.6 MiB | 117.8 MiB | 100.9 MiB | 130.3 MiB | 0.0 MiB | 3 MiB |
+| rio | 108.4 MiB | 99.9 MiB | 129.7 MiB | 121.2 MiB | 108.4 MiB | 129.7 MiB | 0.0 MiB | 14 MiB |
 
 ### Where the memory comes from
 
@@ -42,27 +42,27 @@ Each figure is the PSS of the terminal's own processes after 40 MiB of output. L
 
 | Terminal | Processes counted (MiB) | Left out (MiB) |
 | --- | --- | --- |
-| waftty | waftty 25.2 | sleep 0.2 |
-| waftty quick | waftty 27.8 | sleep 0.2 |
-| xfce4-terminal | xfce4-terminal 24.8 | sleep 0.2 |
-| guake | guake 53.5 | sh 0.2, sleep 0.2 |
-| alacritty | alacritty 79.2 | sleep 0.2 |
-| kitty | kitty 102.1 | sleep 0.2 |
-| ghostty | ghostty 180.9 | sleep 0.2 |
-| wezterm | wezterm-gui 162.7 | sleep 0.2 |
-| rio | rio 164.9 | sleep 0.2 |
+| waftty | waftty 21.5 | sleep 0.1 |
+| waftty quick | waftty 25.4 | sleep 0.1 |
+| xfce4-terminal | xfce4-terminal 20.3 | sleep 0.1 |
+| guake | guake 48.2 | sh 0.2, sleep 0.1 |
+| alacritty | alacritty 75.7 | sleep 0.1 |
+| kitty | kitty 97.6 | sleep 0.1 |
+| ghostty | ghostty 141.4 | sleep 0.1 |
+| wezterm | wezterm-gui 126.6 | sleep 0.1 |
+| rio | rio 129.7 | sleep 0.1 |
 
 | Terminal | Private data (heap, scrollback) | Code and libraries | Shared memory | X server pixmaps | GPU memory | Total |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| waftty | 12.9 MiB | 11.0 MiB | 1.3 MiB | 0.0 MiB | 0.0 MiB | 25.2 MiB |
-| waftty quick | 12.9 MiB | 13.6 MiB | 1.3 MiB | 0.0 MiB | 0.0 MiB | 27.8 MiB |
-| xfce4-terminal | 17.8 MiB | 6.9 MiB | 0.1 MiB | 0.1 MiB | 0.0 MiB | 24.9 MiB |
-| guake | 35.7 MiB | 17.8 MiB | 0.0 MiB | 0.0 MiB | 0.0 MiB | 53.5 MiB |
-| alacritty | 35.1 MiB | 44.1 MiB | 0.0 MiB | 0.0 MiB | 9.0 MiB | 88.2 MiB |
-| kitty | 58.4 MiB | 43.7 MiB | 0.0 MiB | 0.0 MiB | 3.0 MiB | 105.1 MiB |
-| ghostty | 62.3 MiB | 117.6 MiB | 1.0 MiB | 1.0 MiB | 44.0 MiB | 225.9 MiB |
-| wezterm | 57.5 MiB | 105.2 MiB | 0.0 MiB | 0.0 MiB | 3.0 MiB | 165.7 MiB |
-| rio | 52.2 MiB | 112.7 MiB | 0.0 MiB | 0.0 MiB | 14.0 MiB | 178.9 MiB |
+| waftty | 12.3 MiB | 7.8 MiB | 1.3 MiB | 0.0 MiB | 0.0 MiB | 21.5 MiB |
+| waftty quick | 12.4 MiB | 11.6 MiB | 1.3 MiB | 0.0 MiB | 0.0 MiB | 25.4 MiB |
+| xfce4-terminal | 16.5 MiB | 3.8 MiB | 0.1 MiB | 0.1 MiB | 0.0 MiB | 20.4 MiB |
+| guake | 36.2 MiB | 12.0 MiB | 0.0 MiB | 0.0 MiB | 0.0 MiB | 48.2 MiB |
+| alacritty | 35.1 MiB | 40.6 MiB | 0.0 MiB | 0.0 MiB | 9.0 MiB | 84.7 MiB |
+| kitty | 58.4 MiB | 39.2 MiB | 0.0 MiB | 0.0 MiB | 3.0 MiB | 100.6 MiB |
+| ghostty | 60.3 MiB | 80.1 MiB | 1.0 MiB | 1.0 MiB | 44.0 MiB | 186.4 MiB |
+| wezterm | 58.0 MiB | 68.6 MiB | 0.0 MiB | 0.0 MiB | 3.0 MiB | 129.6 MiB |
+| rio | 50.6 MiB | 79.1 MiB | 0.0 MiB | 0.0 MiB | 14.0 MiB | 143.7 MiB |
 
 ## Throughput
 
@@ -74,15 +74,15 @@ Each figure is the PSS of the terminal's own processes after 40 MiB of output. L
 
 | Terminal | Frames/s | Median gap | p99 gap | Longest gap | Echo median | Echo p95 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| waftty | 120 | 8 ms | 13 ms | 17 ms | 6.5 ms | 12.4 ms |
-| waftty quick | 121 | 8 ms | 12 ms | 16 ms | 6.2 ms | 9.2 ms |
-| xfce4-terminal | 11 | 98 ms | 127 ms | 127 ms | 66.9 ms | 184.3 ms |
-| guake | 10 | 102 ms | 130 ms | 130 ms | 87.3 ms | 168.1 ms |
-| alacritty | 120 | 8 ms | 9 ms | 9 ms | 9.3 ms | 16.4 ms |
-| kitty | 96 | 9 ms | 17 ms | 18 ms | 19.3 ms | 23.0 ms |
-| ghostty | 60 | 17 ms | 17 ms | 17 ms | 15.5 ms | 22.9 ms |
-| wezterm | 58 | 17 ms | 25 ms | 26 ms | 43.5 ms | 58.9 ms |
-| rio | 120 | 8 ms | 9 ms | 9 ms | 20.9 ms | 25.3 ms |
+| waftty | 116 | 9 ms | 13 ms | 14 ms | 8.4 ms | 11.5 ms |
+| waftty quick | 121 | 8 ms | 11 ms | 13 ms | 6.1 ms | 11.6 ms |
+| xfce4-terminal | 11 | 96 ms | 126 ms | 126 ms | 51.7 ms | 148.2 ms |
+| guake | 10 | 103 ms | 128 ms | 128 ms | 126.0 ms | 169.1 ms |
+| alacritty | 120 | 8 ms | 9 ms | 9 ms | 6.0 ms | 10.9 ms |
+| kitty | 95 | 9 ms | 17 ms | 18 ms | 19.7 ms | 23.7 ms |
+| ghostty | 60 | 17 ms | 17 ms | 17 ms | 13.8 ms | 21.2 ms |
+| wezterm | 59 | 17 ms | 25 ms | 25 ms | 38.6 ms | 55.5 ms |
+| rio | 120 | 8 ms | 9 ms | 17 ms | 14.4 ms | 22.4 ms |
 
 ## CPU
 
@@ -90,15 +90,15 @@ Each figure is the PSS of the terminal's own processes after 40 MiB of output. L
 
 | Terminal | Idle | One line every 16 ms | While 40 MiB print | CPU time for 40 MiB |
 | --- | ---: | ---: | ---: | ---: |
-| waftty | 0.01% | 10.6% | 138% | 0.30 s |
-| waftty quick | 0.01% | 10.9% | 148% | 0.26 s |
-| xfce4-terminal | 0.00% | 4.1% | 82% | 0.29 s |
-| guake | 0.00% | 6.0% | 81% | 0.31 s |
-| alacritty | 0.00% | 2.6% | 103% | 0.30 s |
-| kitty | 0.03% | 2.4% | 96% | 0.53 s |
-| ghostty | 0.30% | 5.3% | 185% | 0.58 s |
-| wezterm | 0.00% | 5.3% | 123% | 1.13 s |
-| rio | 0.98% | 3.4% | 99% | 0.32 s |
+| waftty | 0.00% | 8.9% | 141% | 0.32 s |
+| waftty quick | 0.00% | 9.0% | 139% | 0.27 s |
+| xfce4-terminal | 0.00% | 2.4% | 81% | 0.29 s |
+| guake | 0.00% | 4.0% | 82% | 0.32 s |
+| alacritty | 0.00% | 1.7% | 103% | 0.30 s |
+| kitty | 0.01% | 1.1% | 96% | 0.54 s |
+| ghostty | 0.26% | 5.6% | 197% | 0.61 s |
+| wezterm | 0.00% | 2.8% | 124% | 1.12 s |
+| rio | 0.25% | 1.8% | 95% | 0.31 s |
 
 ## Latency and startup
 
@@ -108,12 +108,12 @@ Each figure is the PSS of the terminal's own processes after 40 MiB of output. L
 
 | Terminal | Plain | SGR | Unicode | Latency median | Latency p95 | Startup |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| waftty | 162 MB/s | 247 MB/s | 185 MB/s | 1.0 ms | 1.3 ms | 73 ms |
-| waftty quick | 205 MB/s | 246 MB/s | 206 MB/s | 0.8 ms | 0.9 ms | 50 ms |
-| xfce4-terminal | 105 MB/s | 112 MB/s | 67 MB/s | 1.2 ms | 1.5 ms | 68 ms |
-| guake | 100 MB/s | 108 MB/s | 71 MB/s | 1.0 ms | 1.1 ms | 178 ms |
-| alacritty | 124 MB/s | 150 MB/s | 116 MB/s | 3.2 ms | 3.4 ms | 94 ms |
-| kitty | 60 MB/s | 109 MB/s | 60 MB/s | 8.6 ms | 12.3 ms | 393 ms |
-| ghostty | 170 MB/s | 149 MB/s | 159 MB/s | 24.2 ms | 33.1 ms | 745 ms |
-| wezterm | 36 MB/s | 67 MB/s | 38 MB/s | 23.3 ms | 27.4 ms | 144 ms |
-| rio | 203 MB/s | 190 MB/s | 135 MB/s | 11.8 ms | 16.7 ms | 179 ms |
+| waftty | 147 MB/s | 229 MB/s | 186 MB/s | 0.6 ms | 0.8 ms | 39 ms |
+| waftty quick | 203 MB/s | 243 MB/s | 184 MB/s | 0.5 ms | 0.9 ms | 43 ms |
+| xfce4-terminal | 100 MB/s | 129 MB/s | 75 MB/s | 0.7 ms | 0.9 ms | 67 ms |
+| guake | 108 MB/s | 103 MB/s | 66 MB/s | 0.5 ms | 0.9 ms | 173 ms |
+| alacritty | 128 MB/s | 154 MB/s | 117 MB/s | 1.3 ms | 1.9 ms | 77 ms |
+| kitty | 63 MB/s | 108 MB/s | 61 MB/s | 8.0 ms | 11.4 ms | 376 ms |
+| ghostty | 171 MB/s | 143 MB/s | 158 MB/s | 27.2 ms | 33.6 ms | 277 ms |
+| wezterm | 36 MB/s | 67 MB/s | 38 MB/s | 21.7 ms | 25.0 ms | 110 ms |
+| rio | 203 MB/s | 215 MB/s | 131 MB/s | 9.6 ms | 15.5 ms | 163 ms |

@@ -42,16 +42,20 @@ pub fn update(m: Model, msg: UiMsg) -> Model {
         UiMsg::Command(id) => command(&mut n, "main", id)
         UiMsg::Chosen(id, dir) if commands::recent_window_of(id).is_some() => {
             let window = commands::recent_window_of(id).unwrap_or("")
+            // The focus goes once to the tab the choice leaves current, a new
+            // one or this one, never to this one on the way to a new one.
             if let Some(w) = model::window_index(n, window) {
-                close_overlays(&mut n, w)
+                hide_overlays(&mut n, w)
                 go_to(&mut n, w, dir)
+                focus_current(&mut n, w)
             }
         }
         UiMsg::Chosen(id, session) if commands::sessions_window_of(id).is_some() => {
             let window = commands::sessions_window_of(id).unwrap_or("")
             if let Some(w) = model::window_index(n, window) {
-                close_overlays(&mut n, w)
+                hide_overlays(&mut n, w)
                 resume(&mut n, w, session)
+                focus_current(&mut n, w)
             }
         }
         UiMsg::Timer(tag) if tag == processes::TIMER || tag == processes::SECOND && n.monitor.interval > 0 => sample(&mut n)
@@ -437,10 +441,20 @@ fn resume(m: &mut Model, w: i64, key: String) {
 // Hides the palette and Recent Directories over window `w`'s terminal and
 // gives the terminal back its focus.
 fn close_overlays(m: &mut Model, w: i64) {
+    hide_overlays(m, w)
+    focus_current(m, w)
+}
+
+// Closes window `w`'s overlays, leaving the focus to the step that follows.
+fn hide_overlays(m: &mut Model, w: i64) {
     m.windows[w].palette = false
     m.windows[w].recent = false
     m.windows[w].sessions = false
     m.windows[w].processes = false
+}
+
+// Gives the keyboard focus to window `w`'s current tab.
+fn focus_current(m: &mut Model, w: i64) {
     if let Some(tab) = m.windows[w].current() { gui::perform(Effect::FocusInWindow(m.windows[w].key, tab.view_id())) }
 }
 
@@ -476,7 +490,8 @@ fn command(m: &mut Model, window: String, id: String) {
     }
     // The palette and Recent Directories close for any command they do not
     // open, the palette's own choice included.
-    if (m.windows[w].palette && id != commands::COMMAND_PALETTE) || (m.windows[w].recent && id != commands::RECENT_DIRS) || (m.windows[w].sessions && id != commands::RECENT_SESSIONS) || (m.windows[w].processes && id != commands::PROCESSES) { close_overlays(m, w) }
+    let leaves = (m.windows[w].palette && id != commands::COMMAND_PALETTE) || (m.windows[w].recent && id != commands::RECENT_DIRS) || (m.windows[w].sessions && id != commands::RECENT_SESSIONS) || (m.windows[w].processes && id != commands::PROCESSES)
+    if leaves { hide_overlays(m, w) }
     let tab = m.windows[w].current()
     match id {
         commands::COMMAND_PALETTE => if m.windows[w].palette { close_overlays(m, w) } else { open_palette(m, w) }
@@ -669,7 +684,16 @@ fn command(m: &mut Model, window: String, id: String) {
         commands::ABOUT => gui::perform(Effect::OpenDialogIn(window, about()))
         _ => ()
     }
+    // A command chosen from an overlay gives the focus, once it has run, to
+    // the tab it leaves current, unless it opened an overlay of its own.
+    if leaves && let Some(w) = model::window_index(*m, window) && !overlaid(*m, w) { focus_current(m, w) }
     if let Some(w) = model::window_index(*m, window) { model::retitle(m, w) }
+}
+
+// Whether window `w` shows the palette, Recent Directories, Recent Sessions
+// or Processes.
+fn overlaid(m: Model, w: i64) -> bool {
+    m.windows[w].palette || m.windows[w].recent || m.windows[w].sessions || m.windows[w].processes
 }
 
 fn open_settings(m: &mut Model, window: String) {
@@ -953,7 +977,7 @@ pub fn about() -> DialogRequest {
         id: "about"
         name: info::NAME
         version: info::VERSION
-        description: "A light, tabbed terminal emulator."
+        description: "A lightweight tabbed terminal emulator."
         credits: f"{license}\n\n{built_on()}"
         licenses: ""
         diagnostics: ""
@@ -1036,6 +1060,35 @@ mod tests {
         assert(m.recent_sessions.is_empty())
         assert(sessions::load().is_empty())
         assert_eq(enabled(m), Some(false))
+    }
+
+    #[test]
+    fn choosing_a_session_focuses_only_the_tab_it_opens() {
+        let Ok(root) = fs::temp_dir("waftty-choose-") else { panic("no temporary folder") }
+        services::set_config_root(root)
+        defer {
+            services::set_config_root("")
+            let _ = fs::remove_dir_all(root)
+        }
+        let mut m = model::new(Settings { shell: "/bin/sh", ..Settings::default() })
+        let first = model::open_tab(&mut m, 0, model::shell(m))
+        assert(first.is_ok())
+        let session = sessions::Session { agent: "claude", id: "7d3f8a2e-1b4c-4d5e-9f60-a1b2c3d4e5f6", dir: root, title: "Notes", used: 1, started: 1, empty: false }
+        let _ = sessions::save(#[session])
+        m = super::update(m, UiMsg::Command(commands::RECENT_SESSIONS))
+        let before = m.windows[0].active
+        let _ = gui::app::effects::take()
+        m = super::update(m, UiMsg::Chosen(commands::sessions_field("main"), sessions::key(session)))
+        let after = m.windows[0].active
+        assert(after != before)
+        let opened = m.windows[0].tabs.iter().find(|t| t.key == after).map(|t| t.view_id()).unwrap_or("")
+        let focused = gui::app::effects::take().filter_map(|e| match e {
+            gui::Effect::FocusInWindow(_, id) => Some(id)
+            _ => None
+        })
+        assert(!focused.is_empty())
+        assert(focused.iter().all(|id| *id == opened), f"focus went elsewhere on the way: {focused:?}")
+        for tab in m.windows[0].tabs { tab.terminal.close() }
     }
 
     #[test]

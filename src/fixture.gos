@@ -127,6 +127,15 @@ fn enter(s: &mut gui::Session, line: String) -> Result<(), errors::Error> {
     s.press(Key::Return, Mods::default())
 }
 
+// Waits until the shell of window `w`'s tab holds the terminal again, not a
+// job it started: a shell reports a program it cannot find from a child of
+// its own, and closing a tab over a running job asks first. A builtin's
+// output `mark` comes from the shell itself.
+fn await_shell(s: &mut gui::Session, w: i64, mark: String) -> Result<(), errors::Error> {
+    enter(s, f"echo {mark}")?
+    await_text(s, w, f"\n{mark}")
+}
+
 /// Runs the journey and prints what each step showed.
 pub fn journey() -> Result<(), errors::Error> {
     // Window placements and settings go to a directory of the journey's own,
@@ -415,6 +424,7 @@ pub fn journey() -> Result<(), errors::Error> {
     s.press(Key::Return, Mods::default())?
     s.flush()?
     await_text(&mut s, 0, f"claude --resume {session.id}")?
+    await_shell(&mut s, 0, "resumed")?
     shortcut(&mut s, commands::CLOSE_TAB)?
     while s.semantics(0).dump().contains(f"claude --resume {session.id}") {
         require(s.step()?, "the session ended before the resumed tab closed")?
@@ -518,6 +528,7 @@ pub fn journey() -> Result<(), errors::Error> {
     s.flush()?
     // The journey's PATH holds no claude, so the shell reports it missing.
     await_text(&mut s, 0, "not found")?
+    await_shell(&mut s, 0, "restarted")?
     shortcut(&mut s, commands::CLOSE_TAB)?
     while s.semantics(0).dump().contains("not found") {
         require(s.step()?, "the session ended before the resumed tab closed")?

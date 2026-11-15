@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.8.0 - Font features, variations and styles
+
+- Font features turn OpenType features on or off, such as `ss01 zero -calt` or `cv01=2`.
+- Font variations set a variable font's axes, such as `wdth=90 slnt=-5`.
+- Bold, italic and bold italic text can each have a font of its own, and bold text a weight of its own.
+- Italic text draws in the font's own italic instead of slanting its upright letters.
+- Every script HarfBuzz shapes draws correctly, Myanmar, Khmer, Thai and Tibetan among them.
+- Color emoji fonts in `COLR` and `sbix`, as Windows and macOS ship them, draw in color, and bitmap fonts such as Terminus and Cozette work.
+- CFF2 variable fonts draw at every weight.
+- Text lays out faster, most of all in coding fonts with many ligatures.
+- Output no longer slows while the first text the font lacks loads its fonts from their cache, which is several times smaller.
+- A recent session, recent folder or palette command that opens a tab keeps the focus in that tab, even on a busy machine.
+- Output and pastes no longer stall when the window draws a frame late.
+- Builds on windowing-gos 0.1.23, gui-engine-gos 0.2.23 and gui-gos 0.2.10.
+
 ## 0.7.2 - Alerts for every agent
 
 - Alerts follow the Program Status Protocol (OSC 7501): Codex and Claude Code as they are, pi and mini-swe-agent with a file from `extras/`.

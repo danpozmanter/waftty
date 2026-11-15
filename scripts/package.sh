@@ -112,15 +112,16 @@ if { [ "$platform" = linux ] || [ "$platform" = freebsd ]; } && ldd "$binary" | 
 fi
 
 # The licenses of what the binary carries: fonts, SDL, pulldown-cmark,
-# WezTerm's terminal core, and the libraries' own Apache-2.0.
+# WezTerm's terminal core, harfrust's shaping and fontations' font reading,
+# and the libraries' own Apache-2.0.
 notices() {
     local dir="$1"
     mkdir -p "$dir"
-    for license in dejavu-fonts.txt ibm-plex-mono.txt sdl3-zlib.txt pulldown-cmark.txt wezterm.txt; do
+    for license in dejavu-fonts.txt ibm-plex-mono.txt sdl3-zlib.txt pulldown-cmark.txt wezterm.txt harfrust.txt fontations.txt; do
         cp "$libs/gui-gos/licenses/$license" "$dir/$license"
     done
     cp "$libs/windowing-gos/LICENSE" "$dir/apache-2.0.txt"
-    printf '%s %s\nSDL 3 is built from sdl3-src and statically linked.\nDejaVu fonts are embedded. The terminal emulation is WezTerm'"'"'s (MIT). See accompanying licenses.\n' \
+    printf '%s %s\nSDL 3 is built from sdl3-src and statically linked.\nDejaVu fonts are embedded. The terminal emulation is WezTerm'"'"'s (MIT). Text is shaped by harfrust (MIT) and fonts are read by fontations (MIT). See accompanying licenses.\n' \
         "$name" "$version" > "$dir/README.txt"
 }
 

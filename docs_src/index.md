@@ -95,7 +95,7 @@ Jump between command prompts, select command output, and get alerted when a long
 
 ### Modern Terminal Features
 
-Font ligatures, the kitty keyboard protocol, clickable code paths, customizable shortcuts, and themes.
+Font ligatures, OpenType features, variable fonts and color emoji, the kitty keyboard protocol, clickable code paths, customizable shortcuts, and themes.
 
 </div>
 

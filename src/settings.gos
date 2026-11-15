@@ -56,6 +56,20 @@ pub struct Settings {
     pub font_weight: i64
     /// Letters join into the font's ligatures.
     pub ligatures: bool
+    /// OpenType features turned on or off, such as "ss01 zero -calt" or
+    /// "cv01=2".
+    pub font_features: String
+    /// Variable-font axis settings, such as "wdth=90 slnt=-5"; the weight is
+    /// `font_weight`.
+    pub font_variations: String
+    /// The family bold text draws in; empty draws it in `font`.
+    pub bold_font: String
+    /// The weight bold text draws at; 0 draws it heavier than `font_weight`.
+    pub bold_weight: i64
+    /// The family italic text draws in; empty takes the font's own italic.
+    pub italic_font: String
+    /// The family bold italic text draws in; empty takes the bold font's italic.
+    pub bold_italic_font: String
     /// The color scheme's id: "system", a built-in one, or "user:<name>".
     pub scheme: String
     /// The cursor's shape: "block", "bar" or "underline".
@@ -137,7 +151,7 @@ impl Default for Settings {
     fn default() -> Settings {
         Settings {
             shell: "", directory: "", new_tabs: "current", encoding: encodings::DEFAULT, restore: false, columns: 90, rows: 28, remember_size: true, confirm_close: true
-            font: "", font_size: 10.0, font_weight: 400, ligatures: true, scheme: schemes::SYSTEM, cursor: "block", cursor_blink: false, bold_bright: false, legible: true, padding: 4, opacity: 100, line_spacing: 1.0, scrollbar: "always", scrollbar_side: "right", menu_bar: true, tab_bar: "several"
+            font: "", font_size: 10.0, font_weight: 400, ligatures: true, font_features: "", font_variations: "", bold_font: "", bold_weight: 0, italic_font: "", bold_italic_font: "", scheme: schemes::SYSTEM, cursor: "block", cursor_blink: false, bold_bright: false, legible: true, padding: 4, opacity: 100, line_spacing: 1.0, scrollbar: "always", scrollbar_side: "right", menu_bar: true, tab_bar: "several"
             scrollback: 1_000, scroll_on_output: false, scroll_on_keystroke: true, word_chars: WORD_CHARS, copy_on_select: false, confirm_paste: false, bell: "none", notifications: true, alerts: true, command_alerts: true, alert_after: 10, status_bar: false, status_every: 2, process_sort: "cpu", process_order: "descending", clipboard_write: true, editor: "", option_as_meta: false, input_method: "auto"
             drop_down_key: "F12", drop_down_position: "top", drop_down_width: 100, drop_down_height: 50
         }
@@ -159,6 +173,9 @@ pub const FONT_SIZE_MAX: i64 = 48
 const SCROLLBACK_MAX: i64 = 100_000
 // The font weights the settings offer, by their number on the CSS scale.
 const WEIGHTS: [(String, String); 7] = [("100", "Thin"), ("200", "Extra light"), ("300", "Light"), ("400", "Regular"), ("500", "Medium"), ("600", "Semibold"), ("700", "Bold")]
+
+// The weights bold text may take; 0 draws it heavier than the font's weight.
+const BOLD_WEIGHTS: [(String, String); 6] = [("0", "Heavier than the font"), ("500", "Medium"), ("600", "Semibold"), ("700", "Bold"), ("800", "Extra bold"), ("900", "Black")]
 
 /// The defaults on this desktop: its monospace font's size and weight where it names
 /// one, and the size Terminal.app uses on macOS.
@@ -226,6 +243,7 @@ fn values(s: Settings) -> Vec<(String, String)> {
         ("shell", s.shell), ("directory", s.directory), ("new_tabs", s.new_tabs), ("encoding", s.encoding)
         ("restore", flag(s.restore)), ("columns", f"{s.columns}"), ("rows", f"{s.rows}"), ("remember_size", flag(s.remember_size)), ("confirm_close", flag(s.confirm_close))
         ("font", s.font), ("font_size", f"{s.font_size}"), ("font_weight", f"{s.font_weight}"), ("ligatures", flag(s.ligatures)), ("scheme", s.scheme), ("cursor", s.cursor)
+        ("font_features", s.font_features), ("font_variations", s.font_variations), ("bold_font", s.bold_font), ("bold_weight", f"{s.bold_weight}"), ("italic_font", s.italic_font), ("bold_italic_font", s.bold_italic_font)
         ("cursor_blink", flag(s.cursor_blink)), ("bold_bright", flag(s.bold_bright)), ("legible", flag(s.legible))
         ("padding", f"{s.padding}"), ("opacity", f"{s.opacity}"), ("line_spacing", f"{s.line_spacing}"), ("scrollbar", s.scrollbar), ("scrollbar_side", s.scrollbar_side), ("menu_bar", flag(s.menu_bar)), ("tab_bar", s.tab_bar)
         ("scrollback", f"{s.scrollback}"), ("scroll_on_output", flag(s.scroll_on_output)), ("scroll_on_keystroke", flag(s.scroll_on_keystroke))
@@ -274,6 +292,12 @@ pub fn with_values(s: Settings, values: Map<String, String>) -> Settings {
     }
     if let Some(v) = text("scheme") && !v.is_empty() { out.scheme = v }
     if let Some(v) = one_of(values, "font_weight", WEIGHTS.map(|w| w.0)) { out.font_weight = v.to_i64().unwrap_or(400) }
+    if let Some(v) = text("font_features") { out.font_features = v }
+    if let Some(v) = text("font_variations") { out.font_variations = v }
+    if let Some(v) = text("bold_font") { out.bold_font = v }
+    if let Some(v) = one_of(values, "bold_weight", BOLD_WEIGHTS.map(|w| w.0)) { out.bold_weight = v.to_i64().unwrap_or(0) }
+    if let Some(v) = text("italic_font") { out.italic_font = v }
+    if let Some(v) = text("bold_italic_font") { out.bold_italic_font = v }
     if let Some(v) = one_of(values, "cursor", ["block", "bar", "underline"]) { out.cursor = v }
     if let Some(v) = values.get("cursor_blink").and_then(flag_of) { out.cursor_blink = v }
     if let Some(v) = values.get("bold_bright").and_then(flag_of) { out.bold_bright = v }
@@ -330,6 +354,7 @@ pub fn view_options(s: Settings) -> ViewOptions {
         scrollbar: s.scrollbar, scrollbar_side: s.scrollbar_side, scroll_on_output: s.scroll_on_output, scroll_on_keystroke: s.scroll_on_keystroke
         word_chars: s.word_chars, option_as_meta: s.option_as_meta, copy_on_select: s.copy_on_select
         confirm_paste: s.confirm_paste, flash_bell: s.bell == "flash", opacity: s.opacity as f64 / 100.0, line_height: s.line_spacing, font_weight: s.font_weight, ligatures: s.ligatures
+        font_features: s.font_features, font_variations: s.font_variations, bold_font: s.bold_font, bold_weight: s.bold_weight, italic_font: s.italic_font, bold_italic_font: s.bold_italic_font
     }
 }
 
@@ -352,8 +377,15 @@ pub fn dialog(s: Settings, fonts: Vec<String>, offered: Vec<schemes::Entry>, reg
     let starts = #[("current", "Same folder as the current tab"), ("configured", "The folder set above")]
     let desktop = desktop_font()
     let mut families = #[("", if desktop.is_empty() { "IBM Plex Mono (built in)" } else { f"Desktop font ({desktop})" })]
-    for family in fonts { families.push((family, family)) }
+    let mut style_families = #[("", "Same as the font")]
+    for family in fonts {
+        families.push((family, family))
+        style_families.push((family, family))
+    }
     if !s.font.is_empty() && !families.any(|f| f.0 == s.font) { families.push((s.font, s.font)) }
+    for chosen in [s.bold_font, s.italic_font, s.bold_italic_font] {
+        if !chosen.is_empty() && !style_families.any(|f| f.0 == chosen) { style_families.push((chosen, chosen)) }
+    }
     let weights = WEIGHTS.to_vec()
     let cursors = #[("block", "Block"), ("bar", "Bar"), ("underline", "Underline")]
     let scrollbars = #[("always", "Always"), ("scrolling", "While scrolling back"), ("never", "Never")]
@@ -390,6 +422,12 @@ pub fn dialog(s: Settings, fonts: Vec<String>, offered: Vec<schemes::Entry>, reg
         field("font_size", "Font size", PreferenceKind::Number(FONT_SIZE_MIN as f64, FONT_SIZE_MAX as f64), f"{s.font_size}", f"{d.font_size}", "In points.")
         field("font_weight", "Font weight", PreferenceKind::Choice(weights), f"{s.font_weight}", f"{d.font_weight}", "The font's nearest weight draws it; bold text is heavier.")
         toggle("ligatures", "Join letters into ligatures", s.ligatures, d.ligatures, "Where the font has them, such as a coding font's arrows.")
+        field("font_features", "Font features", PreferenceKind::Text, s.font_features, d.font_features, "OpenType features to turn on or off, such as ss01 zero -calt or cv01=2.")
+        field("font_variations", "Font variations", PreferenceKind::Text, s.font_variations, d.font_variations, "A variable font's axes, such as wdth=90 slnt=-5; the weight is set above.")
+        field("bold_font", "Bold font", PreferenceKind::Choice(style_families), s.bold_font, d.bold_font, "")
+        field("bold_weight", "Bold weight", PreferenceKind::Choice(BOLD_WEIGHTS.to_vec()), f"{s.bold_weight}", f"{d.bold_weight}", "")
+        field("italic_font", "Italic font", PreferenceKind::Choice(style_families), s.italic_font, d.italic_font, "Without one, the font's own italic draws italic text, or its upright letters slant.")
+        field("bold_italic_font", "Bold italic font", PreferenceKind::Choice(style_families), s.bold_italic_font, d.bold_italic_font, "")
         field("scheme", "Color scheme", PreferenceKind::Choice(themes), s.scheme, d.scheme, "")
         field("edit_scheme", "Edit Colors…", PreferenceKind::Action, "", "", "")
         field("import_scheme", "Import Scheme…", PreferenceKind::Action, "", "", "Reads iTerm2, Windows Terminal, xfce4-terminal and base16 schemes.")
@@ -604,6 +642,17 @@ mod tests {
     }
 
     #[test]
+    fn font_features_variations_and_style_fonts_reach_the_view() {
+        let s = super::with_values(Settings::default(), { "font_features": " ss01 zero -calt ", "font_variations": "wdth=90", "bold_font": "Fira Code", "bold_weight": "600", "italic_font": "Fira Code", "bold_italic_font": "" })
+        let o = super::view_options(s)
+        assert_eq(o.font_features, "ss01 zero -calt")
+        assert_eq(o.font_variations, "wdth=90")
+        assert_eq((o.bold_font, o.bold_weight, o.italic_font, o.bold_italic_font), ("Fira Code", 600, "Fira Code", ""))
+        let odd = super::with_values(s, { "bold_weight": "650" })
+        assert_eq(odd.bold_weight, 600)
+    }
+
+    #[test]
     fn a_desktop_weight_takes_the_nearest_offered_one() {
         assert_eq(super::nearest_weight(380), 400)
         assert_eq(super::nearest_weight(350), 300)
@@ -612,7 +661,7 @@ mod tests {
 
     #[test]
     fn stored_values_read_back_as_the_same_settings() {
-        let s = Settings { shell: "/bin/zsh -l", directory: "/tmp", encoding: "KOI8-R", font: "Mono", font_size: 12.5, font_weight: 300, ligatures: false, scrollback: 9000, scheme: "user:night", new_tabs: "configured", clipboard_write: false, editor: "vim +{line} {path}", cursor: "bar", scrollbar: "always", tab_bar: "always", bell: "flash", restore: true, columns: 120, rows: 40, drop_down_position: "left", drop_down_width: 30, drop_down_height: 80, alerts: false, alert_after: 45, status_bar: true, status_every: 3600, process_sort: "memory", process_order: "ascending", ..Settings::default() }
+        let s = Settings { shell: "/bin/zsh -l", directory: "/tmp", encoding: "KOI8-R", font: "Mono", font_size: 12.5, font_weight: 300, ligatures: false, font_features: "ss01 cv01=2", font_variations: "wdth=90", bold_font: "Bold Mono", bold_weight: 800, italic_font: "Script Mono", bold_italic_font: "Script Mono", scrollback: 9000, scheme: "user:night", new_tabs: "configured", clipboard_write: false, editor: "vim +{line} {path}", cursor: "bar", scrollbar: "always", tab_bar: "always", bell: "flash", restore: true, columns: 120, rows: 40, drop_down_position: "left", drop_down_width: 30, drop_down_height: 80, alerts: false, alert_after: 45, status_bar: true, status_every: 3600, process_sort: "memory", process_order: "ascending", ..Settings::default() }
         let mut map: Map<String, String> = Map::new()
         for (k, v) in super::values(s) { map[k] = v }
         assert_eq(super::with_values(Settings::default(), map), s)

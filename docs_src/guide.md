@@ -434,7 +434,8 @@ are saved, so the defaults follow your desktop.
   whether new windows open at their last size or at the columns and rows
   set there, whether windows and tabs come back at the next start, and whether closing a running program asks first.
 - **Appearance**: the font, its size and weight (empty uses the desktop's
-  monospace font), ligatures, the color scheme, the cursor shape and
+  monospace font), ligatures, [font features and variations](#font-features-and-styles),
+  the fonts and weight of bold and italic text, the color scheme, the cursor shape and
   blinking, bold text in bright colors, readability adjustment, padding,
   background opacity (below 100 percent the desktop shows through the
   terminal, where it blends windows), the scrollbar and its side, the menu
@@ -451,6 +452,22 @@ are saved, so the defaults follow your desktop.
   [quick terminal](#quick-terminal), the edge it hangs from, and its length
   and depth.
 - **Shortcuts**: every command's chords.
+
+### Font features and styles
+
+**Font features** turns a font's OpenType features on or off, separated by
+spaces or commas: `ss01` or `+ss01` turns a stylistic set on, `-calt` turns
+contextual alternates off, and `cv01=2` picks the second form of a character
+variant. A coding font such as MonoLisa or Fira Code lists its features on
+its site.
+
+**Font variations** sets a variable font's axes by their tags, such as
+`wdth=90 slnt=-5`; the weight comes from the font weight setting.
+
+Bold text draws in the font's bold, 300 heavier than the font's weight, and
+italic text in the font's own italic, or in its upright letters slanted where
+it has none. **Bold font**, **Bold weight**, **Italic font** and **Bold italic
+font** give each style a font or weight of its own.
 
 Settings are saved in the configuration directory:
 

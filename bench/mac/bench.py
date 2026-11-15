@@ -137,6 +137,17 @@ def environment(term, home):
             wide, tall = share_of_work_area()
             values.update(drop_down_width=str(wide), drop_down_height=str(tall))
         (settings / "settings.json").write_text(json.dumps({"values": values, "version": 2}))
+        # The installed fonts' catalog is cached under HOME. Linking the
+        # user's own cache starts waftty as an installed copy starts, as on
+        # Linux, and as the other terminals find the system's font caches;
+        # an empty one would add a scan of every installed font to the run.
+        caches = Path(home) / "Library" / "Caches"
+        caches.mkdir(parents=True, exist_ok=True)
+        fonts = Path.home() / "Library" / "Caches" / "gui-gos"
+        fonts.mkdir(parents=True, exist_ok=True)
+        link = caches / "gui-gos"
+        if not link.is_symlink():
+            link.symlink_to(fonts, target_is_directory=True)
     elif base == "rio":
         env["RIO_CONFIG_HOME"] = home
         Path(home, "config.toml").write_text(
