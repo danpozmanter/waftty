@@ -1,6 +1,6 @@
 [project]
 id = "dev.gossamer/waftty"
-version = "0.8.2"
+version = "0.8.3"
 gossamer-version = "^v0.79.0"
 # A GUI application: Windows opens no console window beside it.
 windows-subsystem = "windows"
