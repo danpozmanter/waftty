@@ -535,9 +535,12 @@ pub fn journey() -> Result<(), errors::Error> {
     env::unset_var("ENV")
     // The journey's PATH holds no claude, so the shell reports it missing.
     await_text(&mut s, 0, "not found")?
-    enter(&mut s, "pwd -P")?
+    // The shell compares the folders itself, since a long one wraps on the
+    // screen; the marks it prints are computed, so the typed line never
+    // shows them.
+    enter(&mut s, f"[ \"$(pwd -P)\" = '{folder}' ] && echo at-$((1+1)) || echo away-$((1+1))")?
     await_shell(&mut s, 0, "restarted")?
-    require(s.semantics(0).dump().contains(f"\n{folder} "), f"the resumed agent did not start in {folder}:\n{s.semantics(0).dump()}")?
+    require(s.semantics(0).dump().contains("\nat-2"), f"the resumed agent did not start in {folder}:\n{s.semantics(0).dump()}")?
     shortcut(&mut s, commands::CLOSE_TAB)?
     while s.semantics(0).dump().contains("not found") {
         require(s.step()?, "the session ended before the resumed tab closed")?
