@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.2 - Old font caches cleaned up
+
+- Font cache files left by older versions are deleted after 30 days unused.
+- Builds on gui-engine-gos 0.2.25 and gui-gos 0.2.12.
+
 ## 0.8.1 - Resumed sessions in their folder
 
 - Resuming a recent session moves the shell to the session's folder first, so a shell startup file that changes folders no longer starts the agent elsewhere.
