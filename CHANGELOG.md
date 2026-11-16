@@ -3,7 +3,8 @@
 ## 0.8.3 - No crash right after startup
 
 - waftty no longer crashes when it loads fonts right after the computer starts.
-- Builds on gui-engine-gos 0.3.0 and gui-gos 0.3.0.
+- Closing a tab on Windows no longer hangs when its shell was still starting.
+- Builds on gui-engine-gos 0.3.1 and gui-gos 0.3.1.
 
 ## 0.8.2 - Old font caches cleaned up
 
