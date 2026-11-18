@@ -85,10 +85,9 @@ if [ -z "${GOS_LLVM_MCPU:-}" ]; then
     if [ "$arch" = x86_64 ]; then export GOS_LLVM_MCPU=x86-64-v2; else export GOS_LLVM_MCPU=generic; fi
 fi
 . "$root/scripts/build-env.sh"
-(cd "$root" && gos fetch >/dev/null && gos build --release . --out-dir "$stage/build" >&2)
+(cd "$root" && gos fetch >/dev/null)
 binary="$stage/build/$exe"
 [ "$platform" = windows ] && binary="$binary.exe"
-[ -f "$binary" ] || die "the build did not produce $binary"
 # The functions a session runs, laid out together so they fill few pages.
 # build-data/link-order.txt names them by key (scripts/link-order.sh writes
 # it); this build's names for those keys make the order its relink follows.
@@ -96,7 +95,10 @@ binary="$stage/build/$exe"
 order="$root/build-data/link-order.txt"
 if [ "$platform" = linux ] && [ -f "$order" ]; then
     need nm awk
-    nm --defined-only "$binary" | awk '$2 ~ /^[tTwW]$/ { print $3 }' |
+    # A release executable keeps only the names reports print; -g keeps the
+    # whole table, and the same code, for reading this build's names.
+    (cd "$root" && gos build --release -g . --out-dir "$stage/names" >&2)
+    nm --defined-only "$stage/names/$exe" | awk '$2 ~ /^[tTwW]$/ { print $3 }' |
         awk -f "$root/scripts/symbol-key.awk" > "$stage/symbols"
     awk 'NR == FNR { names[$1] = names[$1] $2 "\n"; next }
          $1 in names { printf "%s", names[$1]; delete names[$1]; found++ }
@@ -106,7 +108,10 @@ if [ "$platform" = linux ] && [ -f "$order" ]; then
         die "$order does not match this build; rerun scripts/link-order.sh"
     (cd "$root" && GOS_SYMBOL_ORDER="$stage/link-order.txt" \
         gos build --release . --out-dir "$stage/build" >&2)
+else
+    (cd "$root" && gos build --release . --out-dir "$stage/build" >&2)
 fi
+[ -f "$binary" ] || die "the build did not produce $binary"
 if { [ "$platform" = linux ] || [ "$platform" = freebsd ]; } && ldd "$binary" | grep -q "not found"; then
     die "unresolved native libraries: $(ldd "$binary" | grep "not found")"
 fi

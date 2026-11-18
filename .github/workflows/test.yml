@@ -174,3 +174,9 @@ jobs:
         if: runner.os == 'Windows'
         working-directory: waftty
         run: gos build --release
+      # The release package links in build-data/link-order.txt order and
+      # refuses an order that no longer matches the build.
+      - name: Release package
+        if: runner.os == 'Linux'
+        working-directory: waftty
+        run: bash scripts/package.sh "$RUNNER_TEMP/dist"

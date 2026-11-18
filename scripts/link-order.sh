@@ -54,9 +54,11 @@ end_work() {
 trap end_work EXIT
 
 # The build package.sh makes: code for a CPU every machine has (which valgrind
-# also runs), in the release build environment.
+# also runs), in the release build environment. -g keeps the whole symbol
+# table, which the profiles name functions by; a release build without it
+# keeps only the names reports print.
 . "$root/scripts/build-env.sh"
-(cd "$root" && GOS_LLVM_MCPU=x86-64-v2 gos build --release . --out-dir "$work/build" >&2)
+(cd "$root" && GOS_LLVM_MCPU=x86-64-v2 gos build --release -g . --out-dir "$work/build" >&2)
 binary="$work/build/waftty"
 
 # A user's session: the login shell's prompt, commands typed into it (colored
