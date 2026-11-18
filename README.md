@@ -16,7 +16,9 @@ windows and tabs let you work in a temporary directory or run dangerous
 commands without history pollution. The window title names the tab
 it shows. Each tab runs your shell and reads and writes its own character
 encoding, and splits into panes side by side or one above the other.
-`waftty --quick` runs it as a quick terminal, hung from any edge of the
+View > Arrange Windows tiles the windows over the display in a grid,
+columns, rows, or around a main window, and keeps them tiled as windows open
+and close. `waftty --quick` runs it as a quick terminal, hung from any edge of the
 screen, that a global shortcut (F12 by default) shows and hides.
 
 ```sh
@@ -47,5 +49,5 @@ folder instead of your profile. The Windows `-portable.zip` comes with one.
 The [guide](https://danpozmanter.github.io/waftty/guide/) lists every command
 and setting: a tabbed Settings window for the shell, font, color scheme
 (edited or imported from iTerm2, Windows Terminal, xfce4-terminal and base16),
-cursor, scrollbar, bell, paste safety, the quick terminal and shortcuts.
+cursor, scrollbar, bell, paste safety, the quick terminal, tiling and shortcuts.
 **Help > Check for Updates** says whether a newer release is out.

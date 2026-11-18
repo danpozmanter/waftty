@@ -1,0 +1,274 @@
+// Tiling: waftty's windows laid out side by side over the display they are
+// on, by a built-in arrangement or one the user named, and laid out again as
+// windows open and close while Keep Windows Tiled is on.
+
+use std::errors
+
+use gui
+use gui::{Command, Effect}
+use gui::dialogs::request
+use gui::widgets::menus
+use gui::widgets::menus::MenuItem
+use windowing
+
+use arrangements
+use model
+use model::{Model, Tiling}
+use settings
+use settings::Settings
+
+pub const GRID: String = "window.tile"
+pub const MAIN: String = "window.tile-main"
+pub const COLUMNS: String = "window.tile-columns"
+pub const ROWS: String = "window.tile-rows"
+pub const NEXT: String = "window.next-arrangement"
+pub const STOP: String = "window.stop-tiling"
+pub const SAVE: String = "window.save-arrangement"
+
+/// The dialog that asks what to name the arrangement in use.
+pub const SAVE_DIALOG: String = "save-arrangement"
+
+const NAMED_PREFIX: String = "window.arrangement:"
+
+// The arrangements Next Arrangement steps through before the named ones.
+const BUILT_IN: [String; 4] = ["grid", "main", "columns", "rows"]
+
+/// The command that tiles the windows in the arrangement named `name`.
+pub fn named_command(name: String) -> String {
+    f"{NAMED_PREFIX}{name}"
+}
+
+/// The spec command `id` tiles the windows by, if it tiles them.
+pub fn spec_of_command(s: Settings, id: String) -> Option<String> {
+    match id {
+        GRID => Some("grid")
+        MAIN => Some("main")
+        COLUMNS => Some("columns")
+        ROWS => Some("rows")
+        _ => {
+            if !id.starts_with(NAMED_PREFIX) { return None }
+            let name = id.substring(NAMED_PREFIX.byte_len(), id.byte_len())
+            settings::named_arrangements(s).iter().find(|n| n.name == name).map(|n| n.spec)
+        }
+    }
+}
+
+// The chord for Linux and Windows, or the one for macOS.
+fn chord(others: String, mac: String) -> String {
+    if gui::input::platform_is_macos() { mac } else { others }
+}
+
+/// The tiling commands, with their state in `m`.
+pub fn commands(m: Model) -> Vec<Command> {
+    let tiled = !m.tiling.spec.is_empty()
+    let mut out = #[
+        Command::new(GRID, "Tile Windows").category("Window").checked(m.tiling.spec == "grid")
+        Command::new(MAIN, "Tile with Main Window").category("Window").checked(m.tiling.spec == "main")
+        Command::new(COLUMNS, "Tile in Columns").category("Window").checked(m.tiling.spec == "columns")
+        Command::new(ROWS, "Tile in Rows").category("Window").checked(m.tiling.spec == "rows")
+        Command::new(NEXT, "Next Arrangement").key(chord("Ctrl+Shift+;", "Cmd+Shift+;")).category("Window")
+        Command::new(STOP, "Stop Tiling").category("Window").enabled(tiled)
+        Command::new(SAVE, "Save Arrangement…").category("Window").enabled(tiled)
+    ]
+    for n in settings::named_arrangements(m.settings) {
+        out.push(Command::new(named_command(n.name), f"Arrange: {n.name}").category("Window").checked(m.tiling.spec == n.spec))
+    }
+    out
+}
+
+/// The View menu's Arrange Windows submenu.
+pub fn menu(s: Settings) -> MenuItem {
+    let mut items = #[menus::item(GRID), menus::item(MAIN), menus::item(COLUMNS), menus::item(ROWS)]
+    let named = settings::named_arrangements(s)
+    if !named.is_empty() {
+        items.push(MenuItem::Separator)
+        for n in named { items.push(menus::item(named_command(n.name))) }
+    }
+    items.extend(#[MenuItem::Separator, menus::item(NEXT), menus::item(STOP), menus::item(SAVE)])
+    menus::submenu("&Arrange Windows", items)
+}
+
+/// Whether the desktop lets waftty place its windows; a Wayland desktop
+/// places every window itself.
+pub fn can_place() -> bool {
+    windowing::video_driver() != "wayland"
+}
+
+/// Runs tiling command `id` from window `from`; false for any other command.
+pub fn command(m: &mut Model, from: String, id: String) -> bool {
+    match id {
+        STOP => m.tiling = Tiling::default()
+        SAVE => gui::perform(Effect::OpenDialogIn(from, request::prompt(SAVE_DIALOG, "Save Arrangement", "Name", "")))
+        NEXT => tile(m, next_spec(*m), from)
+        _ => {
+            let Some(spec) = spec_of_command(m.settings, id) else { return false }
+            tile(m, spec, from)
+        }
+    }
+    true
+}
+
+/// Tiles the windows by `spec`, window `from` taking the main place.
+pub fn tile(m: &mut Model, spec: String, from: String) {
+    if !can_place() {
+        model::report(from, "Couldn't arrange the windows", errors::new("This desktop places windows itself (Wayland), so waftty can't move them."))
+        return
+    }
+    if arrangements::parse(spec, settings::tile_defaults(m.settings)).is_none() { return }
+    m.tiling = Tiling { spec: spec, main: from }
+    arrange(m)
+}
+
+// The arrangement after the one in use, in the order Next Arrangement
+// steps through: the built-in ones, then the named ones.
+fn next_spec(m: Model) -> String {
+    let mut cycle = BUILT_IN.to_vec()
+    for n in settings::named_arrangements(m.settings) {
+        if !cycle.contains(n.spec) { cycle.push(n.spec) }
+    }
+    match cycle.iter().position(|s| s == m.tiling.spec) {
+        Some(at) => cycle[(at + 1) % cycle.len()]
+        None => cycle[0]
+    }
+}
+
+/// The windows tiling lays out, the main one first: every window but a
+/// quick terminal, in the order they opened.
+pub fn order(m: Model) -> Vec<String> {
+    let tiled = m.windows.filter(|w| !(m.drop_down && w.key == "main")).map(|w| w.key)
+    if tiled.is_empty() { return #[] }
+    let main = if tiled.contains(m.tiling.main) {
+        m.tiling.main
+    } else {
+        match m.windows.iter().find(|w| w.focused && tiled.contains(w.key)) {
+            Some(w) => w.key
+            None => tiled[0]
+        }
+    }
+    let mut out = #[main]
+    for key in tiled {
+        if key != main { out.push(key) }
+    }
+    out
+}
+
+/// Lays the windows out again in the arrangement they are tiled in; nothing
+/// while they are not tiled.
+pub fn arrange(m: &mut Model) {
+    let Some(a) = arrangements::parse(m.tiling.spec, settings::tile_defaults(m.settings)) else { return }
+    let keys = order(*m)
+    if keys.is_empty() { return }
+    m.tiling.main = keys[0]
+    gui::perform(Effect::Arrange { windows: keys, arrangement: a, gap: m.settings.tile_gap })
+}
+
+/// Lays tiled windows out again after windows `before` became the ones
+/// open now, when Keep Windows Tiled asks for it.
+pub fn reflow(m: &mut Model, before: Vec<String>) {
+    if m.tiling.spec.is_empty() || !m.settings.tile_keep || m.quitting { return }
+    if m.windows.map(|w| w.key) != before { arrange(m) }
+}
+
+/// Lays tiled windows out again when settings `after` change how
+/// arrangements lay them out.
+pub fn settings_changed(m: &mut Model, before: Settings, after: Settings) {
+    if m.tiling.spec.is_empty() { return }
+    if settings::tile_defaults(before) != settings::tile_defaults(after) || before.tile_gap != after.tile_gap { arrange(m) }
+}
+
+/// The settings that keep the arrangement in use under `name`; an error for
+/// a name the settings can't keep, or while the windows are not tiled.
+pub fn saved(m: Model, name: String) -> Result<Settings, errors::Error> {
+    let name = name.trim()
+    if name.is_empty() { return Err(errors::new("The arrangement needs a name.")) }
+    if name.contains("=") || name.contains(";") { return Err(errors::new("A name can't hold = or ;.")) }
+    let Some(a) = arrangements::parse(m.tiling.spec, settings::tile_defaults(m.settings)) else { return Err(errors::new("The windows aren't tiled.")) }
+    let mut out = m.settings
+    out.arrangements = arrangements::text_of(arrangements::with_named(settings::named_arrangements(m.settings), name, arrangements::spec_of(a)))
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use gui
+    use gui::Effect
+
+    use model
+    use settings::Settings
+
+    fn three() -> model::Model {
+        let mut m = model::new(Settings::default())
+        m.windows.push(model::window("window-1"))
+        m.windows.push(model::window("window-2"))
+        m
+    }
+
+    #[test]
+    fn the_window_a_tiling_command_runs_from_leads_the_rest_in_opening_order() {
+        let mut m = three()
+        m.tiling.main = "window-2"
+        m.tiling.spec = "main"
+        assert_eq(super::order(m), #["window-2", "main", "window-1"])
+    }
+
+    #[test]
+    fn a_closed_main_window_hands_its_place_to_the_focused_one() {
+        let mut m = three()
+        m.tiling.main = "window-9"
+        m.windows[0].focused = false
+        m.windows[1].focused = true
+        assert_eq(super::order(m), #["window-1", "main", "window-2"])
+    }
+
+    #[test]
+    fn a_quick_terminal_is_never_tiled() {
+        let mut m = three()
+        m.drop_down = true
+        assert_eq(super::order(m), #["window-1", "window-2"])
+    }
+
+    #[test]
+    fn next_arrangement_steps_through_the_built_in_then_the_named_ones() {
+        let mut m = three()
+        m.settings.arrangements = "Wide = grid 4; Same = rows"
+        let mut seen: Vec<String> = #[]
+        for _ in 0..6 {
+            m.tiling.spec = super::next_spec(m)
+            seen.push(m.tiling.spec)
+        }
+        assert_eq(seen, #["grid", "main", "columns", "rows", "grid 4", "grid"])
+    }
+
+    #[test]
+    fn saving_keeps_the_arrangement_whole_under_its_name() {
+        let mut m = three()
+        m.settings.tile_main_side = "right"
+        m.settings.tile_main_share = 70
+        m.tiling.spec = "main"
+        let Ok(s) = super::saved(m, " Focus ") else { panic("saving failed") }
+        assert_eq(s.arrangements, "Focus = main right 70")
+        assert_eq(super::spec_of_command(s, super::named_command("Focus")), Some("main right 70"))
+        assert(super::saved(m, "a=b").is_err())
+        m.tiling.spec = ""
+        assert(super::saved(m, "Focus").is_err())
+    }
+
+    #[test]
+    fn opening_or_closing_a_window_lays_tiled_windows_out_again() {
+        let mut m = three()
+        m.tiling.spec = "columns"
+        m.tiling.main = "main"
+        let before = m.windows.map(|w| w.key)
+        let _ = gui::app::effects::take()
+        super::reflow(&mut m, before)
+        assert(gui::app::effects::take().is_empty(), "nothing opened or closed")
+        let _ = m.windows.remove(2)
+        super::reflow(&mut m, before)
+        let arranged = gui::app::effects::take().filter(|e| match e { Effect::Arrange { windows, .. } => windows == #["main", "window-1"], _ => false })
+        assert_eq(arranged.len(), 1)
+        m.settings.tile_keep = false
+        let _ = m.windows.remove(1)
+        super::reflow(&mut m, before)
+        assert(gui::app::effects::take().is_empty(), "Keep Windows Tiled is off")
+    }
+}

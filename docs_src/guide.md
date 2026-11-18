@@ -1,6 +1,6 @@
 ---
 title: User Guide - waftty
-description: How to use waftty - shortcuts, the command palette, recent directories, private tabs, tabs, find, shell integration, links, character encodings, settings, color schemes and custom shortcuts.
+description: How to use waftty - shortcuts, the command palette, recent directories, private tabs, tabs, tiled windows, find, shell integration, links, character encodings, settings, color schemes and custom shortcuts.
 ---
 
 # User Guide
@@ -49,6 +49,7 @@ the menu bar, except on macOS, where the menus sit in the system menu bar.
 | Split Right / Split Down | ++ctrl+shift+d++ / ++ctrl+shift+b++ | ++cmd+d++ / ++cmd+shift+d++ |
 | Next Pane / Previous Pane | ++ctrl+shift+bracket-right++ / ++ctrl+shift+bracket-left++ | ++cmd+bracket-right++ / ++cmd+bracket-left++ |
 | Close Pane | ++ctrl+shift+j++ | ++cmd+option+w++ |
+| Next Arrangement | ++ctrl+shift+semicolon++ | ++cmd+shift+semicolon++ |
 
 A right click on the terminal offers the link entries, Copy, Paste, Select
 All, New Tab, Split Right, Split Down, Close Pane, Recent Directories, Recent Sessions, Find, Clear Scrollback,
@@ -198,6 +199,52 @@ keep their own history as they always do.
   A pane whose program exits closes the same way.
 - A split tab is one tab in the strip, named for its focused pane. Close Tab
   closes it with all its panes.
+
+## Tiling Windows
+
+**View > Arrange Windows** lays every waftty window on the current virtual
+desktop out side by side over the display the window you are in is on.
+Minimized windows, windows on other desktops and the quick terminal stay
+where they are; a maximized or fullscreen window gets its frame back first.
+
+- **Tile Windows** makes a grid: as many columns as rows, or one more, with
+  a short last row shared among its windows. **Settings > Tiling > Grid
+  columns** fixes the columns instead, for rows of 2 (2x2 with four windows)
+  or 3.
+- **Tile with Main Window** gives the window you are in one side of the
+  display and splits the rest among the others. **Main window** on the
+  Tiling page puts it on the left (the default), right, top or bottom, or in
+  the center between two stacks, and **Main window share** sets how much of
+  the display it takes.
+- **Tile in Columns** and **Tile in Rows** put the windows side by side or
+  stacked.
+- **Next Arrangement** (++ctrl+shift+semicolon++, ++cmd+shift+semicolon++ on
+  macOS) tiles the windows, and each further press moves to the next
+  arrangement: grid, main window, columns, rows, then your saved ones.
+
+While the windows are tiled, a new window takes a place among them and the
+others close up after one closes. **Stop Tiling** leaves the windows where
+they are and stops that; turning off **Keep windows tiled** on the Tiling
+page does it for good. **Gap** puts space around and between the windows.
+
+**Save Arrangement** asks for a name and keeps the arrangement in use, with
+its side and share, under it. Each saved arrangement is a command in the
+Arrange Windows menu and the palette, and the Shortcuts page can give it a
+key, so a key press switches to it. **Saved arrangements** on the Tiling
+page lists them as `Name = layout` entries separated by semicolons, where
+you can rename, change or remove them:
+
+```text
+Coding = main right 65; Review = grid 3; Logs = rows
+```
+
+A layout is `grid` (Grid columns decides), `grid 0` (as even as the windows
+make), `grid 3`, `columns`, `rows`, or `main` with `left`, `right`, `top`,
+`bottom` or `center` and a share in percent, from 20 to 80.
+
+Tiling covers the windows of one waftty. Windows started with
+`--single-instance` share one waftty, so they tile together. On Wayland the
+desktop places every window itself, so waftty can't tile there.
 
 ## Quick Terminal
 
@@ -426,7 +473,7 @@ under **More**. Not available on Windows.
 
 ## Settings
 
-**Edit > Settings** opens a window with five pages. Each value has a button
+**Edit > Settings** opens a window with six pages. Each value has a button
 that puts it back to its default; only values that differ from the defaults
 are saved, so the defaults follow your desktop.
 
@@ -453,6 +500,10 @@ are saved, so the defaults follow your desktop.
 - **Quick Terminal**: the shortcut that shows and hides the
   [quick terminal](#quick-terminal), the edge it hangs from, and its length
   and depth.
+- **Tiling**: where [Tile with Main Window](#tiling-windows) puts the
+  main window and its share, the grid's columns, the gap between tiled
+  windows, whether they stay tiled as windows open and close, and the saved
+  arrangements.
 - **Shortcuts**: every command's chords.
 
 ### Font features and styles

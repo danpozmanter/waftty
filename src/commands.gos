@@ -13,6 +13,7 @@ use model
 use model::Model
 use shortcuts
 use signals
+use tiling
 
 pub const NEW_TAB: String = "file.new-tab"
 pub const NEW_WINDOW: String = "file.new-window"
@@ -326,6 +327,7 @@ pub fn registry(m: Model, key: String) -> Vec<Command> {
         let label = if n == 9 { "Last Tab" } else { f"Tab {n}" }
         out.push(Command::new(number_command(n), label).key(chord(f"Alt+{n}", f"Cmd+{n}")).category("Tabs").enabled(tabs >= 1 && (n == 9 || n <= tabs)))
     }
+    out.extend(tiling::commands(m))
     let sendable = has_tab && signals::supported()
     for s in signals::table() {
         out.push(Command::new(signal_command(s.number), signals::label(s)).category("Send Signal").enabled(sendable))
@@ -411,7 +413,7 @@ pub fn menu_bar(m: Model, key: String) -> gui::Widget {
             menus::item(OPEN_LINK_HINT), menus::item(COPY_LINK_HINT), MenuItem::Separator
             menus::item(SETTINGS)
         ])
-        Menu::new("&View", #[menus::item(COMMAND_PALETTE), menus::item(PROCESSES), MenuItem::Separator, menus::item(FULLSCREEN), menus::item(MENU_BAR), menus::item(STATUS_BAR), MenuItem::Separator, zoom_menu(), menus::item(RESET_WINDOW_SIZE)])
+        Menu::new("&View", #[menus::item(COMMAND_PALETTE), menus::item(PROCESSES), MenuItem::Separator, menus::item(FULLSCREEN), menus::item(MENU_BAR), menus::item(STATUS_BAR), MenuItem::Separator, zoom_menu(), menus::item(RESET_WINDOW_SIZE), MenuItem::Separator, tiling::menu(m.settings)])
         Menu::new("&Terminal", #[
             menus::item(FIND), menus::item(FIND_NEXT), menus::item(FIND_PREVIOUS), MenuItem::Separator
             menus::item(PREVIOUS_PROMPT), menus::item(NEXT_PROMPT), menus::item(SELECT_OUTPUT), MenuItem::Separator
