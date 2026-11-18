@@ -948,7 +948,7 @@ fn save_session(m: Model) {
     let kept = m.windows.filter(|w| !w.private).map(|w| SavedWindow { folders: w.strip().filter(|t| !t.private).map(|t| t.terminal.cwd().unwrap_or("")) })
     let saved = Session { windows: kept.filter(|w| !w.folders.is_empty()) }
     let _ = fs::create_dir_all(services::config_dir(info::APP_ID))
-    let _ = fs::write(session_file(), json::encode(saved).bytes())
+    let _ = json::encode(saved).and_then(|text| fs::write(session_file(), text.bytes()))
 }
 
 /// The session saved at the last quit, if any.
@@ -1025,7 +1025,7 @@ mod tests {
         let folder = path::join(path::join(root, "projects"), dir.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_string() } else { "-" }).collect::<Vec<String>>().join(""))
         let _ = fs::create_dir_all(folder)
         // A Windows folder's backslashes need escaping in the record's JSON.
-        let quoted = json::encode(dir)
+        let Ok(quoted) = json::encode(dir) else { panic("the folder did not encode") }
         let line = f"{{\"type\":\"user\",\"cwd\":{quoted},\"message\":{{\"content\":\"Tidy the logs\"}}}}\n"
         let _ = fs::write(path::join(folder, "0f0e0d0c-0000-4000-8000-000000000001.jsonl"), line.bytes())
         let mut m = super::new(Settings::default())
@@ -1139,7 +1139,8 @@ mod tests {
     #[test]
     fn a_saved_session_reads_back_as_its_windows_and_folders() {
         let saved = Session { windows: #[SavedWindow { folders: #["/tmp", ""] }, SavedWindow { folders: #["/home"] }] }
-        let Ok(back) = json::decode::<Session>(json::encode(saved)) else { panic("the session did not read back") }
+        let Ok(text) = json::encode(saved) else { panic("the session did not encode") }
+        let Ok(back) = json::decode::<Session>(text) else { panic("the session did not read back") }
         assert_eq(back, saved)
     }
 

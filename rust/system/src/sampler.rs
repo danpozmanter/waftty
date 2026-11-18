@@ -15,10 +15,12 @@ pub struct ProcessSample {
     pub parent: u32,
     /// Its program's name, as the system gives it.
     pub name: String,
-    /// CPU time it has used, user and system together, in nanoseconds.
-    pub cpu_ns: u64,
-    /// Resident memory in bytes.
-    pub memory: u64,
+    /// CPU time it has used, user and system together, in nanoseconds; None
+    /// where the system keeps it from this user, as macOS does for a process
+    /// running as another (`top`, `sudo`).
+    pub cpu_ns: Option<u64>,
+    /// Resident memory in bytes; None where the system keeps it from this user.
+    pub memory: Option<u64>,
     /// Bytes it has read from and written to storage, where the system counts
     /// them per process. Windows counts every read and write, devices and
     /// pipes included.
@@ -99,8 +101,8 @@ mod platform {
                     pid,
                     parent: s.parent,
                     name: s.name,
-                    cpu_ns: s.cpu_ticks.saturating_mul(1_000_000_000) / ticks,
-                    memory: s.rss_pages.saturating_mul(page),
+                    cpu_ns: Some(s.cpu_ticks.saturating_mul(1_000_000_000) / ticks),
+                    memory: Some(s.rss_pages.saturating_mul(page)),
                     disk_read,
                     disk_written,
                 })
@@ -286,6 +288,34 @@ mod platform {
         }
     }
 
+    // The short command name, which macOS gives for a process of any user;
+    // proc_name reads the full record, which it keeps to the process's own.
+    fn short_name(pid: u32) -> String {
+        // SAFETY: the record is plain old data, which all zeros initializes.
+        let mut info: libc::proc_bsdshortinfo = unsafe { std::mem::zeroed() };
+        let size = std::mem::size_of::<libc::proc_bsdshortinfo>() as libc::c_int;
+        // SAFETY: `info` is a writable proc_bsdshortinfo of `size` bytes.
+        let read = unsafe {
+            libc::proc_pidinfo(
+                pid as libc::c_int,
+                libc::PROC_PIDT_SHORTBSDINFO,
+                0,
+                (&raw mut info).cast(),
+                size,
+            )
+        };
+        if read != size {
+            return String::new();
+        }
+        let comm: Vec<u8> = info
+            .pbsi_comm
+            .iter()
+            .take_while(|&&c| c != 0)
+            .map(|&c| c as u8)
+            .collect();
+        String::from_utf8_lossy(&comm).into_owned()
+    }
+
     fn sample(pid: u32, parent: u32, timebase: Timebase) -> Option<ProcessSample> {
         // SAFETY: the record is plain old data, which all zeros initializes.
         let mut usage: libc::rusage_info_v2 = unsafe { std::mem::zeroed() };
@@ -297,12 +327,15 @@ mod platform {
                 (&raw mut usage).cast(),
             )
         };
-        if read != 0 {
+        // A process running as another user (EPERM) is still listed, its
+        // counters unknown; one that has exited (ESRCH) is not.
+        let usage = if read == 0 {
+            Some(usage)
+        } else if io::Error::last_os_error().raw_os_error() == Some(libc::EPERM) {
+            None
+        } else {
             return None;
-        }
-        // CPU times count Mach absolute time units, nanoseconds only on Intel.
-        let ticks = usage.ri_user_time.saturating_add(usage.ri_system_time) as u128;
-        let cpu_ns = (ticks * timebase.numer as u128 / timebase.denom.max(1) as u128) as u64;
+        };
         let mut name = [0u8; 256];
         // SAFETY: `name` is writable storage of the length given.
         let len = unsafe {
@@ -315,16 +348,21 @@ mod platform {
         let name = if len > 0 {
             String::from_utf8_lossy(&name[..len as usize]).into_owned()
         } else {
-            String::new()
+            short_name(pid)
         };
+        // CPU times count Mach absolute time units, nanoseconds only on Intel.
+        let cpu_ns = usage.map(|u| {
+            let ticks = u.ri_user_time.saturating_add(u.ri_system_time) as u128;
+            (ticks * timebase.numer as u128 / timebase.denom.max(1) as u128) as u64
+        });
         Some(ProcessSample {
             pid,
             parent,
             name,
             cpu_ns,
-            memory: usage.ri_resident_size,
-            disk_read: Some(usage.ri_diskio_bytesread),
-            disk_written: Some(usage.ri_diskio_byteswritten),
+            memory: usage.map(|u| u.ri_resident_size),
+            disk_read: usage.map(|u| u.ri_diskio_bytesread),
+            disk_written: usage.map(|u| u.ri_diskio_byteswritten),
         })
     }
 
@@ -367,8 +405,8 @@ mod platform {
                     pid,
                     parent: k.ki_ppid as u32,
                     name: name.to_string_lossy().into_owned(),
-                    cpu_ns: k.ki_runtime.saturating_mul(1_000),
-                    memory: (k.ki_rssize.max(0) as u64).saturating_mul(page),
+                    cpu_ns: Some(k.ki_runtime.saturating_mul(1_000)),
+                    memory: Some((k.ki_rssize.max(0) as u64).saturating_mul(page)),
                     disk_read: None,
                     disk_written: None,
                 })
@@ -580,11 +618,8 @@ mod platform {
         let mut memory: PROCESS_MEMORY_COUNTERS = unsafe { std::mem::zeroed() };
         let size = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
         // SAFETY: the handle is open with query access and `memory` holds `size` bytes.
-        let memory = if unsafe { K32GetProcessMemoryInfo(process.0, &raw mut memory, size) } != 0 {
-            memory.WorkingSetSize as u64
-        } else {
-            0
-        };
+        let memory = (unsafe { K32GetProcessMemoryInfo(process.0, &raw mut memory, size) } != 0)
+            .then_some(memory.WorkingSetSize as u64);
         // SAFETY: the record is plain old data, which all zeros initializes.
         let mut counters: IO_COUNTERS = unsafe { std::mem::zeroed() };
         // SAFETY: the handle is open with query access and `counters` is writable.
@@ -593,7 +628,7 @@ mod platform {
             pid,
             parent,
             name,
-            cpu_ns: cpu.saturating_mul(100),
+            cpu_ns: Some(cpu.saturating_mul(100)),
             memory,
             disk_read: io.then_some(counters.ReadTransferCount),
             disk_written: io.then_some(counters.WriteTransferCount),
@@ -723,7 +758,7 @@ mod tests {
         let me = std::process::id();
         let found = tree(me);
         assert_eq!(found.first().map(|s| s.pid), Some(me));
-        assert!(found[0].memory > 0, "{:?}", found[0]);
+        assert!(found[0].memory.is_some_and(|m| m > 0), "{:?}", found[0]);
         let kid = found
             .iter()
             .find(|s| s.pid == child.id())

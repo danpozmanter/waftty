@@ -81,7 +81,7 @@ pub fn built_in() -> Vec<Entry> {
 /// The scheme a `scheme-<name>.toml` file holds, its id naming the file.
 pub fn parse(file_name: String, text: String) -> Result<Entry, errors::Error> {
     let stem = file_name.substring(7, file_name.byte_len() - 5)
-    let parsed = json::decode::<File>(toml::to_json(text)?)?
+    let parsed = json::decode::<File>(toml::to_json_text(text)?)?
     if parsed.appearance != "light" && parsed.appearance != "dark" {
         return Err(errors::new(f"{file_name}: appearance must be \"light\" or \"dark\""))
     }

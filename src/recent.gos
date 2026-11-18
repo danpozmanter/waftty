@@ -30,7 +30,7 @@ pub fn load() -> Vec<String> {
 /// Saves `dirs` as the list.
 pub fn save(dirs: Vec<String>) {
     // Replaced whole, so another waftty process never reads it half written.
-    let _ = services::write_atomic(file(), json::encode(Saved { dirs: dirs }).bytes())
+    let _ = json::encode(Saved { dirs: dirs }).and_then(|text| services::write_atomic(file(), text.bytes()))
 }
 
 /// Forgets every directory: the list is empty from here on.

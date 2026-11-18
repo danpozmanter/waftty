@@ -14,7 +14,8 @@ encoding.
 
 Programs in the terminal need Ctrl with a letter, so on Linux and Windows
 waftty's shortcuts use Ctrl+Shift; on macOS they use Command. ++f10++ opens
-the menu bar. **Edit > Settings > Shortcuts** changes any of them.
+the menu bar, except on macOS, where the menus sit in the system menu bar.
+**Edit > Settings > Shortcuts** changes any of them.
 
 | Command | Linux and Windows | macOS |
 |---|---|---|
@@ -26,7 +27,7 @@ the menu bar. **Edit > Settings > Shortcuts** changes any of them.
 | Settings | ++ctrl+comma++ | ++cmd+comma++ |
 | Zoom In / Zoom Out / Reset Zoom | ++ctrl+equal++ / ++ctrl+minus++ / ++ctrl+0++ | ++cmd+equal++ / ++cmd+minus++ / ++cmd+0++ |
 | Fullscreen | ++f11++ | ++ctrl+cmd+f++ |
-| Show Menu Bar | ++ctrl+shift+m++ | |
+| Show Menu Bar | ++ctrl+shift+m++ | (none; the system menu bar is always shown) |
 | Find / Find Next / Find Previous | ++ctrl+shift+f++ / ++ctrl+shift+g++ / ++ctrl+shift+h++ | ++cmd+f++ / ++cmd+g++ / ++cmd+shift+g++ |
 | Previous Prompt / Next Prompt | ++ctrl+shift+up++ / ++ctrl+shift+down++ | ++cmd+up++ / ++cmd+down++ |
 | Select Last Command Output | ++ctrl+shift+o++ | ++cmd+shift+o++ |
@@ -51,7 +52,7 @@ the menu bar. **Edit > Settings > Shortcuts** changes any of them.
 
 A right click on the terminal offers the link entries, Copy, Paste, Select
 All, New Tab, Split Right, Split Down, Close Pane, Recent Directories, Recent Sessions, Find, Clear Scrollback,
-Send Signal, Zoom, Command Palette, Show Menu Bar and Settings.
+Send Signal, Zoom, Command Palette, Show Menu Bar (not on macOS) and Settings.
 
 ## Command Palette
 
@@ -62,9 +63,9 @@ their name: "pri" finds New Private Tab and New Private Window. ++up++ and ++dow
 search to the highlighted command, and ++enter++ or a click runs it.
 ++escape++ clears the search, and closes the palette once it is empty.
 
-The palette reaches every command, so the menu bar can stay hidden: **View >
-Show Menu Bar** (++ctrl+shift+m++) hides it, and the palette's Show Menu Bar
-brings it back.
+The palette reaches every command, so on Linux and Windows the menu bar can
+stay hidden: **View > Show Menu Bar** (++ctrl+shift+m++) hides it, and the
+palette's Show Menu Bar brings it back.
 
 ## Tabs
 

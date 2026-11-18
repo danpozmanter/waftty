@@ -76,7 +76,7 @@ pub fn load() -> Vec<Session> {
 /// Saves `sessions` as the list.
 pub fn save(sessions: Vec<Session>) -> Result<(), errors::Error> {
     // Replaced whole, so another waftty process never reads it half written.
-    services::write_atomic(file(), json::encode(Saved { sessions: sessions }).bytes())
+    services::write_atomic(file(), json::encode(Saved { sessions: sessions })?.bytes())
 }
 
 /// Forgets every session: the list is empty from here on.
@@ -543,9 +543,8 @@ const PARTS: i64 = 16
 fn first_text(content: Option<json::Value>) -> String {
     let Some(c) = content else { return "" }
     if let Some(text) = c.as_str() { return text }
-    // Past its end an array reads as null, whose parts have no type.
     for i in 0..PARTS {
-        let part = c.at(i)
+        let Some(part) = c.at(i) else { break }
         if part.get("type").and_then(|t| t.as_str()) == Some("text") { return part.get("text").and_then(|t| t.as_str()).unwrap_or("") }
     }
     ""

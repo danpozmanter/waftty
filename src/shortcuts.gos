@@ -19,7 +19,7 @@ pub fn file() -> String {
 
 /// The chords `text` (a `shortcuts.toml`) sets, by command id.
 pub fn parse(text: String) -> Result<Map<String, Vec<String>>, errors::Error> {
-    let value = json::parse(toml::to_json(text)?)?
+    let value = json::parse(toml::to_json_text(text)?)?
     let mut out: Map<String, Vec<String>> = Map::new()
     for id in json::keys(value).unwrap_or(#[]) {
         let Some(set) = json::get(value, id) else { continue }

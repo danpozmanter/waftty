@@ -23,17 +23,18 @@ pub const ORDERS: [String; 2] = ["descending", "ascending"]
 
 /// One process and its counters when sampled: CPU time used so far (user and
 /// system) in nanoseconds, resident memory in bytes, and the bytes it has
-/// read from and written to storage, None where the system does not count
-/// them per process (FreeBSD). Windows counts every read and write, devices
-/// and pipes included.
+/// read from and written to storage. A counter is None where the system does
+/// not count it per process (storage on FreeBSD) or keeps it from this user
+/// (a process running as another user on macOS). Windows counts every read
+/// and write, devices and pipes included.
 #[derive(Default, PartialEq)]
 pub struct ProcessSample {
     pub pid: i64
     /// The process that started it, 0 when the system names none.
     pub parent: i64
     pub name: String
-    pub cpu_ns: i64
-    pub memory: i64
+    pub cpu_ns: Option<i64>
+    pub memory: Option<i64>
     pub disk_read: Option<i64>
     pub disk_written: Option<i64>
 }
@@ -52,8 +53,8 @@ pub struct Sample {
 }
 
 /// One process as Processes lists it, its rates over the time since the
-/// sample before; None until there are two samples, and for storage where
-/// the system does not count it per process.
+/// sample before; None until there are two samples, and wherever the sample
+/// has no counter.
 #[derive(Default, PartialEq)]
 pub struct Row {
     pub pid: i64
@@ -65,7 +66,7 @@ pub struct Row {
     /// Percent of one core.
     pub cpu: Option<f64>
     /// Resident memory in bytes.
-    pub memory: i64
+    pub memory: Option<i64>
     /// Bytes per second read from and written to storage.
     pub read: Option<f64>
     pub written: Option<f64>
@@ -117,7 +118,7 @@ pub fn rows(before: Option<Sample>, now: Sample, tab_of: Map<i64, String>) -> Ve
             let Some(b) = is else { return None }
             Some((b - a).max(0) as f64 * 1_000_000_000.0 / span as f64)
         }
-        let cpu = prior.map(|old| (p.cpu_ns - old.cpu_ns).max(0) as f64 * 100.0 / span as f64)
+        let cpu = per_second(prior.and_then(|o| o.cpu_ns), p.cpu_ns).map(|ns| ns * 100.0 / 1_000_000_000.0)
         Row {
             pid: p.pid, parent: p.parent, name: p.name, tab: tab_for(p.pid, parents, tab_of), cpu: cpu, memory: p.memory
             read: per_second(prior.and_then(|o| o.disk_read), p.disk_read), written: per_second(prior.and_then(|o| o.disk_written), p.disk_written)
@@ -150,7 +151,7 @@ pub fn totals(rows: Vec<Row>) -> Totals {
     let mut t = Totals { subprocesses: (rows.len() - 1).max(0), ..Totals::default() }
     for r in rows {
         t.cpu = add(t.cpu, r.cpu)
-        t.memory += r.memory
+        t.memory += r.memory.unwrap_or(0)
         t.read = add(t.read, r.read)
         t.written = add(t.written, r.written)
         t.counts_disk = t.counts_disk || r.counts_disk
@@ -167,7 +168,7 @@ pub fn sorted(rows: Vec<Row>, column: String, ascending: bool) -> Vec<Row> {
             "name" => compare_text(a.name, b.name)
             "pid" => compare(a.pid as f64, b.pid as f64)
             "tab" => compare_text(a.tab, b.tab)
-            "memory" => compare(a.memory as f64, b.memory as f64)
+            "memory" => compare(a.memory.map(|m| m as f64).unwrap_or(-1.0), b.memory.map(|m| m as f64).unwrap_or(-1.0))
             "read" => compare(a.read.unwrap_or(-1.0), b.read.unwrap_or(-1.0))
             "written" => compare(a.written.unwrap_or(-1.0), b.written.unwrap_or(-1.0))
             _ => compare(a.cpu.unwrap_or(-1.0), b.cpu.unwrap_or(-1.0))
@@ -198,6 +199,14 @@ pub fn size_text(bytes: i64) -> String {
         unit += 1
     }
     if unit == 0 { f"{bytes.max(0)} B" } else if value < 10.0 { f"{value:.1} {units[unit]}" } else { f"{value.round() as i64} {units[unit]}" }
+}
+
+/// A size, or a dash where it is unknown.
+pub fn memory_text(bytes: Option<i64>) -> String {
+    match bytes {
+        Some(b) => size_text(b)
+        None => "\u{2013}"
+    }
 }
 
 /// A rate in bytes per second, or a dash before there is one.
@@ -231,7 +240,7 @@ mod tests {
     use super::{ProcessSample, Row, Sample, Totals}
 
     fn process(pid: i64, parent: i64, name: String, cpu_ns: i64, memory: i64, read: i64) -> ProcessSample {
-        ProcessSample { pid: pid, parent: parent, name: name, cpu_ns: cpu_ns, memory: memory, disk_read: Some(read), disk_written: Some(0) }
+        ProcessSample { pid: pid, parent: parent, name: name, cpu_ns: Some(cpu_ns), memory: Some(memory), disk_read: Some(read), disk_written: Some(0) }
     }
 
     #[test]
@@ -249,6 +258,19 @@ mod tests {
     }
 
     #[test]
+    fn a_process_whose_counters_are_kept_from_us_is_listed_without_them() {
+        let start = time::Instant::now()
+        let hidden = ProcessSample { pid: 2, parent: 1, name: "top", ..ProcessSample::default() }
+        let before = Sample { at: start, processes: #[process(1, 0, "waftty", 0, 100, 0), hidden] }
+        let now = Sample { at: start + time::Duration::from_secs(1), processes: #[process(1, 0, "waftty", 0, 100, 0), hidden] }
+        let rows = super::rows(Some(before), now, Map::new())
+        assert_eq(rows.map(|r| r.name), #["waftty", "top"])
+        assert_eq(rows.map(|r| r.cpu), #[Some(0.0), None])
+        assert_eq(rows.map(|r| super::memory_text(r.memory)), #["100 B", "\u{2013}"])
+        assert_eq(super::totals(rows).memory, 100)
+    }
+
+    #[test]
     fn a_first_sample_has_no_rates_yet() {
         let now = Sample { at: time::Instant::now(), processes: #[process(1, 0, "waftty", 9, 100, 3)] }
         let rows = super::rows(None, now, Map::new())
@@ -259,9 +281,9 @@ mod tests {
     #[test]
     fn rows_sort_by_any_column_either_way_with_unknown_rates_last_when_descending() {
         let rows = #[
-            Row { pid: 1, name: "waftty", cpu: Some(2.0), memory: 300, ..Row::default() }
-            Row { pid: 2, name: "bash", cpu: Some(9.0), memory: 10, ..Row::default() }
-            Row { pid: 3, name: "Make", cpu: None, memory: 50, ..Row::default() }
+            Row { pid: 1, name: "waftty", cpu: Some(2.0), memory: Some(300), ..Row::default() }
+            Row { pid: 2, name: "bash", cpu: Some(9.0), memory: Some(10), ..Row::default() }
+            Row { pid: 3, name: "Make", cpu: None, memory: Some(50), ..Row::default() }
         ]
         assert_eq(super::sorted(rows, "cpu", false).map(|r| r.pid), #[2, 1, 3])
         assert_eq(super::sorted(rows, "cpu", true).map(|r| r.pid), #[3, 1, 2])

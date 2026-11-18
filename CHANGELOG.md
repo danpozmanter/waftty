@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.8.4 - Mac shortcuts run once, Processes lines up
+
+- On macOS each shortcut runs its command once, so Cmd+T opens one tab and Processes, Recent Sessions, the command palette and the status bar no longer close as they open.
+- Cmd+W closes the tab on macOS instead of the window, and Cmd+Option+W closes the pane.
+- macOS menus show the shortcuts on Home, End, Page Up and Page Down.
+- Processes headings line up with their numbers, whole process ids and sizes fit, and the buttons stay in view in a short window.
+- Processes lists processes that run as another user, such as `top`, with dashes for what the system keeps from waftty.
+- Show Menu Bar is gone on macOS, where the menus always sit in the system menu bar.
+- On X11 every window's menu text keeps the desktop's size, including a waftty started from a shell with a different session bus.
+- Builds on Gossamer 0.81.1, windowing-gos 0.3.0, gui-engine-gos 0.5.0 and gui-gos 0.4.0.
+
 ## 0.8.3 - No crash right after startup
 
 - waftty no longer crashes when it loads fonts right after the computer starts.

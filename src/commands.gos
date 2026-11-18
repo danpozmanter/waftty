@@ -248,6 +248,9 @@ pub fn registry(m: Model, key: String) -> Vec<Command> {
     // shortcut on macOS only.
     let mut reset_and_clear = Command::new(RESET_AND_CLEAR, "Reset and Clear").category("Terminal").enabled(has_tab)
     if mac { reset_and_clear = reset_and_clear.key("Cmd+Option+K") }
+    // macOS keeps the menus in the system menu bar, which is always shown.
+    let mut show_menu_bar = Command::new(MENU_BAR, "Show Menu Bar").category("View").checked(m.settings.menu_bar).enabled(!m.drop_down).visible(!mac)
+    if !mac { show_menu_bar = show_menu_bar.key("Ctrl+Shift+M") }
     let mut out = #[
         Command::new(NEW_TAB, "New Tab").key(chord("Ctrl+Shift+T", "Cmd+T")).category("File")
         Command::new(NEW_WINDOW, "New Window").key(chord("Ctrl+Shift+N", "Cmd+N")).category("File")
@@ -272,7 +275,7 @@ pub fn registry(m: Model, key: String) -> Vec<Command> {
         Command::new(ZOOM_IN, "Zoom In").key(chord("Ctrl+=", "Cmd+=")).key(chord("Ctrl+Shift+=", "Cmd+Shift+=")).category("View").enabled(model::can_zoom(m.settings, window, ZOOM_STEP))
         Command::new(ZOOM_OUT, "Zoom Out").key(chord("Ctrl+-", "Cmd+-")).key(chord("Ctrl+Shift+-", "Cmd+Shift+-")).category("View").enabled(model::can_zoom(m.settings, window, -ZOOM_STEP))
         Command::new(NORMAL_SIZE, "Reset Zoom").key(chord("Ctrl+0", "Cmd+0")).category("View").enabled(window.zoom != 0.0)
-        Command::new(MENU_BAR, "Show Menu Bar").key(chord("Ctrl+Shift+M", "Cmd+Shift+M")).category("View").checked(m.settings.menu_bar).enabled(!m.drop_down)
+        show_menu_bar
         Command::new(RESET_WINDOW_SIZE, "Reset Window Size").category("View").enabled(!window.fullscreen)
         Command::new(COMMAND_PALETTE, "Command Palette…").key(chord("Ctrl+Shift+P", "Cmd+Shift+P")).category("View")
         Command::new(CLOSE_PALETTE, "Close Command Palette").key("Escape").category("View").in_scope(PALETTE_FIELD).visible(false)

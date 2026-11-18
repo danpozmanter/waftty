@@ -64,7 +64,7 @@ pub fn window(m: Model, key: String) -> Widget {
     if win.palette { content = Widget::stack(#[content, hanging(Widget::command_palette(commands::PALETTE_FIELD), menu_bar)]) }
     if win.recent { content = Widget::stack(#[content, hanging(recent(m, w), menu_bar)]) }
     if win.sessions { content = Widget::stack(#[content, hanging(sessions(m, w), menu_bar)]) }
-    if win.processes { content = Widget::stack(#[content, processes_panel(m, w).width(780).margin_sides(0, if menu_bar { 36 } else { 8 }, 0, 0).align(0.5, 0.0).pass_through()]) }
+    if win.processes { content = Widget::stack(#[content, processes_panel(m, w).width(840).margin_sides(0, if menu_bar { 36 } else { 8 }, 0, 8).align(0.5, 0.0).pass_through()]) }
     if m.drop_down && win.key == "main" { edged(content.grow(1), drop_down::position(m.settings, m.quick_position)) } else { content }
 }
 
@@ -96,15 +96,18 @@ fn processes_panel(m: Model, w: i64) -> Widget {
     let key = m.windows[w].key
     let sort, ascending = m.monitor.sort
     let rows = processes::sorted(m.monitor.rows, sort, ascending)
+    // The number columns fit their widest values (a 7-digit process id,
+    // "1023 MB", "1023 KB/s") and a bold title with its sort mark in a
+    // proportional interface font.
     let number = |title: String, column: String, width: i64| Column { align: TextAlign::End, ..Column::new(column, title, width) }
     let columns = #[
-        Column::new("name", "Process", 170), number("PID", "pid", 70), Column::new("tab", "Tab", 190), number("CPU", "cpu", 70)
-        number("Memory", "memory", 80), number("Read", "read", 80), number("Written", "written", 80)
+        Column::new("name", "Process", 160), number("PID", "pid", 84), Column::new("tab", "Tab", 170), number("CPU", "cpu", 84)
+        number("Memory", "memory", 100), number("Read", "read", 100), number("Written", "written", 100)
     ]
     let table = Collection::new(commands::processes_table(key), rows.len(), |i| {
         let r = rows[i]
         let name = if r.pid == process::id() { f"{r.name} (waftty)" } else { r.name }
-        Row { cells: #[name, f"{r.pid}", r.tab, processes::cpu_text(r.cpu), processes::size_text(r.memory), processes::rate_text(r.read), processes::rate_text(r.written)], ..Row::new(f"{r.pid}", name) }
+        Row { cells: #[name, f"{r.pid}", r.tab, processes::cpu_text(r.cpu), processes::memory_text(r.memory), processes::rate_text(r.read), processes::rate_text(r.written)], ..Row::new(f"{r.pid}", name) }
     }).columns(columns).sorted_by(sort, ascending).selected(if m.monitor.selected > 0 { #[f"{m.monitor.selected}"] } else { #[] })
         .revision(m.monitor.revision, #[]).rows(12).label("Processes").empty_text("Reading processes…")
     let chosen = rows.iter().find(|r| r.pid == m.monitor.selected)
@@ -120,7 +123,9 @@ fn processes_panel(m: Model, w: i64) -> Widget {
     }
     actions.push(Widget::stretch())
     actions.push(Widget::button(commands::processes_close(key), "Close"))
-    Widget::card(Widget::column(#[Widget::heading("Processes"), Widget::collection(table), Widget::row(actions, 8)], 8))
+    // The table takes the height the heading and buttons leave, so the
+    // buttons stay in a short window.
+    Widget::card(Widget::column(#[Widget::heading("Processes"), Widget::collection(table).grow(1), Widget::row(actions, 8)], 8))
 }
 
 // Recent Sessions for window `w`: the agent sessions tabs ran, latest first,
