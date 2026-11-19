@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.2 - Quick terminal sized from the start on macOS
+
+- On macOS the quick terminal's shell starts at the size of the docked window.
+- Tiling from a fullscreen window on macOS lays it out together with the windows on the desktop it returns to.
+- Builds on gui-engine-gos 0.6.1.
+
 ## 0.9.1 - Quick terminal opens faster
 
 - The quick terminal opens as fast as it did before 0.9.0.
