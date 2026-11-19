@@ -17,6 +17,7 @@ use commands
 use model
 use sessions
 use settings::Settings
+use tiling
 
 // The agent stand-in is a copy of a shell that runs under the copy's name.
 // macOS's /bin/sh is a shim that runs another shell in its place.
@@ -675,10 +676,23 @@ pub fn journey() -> Result<(), errors::Error> {
     s.flush()?
     require(s.window_count() == 2, f"New Window left {s.window_count()} windows")?
     await_text(&mut s, 1, "$ ")?
+    // The offscreen driver sizes windows but never moves them, so the cells
+    // show in the sizes they give.
+    let opened = s.window_size(0)
+    shortcut(&mut s, tiling::NEXT)?
+    s.flush()?
+    let column = s.window_size(0)
+    require(column == s.window_size(1) && column != opened, f"Next Arrangement made the windows {column} and {s.window_size(1)}, from {opened}")?
+    s.run_command(0, tiling::ROWS)
+    s.flush()?
+    let row = s.window_size(0)
+    require(row == s.window_size(1) && row.width > column.width && row.height < column.height, f"Tile Windows: Rows made the windows {row} and {s.window_size(1)}")?
+    s.run_command(0, tiling::STOP)
     s.run_command(1, commands::CLOSE_WINDOW)
     s.flush()?
     require(s.window_count() == 1, f"Close Window left {s.window_count()} windows")?
-    println("windows: New Window's shortcut opened one, Close Window closed it")
+    require(s.window_size(0) == row, f"closing a window after Stop Tiling made the other {s.window_size(0)}")?
+    println("windows: New Window's shortcut opened one, Next Arrangement's shortcut tiled the two side by side, Tile Windows: Rows stacked them, Stop Tiling left them, Close Window closed one")
 
     s.emit(gui::UiMsg::CommandLine(config, #["--title", "forwarded", "-e", "/bin/sh", "-c", "echo forwarded-run; exec /bin/sh"]))
     s.flush()?

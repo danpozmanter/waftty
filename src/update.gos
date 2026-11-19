@@ -32,12 +32,14 @@ use sessions
 use settings
 use shortcuts
 use signals
+use tiling
 use view
 
 /// The model after `msg`.
 pub fn update(m: Model, msg: UiMsg) -> Model {
     let mut n = m
     if search::message(&mut n, msg) { return n }
+    let opened = n.windows.map(|w| w.key)
     match msg {
         UiMsg::Command(id) => command(&mut n, "main", id)
         UiMsg::Chosen(id, dir) if commands::recent_window_of(id).is_some() => {
@@ -117,6 +119,9 @@ pub fn update(m: Model, msg: UiMsg) -> Model {
                 if focused && let Some(t) = n.windows[w].index_of(n.windows[w].active) { n.windows[w].tabs[t].attention = false }
             }
         }
+        UiMsg::WindowFullscreenChanged(window, on) => {
+            if let Some(w) = model::window_index(n, window) { n.windows[w].fullscreen = on }
+        }
         UiMsg::QuitRequested => model::request_quit(&mut n)
         UiMsg::SplitMoved(id, ratio) => {
             if let Some(found) = view::split_of(id) {
@@ -149,6 +154,7 @@ pub fn update(m: Model, msg: UiMsg) -> Model {
         }
         _ => ()
     }
+    tiling::reflow(&mut n, opened)
     keep_timers(&mut n)
     n
 }
@@ -326,6 +332,13 @@ fn dialog(m: &mut Model, id: String, outcome: Outcome) {
             Ok(e) => save_scheme(m, e)
             Err(why) => model::report(m.windows[0].key, "The scheme could not be imported", why)
         }
+    } else if id == tiling::SAVE_DIALOG {
+        if let Outcome::Text(name) = outcome {
+            match tiling::saved(*m, name) {
+                Ok(chosen) => store_settings(m, chosen)
+                Err(why) => model::report(m.windows[0].key, "Couldn't save the arrangement", why)
+            }
+        }
     } else if id == "save-text" {
         let saving = m.saving
         m.saving = None
@@ -494,6 +507,7 @@ fn command(m: &mut Model, window: String, id: String) {
     // open, the palette's own choice included.
     let leaves = (m.windows[w].palette && id != commands::COMMAND_PALETTE) || (m.windows[w].recent && id != commands::RECENT_DIRS) || (m.windows[w].sessions && id != commands::RECENT_SESSIONS) || (m.windows[w].processes && id != commands::PROCESSES)
     if leaves { hide_overlays(m, w) }
+    if tiling::command(m, window, id) { return }
     let tab = m.windows[w].current()
     match id {
         commands::COMMAND_PALETTE => if m.windows[w].palette { close_overlays(m, w) } else { open_palette(m, w) }
@@ -532,6 +546,7 @@ fn command(m: &mut Model, window: String, id: String) {
             if let Some(t) = tab && !t.pinned { model::request_close_tab(m, t.key) }
         }
         commands::CLOSE_WINDOW => model::request_close_window(m, w)
+        commands::CLOSE_ALL_WINDOWS => model::request_close_all(m, "Closing every window")
         commands::QUIT => model::request_quit(m)
         commands::OPEN_LINK => {
             if let Some(t) = tab && !t.link.is_empty() { gui::perform(Effect::OpenUrl(t.link)) }
@@ -962,7 +977,9 @@ fn store_settings(m: &mut Model, chosen: settings::Settings) {
     if chosen == m.settings { return }
     if m.drop_down { drop_down::settings_changed(m.settings, chosen, m.quick_position) }
     let font_changed = chosen.font != m.settings.font
+    let before = m.settings
     m.settings = chosen
+    tiling::settings_changed(m, before, chosen)
     if font_changed { let _ = gui::text::fonts::preload(model::font(*m)) }
     gui::perform(schemes::theme_effect(model::scheme(*m)))
     gui::perform(Effect::SetTransparent(chosen.opacity < 100))
@@ -1004,6 +1021,7 @@ mod tests {
     use recent
     use sessions
     use settings::Settings
+    use tiling
 
     #[test]
     fn the_palette_toggles_on_its_command_and_closes_for_the_command_it_runs() {
@@ -1019,6 +1037,39 @@ mod tests {
         m = super::update(m, UiMsg::Command(commands::COMMAND_PALETTE))
         m = super::update(m, UiMsg::Command(commands::CLOSE_PALETTE))
         assert(!m.windows[0].palette)
+        m = super::update(m, UiMsg::Command(commands::COMMAND_PALETTE))
+        m = super::update(m, UiMsg::Command(tiling::GRID))
+        assert(!m.windows[0].palette, "a tiling command closes the palette")
+    }
+
+    #[test]
+    fn close_all_windows_closes_every_window() {
+        // Closing the last window saves the session, so it runs against a
+        // folder of the test's own, never the user's configuration.
+        let Ok(root) = fs::temp_dir("waftty-close-all-") else { panic("no temporary folder") }
+        services::set_config_root(root)
+        defer {
+            services::set_config_root("")
+            let _ = fs::remove_dir_all(root)
+        }
+        let mut m = model::new(Settings::default())
+        m.windows.push(model::window("window-1"))
+        m.windows.push(model::window("window-2"))
+        let _ = gui::app::effects::take()
+        m = super::update(m, UiMsg::Command(commands::CLOSE_ALL_WINDOWS))
+        assert(m.windows.is_empty())
+        assert(gui::app::effects::take().any(|e| e == gui::Effect::Quit), "the last window's closing ends waftty")
+    }
+
+    #[test]
+    fn fullscreen_follows_the_window_when_the_desktop_changes_it() {
+        let mut m = model::new(Settings::default())
+        m = super::update(m, UiMsg::Command(commands::FULLSCREEN))
+        assert(m.windows[0].fullscreen)
+        m = super::update(m, UiMsg::WindowFullscreenChanged("main", false))
+        assert(!m.windows[0].fullscreen)
+        m = super::update(m, UiMsg::Command(commands::FULLSCREEN))
+        assert(m.windows[0].fullscreen, "the next toggle enters fullscreen again")
     }
 
     #[test]

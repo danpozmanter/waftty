@@ -1,0 +1,183 @@
+// Arrangements as text: the spec a saved arrangement or a tiling command
+// names ("grid 3", "main right 65", "columns"), and the list of named ones
+// Settings keeps ("Coding = main right 65; Review = grid 3").
+
+use gui::{Arrangement, Edge}
+
+/// The sides a main window can take; "center" puts it between two stacks.
+pub const SIDES: [String; 5] = ["left", "right", "top", "bottom", "center"]
+
+/// The most columns a grid takes.
+pub const COLUMNS_MAX: i64 = 9
+
+/// The bounds of a main window's share, in percent.
+pub const SHARE_MIN: i64 = 20
+pub const SHARE_MAX: i64 = 80
+
+/// What a spec leaves out: the main window's side and share in percent, and
+/// a grid's columns, 0 for as even a grid as the windows make.
+#[derive(Debug, PartialEq)]
+pub struct Defaults {
+    pub side: String
+    pub share: i64
+    pub columns: i64
+}
+
+/// An arrangement the user named.
+#[derive(Debug, PartialEq)]
+pub struct Named {
+    pub name: String
+    pub spec: String
+}
+
+/// The arrangement `spec` describes, `d` filling in what it leaves out;
+/// `None` for text that describes none.
+pub fn parse(spec: String, d: Defaults) -> Option<Arrangement> {
+    let words = spec.trim().to_lowercase().split_whitespace()
+    if words.is_empty() { return None }
+    let rest = words.len() - 1
+    match words[0] {
+        "grid" if rest <= 1 => {
+            let columns = if rest == 1 { words[1].to_i64()? } else { d.columns }
+            if columns < 0 || columns > COLUMNS_MAX { return None }
+            Some(Arrangement::Grid(columns))
+        }
+        "columns" if rest == 0 => Some(Arrangement::Columns)
+        "rows" if rest == 0 => Some(Arrangement::Rows)
+        "main" if rest <= 2 => {
+            let mut side = d.side
+            let mut share = d.share
+            for word in words.iter().skip(1) {
+                if SIDES.contains(word) {
+                    side = word
+                } else {
+                    share = word.trim_end_matches("%").to_i64()?
+                }
+            }
+            if share < SHARE_MIN || share > SHARE_MAX || !SIDES.contains(side) { return None }
+            let fraction = share as f64 / 100.0
+            Some(match side {
+                "right" => Arrangement::Main(Edge::Right, fraction)
+                "top" => Arrangement::Main(Edge::Top, fraction)
+                "bottom" => Arrangement::Main(Edge::Bottom, fraction)
+                "center" => Arrangement::Centered(fraction)
+                _ => Arrangement::Main(Edge::Left, fraction)
+            })
+        }
+        _ => None
+    }
+}
+
+/// The spec that describes `a` whole, needing no defaults: "grid 0" for the
+/// most even grid, where "grid" takes the columns Settings sets.
+pub fn spec_of(a: Arrangement) -> String {
+    let percent = |fraction: f64| (fraction * 100.0).round() as i64
+    match a {
+        Arrangement::Grid(columns) => f"grid {columns}"
+        Arrangement::Columns => "columns"
+        Arrangement::Rows => "rows"
+        Arrangement::Main(Edge::Left, share) => f"main left {percent(share)}"
+        Arrangement::Main(Edge::Right, share) => f"main right {percent(share)}"
+        Arrangement::Main(Edge::Top, share) => f"main top {percent(share)}"
+        Arrangement::Main(Edge::Bottom, share) => f"main bottom {percent(share)}"
+        Arrangement::Centered(share) => f"main center {percent(share)}"
+    }
+}
+
+/// The arrangements `text` names, as Settings keeps them: `name = spec`
+/// entries separated by semicolons or new lines. `None` when an entry has no
+/// name, repeats one, or describes no arrangement.
+pub fn named(text: String, d: Defaults) -> Option<Vec<Named>> {
+    let mut out: Vec<Named> = #[]
+    for entry in text.replace("\n", ";").split(";") {
+        if entry.trim().is_empty() { continue }
+        let name, spec = entry.split_once("=")?
+        let name = name.trim()
+        let spec = spec.trim()
+        if name.is_empty() || out.any(|n| n.name.to_lowercase() == name.to_lowercase()) { return None }
+        parse(spec, d)?
+        out.push(Named { name: name, spec: spec })
+    }
+    Some(out)
+}
+
+/// `list` as Settings keeps it.
+pub fn text_of(list: Vec<Named>) -> String {
+    list.map(|n| f"{n.name} = {n.spec}").join("; ")
+}
+
+/// `list` with `name` describing `spec`, in place of any arrangement of that
+/// name, ignoring case.
+pub fn with_named(list: Vec<Named>, name: String, spec: String) -> Vec<Named> {
+    let mut out = list.filter(|n| n.name.to_lowercase() != name.trim().to_lowercase())
+    out.push(Named { name: name.trim(), spec: spec })
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use gui::{Arrangement, Edge}
+
+    use super::{Defaults, Named}
+
+    fn d() -> Defaults {
+        Defaults { side: "left", share: 60, columns: 0 }
+    }
+
+    #[test]
+    fn each_kind_of_spec_reads_as_its_arrangement() {
+        assert_eq(super::parse("grid", d()), Some(Arrangement::Grid(0)))
+        assert_eq(super::parse("  Grid 3 ", d()), Some(Arrangement::Grid(3)))
+        assert_eq(super::parse("columns", d()), Some(Arrangement::Columns))
+        assert_eq(super::parse("rows", d()), Some(Arrangement::Rows))
+        assert_eq(super::parse("main", d()), Some(Arrangement::Main(Edge::Left, 0.6)))
+        assert_eq(super::parse("main right 65", d()), Some(Arrangement::Main(Edge::Right, 0.65)))
+        assert_eq(super::parse("main 70% bottom", d()), Some(Arrangement::Main(Edge::Bottom, 0.7)))
+        assert_eq(super::parse("main center", d()), Some(Arrangement::Centered(0.6)))
+    }
+
+    #[test]
+    fn a_spec_takes_what_it_leaves_out_from_the_defaults() {
+        let others = Defaults { side: "top", share: 50, columns: 2 }
+        assert_eq(super::parse("grid", others), Some(Arrangement::Grid(2)))
+        assert_eq(super::parse("main", others), Some(Arrangement::Main(Edge::Top, 0.5)))
+    }
+
+    #[test]
+    fn text_that_describes_no_arrangement_reads_as_none() {
+        for spec in ["", "spiral", "grid 10", "grid -1", "grid two", "rows 2", "main 95", "main up", "main left 60 70"] {
+            assert(super::parse(spec, d()).is_none(), spec)
+        }
+    }
+
+    #[test]
+    fn a_whole_spec_reads_back_as_the_same_arrangement() {
+        for a in [Arrangement::Grid(0), Arrangement::Grid(4), Arrangement::Columns, Arrangement::Rows, Arrangement::Main(Edge::Bottom, 0.35), Arrangement::Centered(0.5)] {
+            let other = Defaults { side: "right", share: 25, columns: 3 }
+            assert_eq(super::parse(super::spec_of(a), other), Some(a))
+        }
+    }
+
+    #[test]
+    fn named_arrangements_read_from_settings_text_and_back() {
+        let list = super::named("Coding = main right 65; Review=grid 3\nWide = columns;", d())
+        assert_eq(list, Some(#[Named { name: "Coding", spec: "main right 65" }, Named { name: "Review", spec: "grid 3" }, Named { name: "Wide", spec: "columns" }]))
+        assert_eq(super::text_of(list.unwrap_or(#[])), "Coding = main right 65; Review = grid 3; Wide = columns")
+        assert_eq(super::named("", d()), Some(#[]))
+    }
+
+    #[test]
+    fn a_list_with_a_bad_entry_or_a_repeated_name_reads_as_none() {
+        assert(super::named("Coding main", d()).is_none())
+        assert(super::named("= grid", d()).is_none())
+        assert(super::named("A = spiral", d()).is_none())
+        assert(super::named("A = grid; a = rows", d()).is_none())
+    }
+
+    #[test]
+    fn saving_under_a_taken_name_replaces_that_arrangement() {
+        let list = #[Named { name: "Coding", spec: "grid" }, Named { name: "Review", spec: "rows" }]
+        let out = super::with_named(list, " coding ", "main top 40")
+        assert_eq(out, #[Named { name: "Review", spec: "rows" }, Named { name: "coding", spec: "main top 40" }])
+    }
+}

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.9.0 - Tiled windows
+
+- Tile Windows: Grid lays every waftty window on the current desktop out in a grid over the display, brings them all to the front and leaves the focus where it was.
+- Tile Windows: Current Main gives the window it runs from the left, right, top, bottom or center of the display and splits the rest among the others.
+- Tile Windows: Columns and Tile Windows: Rows put the windows side by side or stacked.
+- Tiled windows make room for a new window and close up after one closes, until Stop Tiling.
+- Next Arrangement (Ctrl+Shift+; or Cmd+Shift+;) steps through the arrangements.
+- Save Arrangement names the arrangement in use; each named one is a command that can take a shortcut.
+- Settings > Tiling sets the main window's side and share, the grid's columns and a gap between windows.
+- Tiling leaves a fullscreen window on another desktop or macOS Space in fullscreen.
+- File > Close All Windows closes every window of this waftty, asking first when a program still runs.
+- The quick terminal opens in place and drops down without a flicker on X11.
+- Waftty keeps track of fullscreen when the desktop changes it, such as the macOS green button, so the next Toggle Fullscreen enters or leaves it as expected.
+- Builds on Gossamer 0.82.0, windowing-gos 0.4.0, gui-engine-gos 0.6.0 and gui-gos 0.5.0.
+
 ## 0.8.4 - Mac shortcuts run once, Processes lines up
 
 - On macOS each shortcut runs its command once, so Cmd+T opens one tab and Processes, Recent Sessions, the command palette and the status bar no longer close as they open.

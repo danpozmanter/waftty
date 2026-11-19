@@ -268,6 +268,17 @@ pub struct Model {
     /// The folder of Claude Code's records watched while a tab runs it; ""
     /// while none does.
     pub watched_records: String
+    /// The arrangement the windows are tiled in, if any.
+    pub tiling: Tiling
+}
+
+/// The arrangement the windows are tiled in.
+#[derive(Debug, Default, PartialEq)]
+pub struct Tiling {
+    /// The arrangement's spec; empty while the windows are not tiled.
+    pub spec: String
+    /// The window that takes the arrangement's main place, while it is open.
+    pub main: String
 }
 
 /// The processes waftty runs, as Processes and the status bar show them.
@@ -317,6 +328,7 @@ pub fn new(s: Settings) -> Model {
         monitor: Monitor { sort: (s.process_sort, s.process_order == "ascending"), signal: 15, ..Monitor::default() }
         watches: Map::new()
         watched_records: ""
+        tiling: Tiling::default()
     }
 }
 
@@ -871,6 +883,12 @@ pub fn request_close_window(m: &mut Model, w: i64) {
 
 /// Quits, asking first when a program runs in any tab.
 pub fn request_quit(m: &mut Model) {
+    request_close_all(m, "Quitting waftty")
+}
+
+/// Closes every window, which ends waftty, asking first when a program runs
+/// in any tab; `action` names the closing in that question.
+pub fn request_close_all(m: &mut Model, action: String) {
     let mut tabs = #[]
     for w in m.windows { for t in w.tabs { tabs.push(t) } }
     let jobs = would_end(*m, tabs)
@@ -878,7 +896,7 @@ pub fn request_quit(m: &mut Model) {
         close_all(m)
     } else {
         let w = m.windows.iter().position(|w| w.focused).unwrap_or(0)
-        gui::perform(Effect::OpenDialogIn(m.windows[w].key, request::confirm("close-all", running_title(jobs), f"{still_running(jobs)}. Quitting waftty ends {if jobs.len() == 1 { "it" } else { "them" }}.", EXIT_ANYWAY, true)))
+        gui::perform(Effect::OpenDialogIn(m.windows[w].key, request::confirm("close-all", running_title(jobs), f"{still_running(jobs)}. {action} ends {if jobs.len() == 1 { "it" } else { "them" }}.", EXIT_ANYWAY, true)))
     }
 }
 

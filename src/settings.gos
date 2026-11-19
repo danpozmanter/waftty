@@ -14,6 +14,7 @@ use gui::services
 use gui::terminal::{ViewOptions, WORD_CHARS}
 use windowing
 
+use arrangements
 use encodings
 use info
 use input_method
@@ -145,6 +146,19 @@ pub struct Settings {
     /// percent of the display.
     pub drop_down_width: i64
     pub drop_down_height: i64
+    /// Where Tile Windows: Current Main puts the focused window: "left", "right",
+    /// "top", "bottom" or "center", and its share of the display in percent.
+    pub tile_main_side: String
+    pub tile_main_share: i64
+    /// The columns Tile Windows: Grid makes; 0 makes the grid as even as it can.
+    pub tile_columns: i64
+    /// Logical pixels around and between tiled windows.
+    pub tile_gap: i64
+    /// Whether tiled windows are laid out again as windows open and close.
+    pub tile_keep: bool
+    /// The arrangements the user named, as `name = spec` entries separated
+    /// by semicolons.
+    pub arrangements: String
 }
 
 impl Default for Settings {
@@ -154,6 +168,7 @@ impl Default for Settings {
             font: "", font_size: 10.0, font_weight: 400, ligatures: true, font_features: "", font_variations: "", bold_font: "", bold_weight: 0, italic_font: "", bold_italic_font: "", scheme: schemes::SYSTEM, cursor: "block", cursor_blink: false, bold_bright: false, legible: true, padding: 4, opacity: 100, line_spacing: 1.0, scrollbar: "always", scrollbar_side: "right", menu_bar: true, tab_bar: "several"
             scrollback: 1_000, scroll_on_output: false, scroll_on_keystroke: true, word_chars: WORD_CHARS, copy_on_select: false, confirm_paste: false, bell: "none", notifications: true, alerts: true, command_alerts: true, alert_after: 10, status_bar: false, status_every: 2, process_sort: "cpu", process_order: "descending", clipboard_write: true, editor: "", option_as_meta: false, input_method: "auto"
             drop_down_key: "F12", drop_down_position: "top", drop_down_width: 100, drop_down_height: 50
+            tile_main_side: "left", tile_main_share: 60, tile_columns: 0, tile_gap: 0, tile_keep: true, arrangements: ""
         }
     }
 }
@@ -166,6 +181,9 @@ pub const STATUS_EVERY_MAX: i64 = 3_600
 
 /// The edges the quick terminal can hang from.
 pub const POSITIONS: [String; 4] = ["top", "bottom", "left", "right"]
+
+/// The widest gap around and between tiled windows.
+pub const TILE_GAP_MAX: i64 = 32
 
 pub const FONT_SIZE_MIN: i64 = 6
 pub const FONT_SIZE_MAX: i64 = 48
@@ -252,6 +270,7 @@ fn values(s: Settings) -> Vec<(String, String)> {
         ("alerts", flag(s.alerts)), ("command_alerts", flag(s.command_alerts)), ("alert_after", f"{s.alert_after}"), ("status_bar", flag(s.status_bar)), ("status_every", f"{s.status_every}"), ("process_sort", s.process_sort), ("process_order", s.process_order)
         ("editor", s.editor), ("option_as_meta", flag(s.option_as_meta)), ("input_method", s.input_method)
         ("drop_down_key", s.drop_down_key), ("drop_down_position", s.drop_down_position), ("drop_down_width", f"{s.drop_down_width}"), ("drop_down_height", f"{s.drop_down_height}")
+        ("tile_main_side", s.tile_main_side), ("tile_main_share", f"{s.tile_main_share}"), ("tile_columns", f"{s.tile_columns}"), ("tile_gap", f"{s.tile_gap}"), ("tile_keep", flag(s.tile_keep)), ("arrangements", s.arrangements)
     ]
 }
 
@@ -336,7 +355,24 @@ pub fn with_values(s: Settings, values: Map<String, String>) -> Settings {
     if let Some(v) = one_of(values, "drop_down_position", POSITIONS) { out.drop_down_position = v }
     if let Some(v) = values.get("drop_down_width").and_then(|v| number_in(v, 20, 100)) { out.drop_down_width = v }
     if let Some(v) = values.get("drop_down_height").and_then(|v| number_in(v, 10, 100)) { out.drop_down_height = v }
+    if let Some(v) = one_of(values, "tile_main_side", arrangements::SIDES) { out.tile_main_side = v }
+    if let Some(v) = values.get("tile_main_share").and_then(|v| number_in(v, arrangements::SHARE_MIN, arrangements::SHARE_MAX)) { out.tile_main_share = v }
+    if let Some(v) = values.get("tile_columns").and_then(|v| number_in(v, 0, arrangements::COLUMNS_MAX)) { out.tile_columns = v }
+    if let Some(v) = values.get("tile_gap").and_then(|v| number_in(v, 0, TILE_GAP_MAX)) { out.tile_gap = v }
+    if let Some(v) = values.get("tile_keep").and_then(flag_of) { out.tile_keep = v }
+    // A list with an entry that names no arrangement keeps the one before.
+    if let Some(v) = text("arrangements") && let Some(list) = arrangements::named(v, tile_defaults(out)) { out.arrangements = arrangements::text_of(list) }
     out
+}
+
+/// What an arrangement's spec leaves out, as `s` sets it.
+pub fn tile_defaults(s: Settings) -> arrangements::Defaults {
+    arrangements::Defaults { side: s.tile_main_side, share: s.tile_main_share, columns: s.tile_columns }
+}
+
+/// The arrangements the user named; none when the stored list is unreadable.
+pub fn named_arrangements(s: Settings) -> Vec<arrangements::Named> {
+    arrangements::named(s.arrangements, tile_defaults(s)).unwrap_or(#[])
 }
 
 /// Whether `chord` is one key with modifiers, as a global shortcut takes.
@@ -467,8 +503,23 @@ pub fn dialog(s: Settings, fonts: Vec<String>, offered: Vec<schemes::Entry>, reg
             field("drop_down_width", "Length", PreferenceKind::Integer(20, 100), f"{s.drop_down_width}", f"{d.drop_down_width}", "Along its edge, in percent of the display.")
             field("drop_down_height", "Depth", PreferenceKind::Integer(10, 100), f"{s.drop_down_height}", f"{d.drop_down_height}", "Out from its edge, in percent of the display.")
         ] }
+        PreferencePage { key: "tiling", title: "Tiling", fields: #[
+            field("tile_main_side", "Main window", PreferenceKind::Choice(#[("left", "Left"), ("right", "Right"), ("top", "Top"), ("bottom", "Bottom"), ("center", "Center")]), s.tile_main_side, d.tile_main_side, "Where Tile Windows: Current Main puts the window it runs from; the others share the rest of the display.")
+            field("tile_main_share", "Main window share", PreferenceKind::Integer(arrangements::SHARE_MIN, arrangements::SHARE_MAX), f"{s.tile_main_share}", f"{d.tile_main_share}", "In percent of the display, across from its side.")
+            field("tile_columns", "Grid columns", PreferenceKind::Choice(grid_columns()), f"{s.tile_columns}", f"{d.tile_columns}", "How Tile Windows: Grid lays windows out: rows of this many.")
+            field("tile_gap", "Gap", PreferenceKind::Integer(0, TILE_GAP_MAX), f"{s.tile_gap}", f"{d.tile_gap}", "Space around and between tiled windows.")
+            toggle("tile_keep", "Keep windows tiled", s.tile_keep, d.tile_keep, "Tiled windows make room for a new window and close up after one closes, until Stop Tiling.")
+            field("arrangements", "Saved arrangements", PreferenceKind::Text, s.arrangements, d.arrangements, "Name = layout entries separated by semicolons, such as Coding = main right 65; Review = grid 3. A layout is grid (Grid columns decides), grid 0 (as even as the windows make), grid 3, columns, rows, or main with left, right, top, bottom or center and a share. Each one becomes a command the Shortcuts page can give a key.")
+        ] }
         PreferencePage { key: "shortcuts", title: "Shortcuts", fields: shortcut_fields(registry, chosen) }
     ])
+}
+
+// The column counts Tile Windows: Grid offers.
+fn grid_columns() -> Vec<(String, String)> {
+    let mut out = #[("0", "As even as the windows make")]
+    for n in 1..arrangements::COLUMNS_MAX + 1 { out.push((f"{n}", if n == 1 { "1 (stacked)" } else { f"{n}" })) }
+    out
 }
 
 // The menu bar shows in the window except on macOS, whose menus live in the
