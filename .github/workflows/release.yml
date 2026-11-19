@@ -18,7 +18,7 @@ env:
   # project.toml reaches the libraries at ../goose-libs/<name>. CI checks out
   # these releases; a waftty release changes them with its "Builds on" line,
   # and test.yml and release.yml name the same ones.
-  WINDOWING_REF: v0.4.0
+  WINDOWING_REF: v0.4.1
   ENGINE_REF: v0.6.0
   GUI_REF: v0.5.0
   RUSTUP_TOOLCHAIN: 1.95.0

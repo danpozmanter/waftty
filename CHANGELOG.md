@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.1 - Quick terminal opens faster
+
+- The quick terminal opens as fast as it did before 0.9.0.
+- On X11 the quick terminal's shell starts at the size of the docked window.
+- Builds on windowing-gos 0.4.1.
+
 ## 0.9.0 - Tiled windows
 
 - Tile Windows: Grid lays every waftty window on the current desktop out in a grid over the display, brings them all to the front and leaves the focus where it was.

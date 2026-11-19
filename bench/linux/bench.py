@@ -64,8 +64,13 @@ def drop_down(term):
 
 
 def work_area():
-    v = root.get_full_property(A("_NET_WORKAREA"), X.AnyPropertyType).value
-    return v[2], v[3]
+    """The work area's size; the whole screen under a window manager that
+    publishes none, as drop-down terminals then take it."""
+    p = root.get_full_property(A("_NET_WORKAREA"), X.AnyPropertyType)
+    if p is None:
+        g = root.get_geometry()
+        return g.width, g.height
+    return p.value[2], p.value[3]
 
 
 def share_of_work_area():
