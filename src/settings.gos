@@ -146,11 +146,11 @@ pub struct Settings {
     /// percent of the display.
     pub drop_down_width: i64
     pub drop_down_height: i64
-    /// Where Tile with Main Window puts the focused window: "left", "right",
+    /// Where Tile Windows: Current Main puts the focused window: "left", "right",
     /// "top", "bottom" or "center", and its share of the display in percent.
     pub tile_main_side: String
     pub tile_main_share: i64
-    /// The columns Tile Windows makes; 0 makes the grid as even as it can.
+    /// The columns Tile Windows: Grid makes; 0 makes the grid as even as it can.
     pub tile_columns: i64
     /// Logical pixels around and between tiled windows.
     pub tile_gap: i64
@@ -504,18 +504,18 @@ pub fn dialog(s: Settings, fonts: Vec<String>, offered: Vec<schemes::Entry>, reg
             field("drop_down_height", "Depth", PreferenceKind::Integer(10, 100), f"{s.drop_down_height}", f"{d.drop_down_height}", "Out from its edge, in percent of the display.")
         ] }
         PreferencePage { key: "tiling", title: "Tiling", fields: #[
-            field("tile_main_side", "Main window", PreferenceKind::Choice(#[("left", "Left"), ("right", "Right"), ("top", "Top"), ("bottom", "Bottom"), ("center", "Center")]), s.tile_main_side, d.tile_main_side, "Where Tile with Main Window puts the window it runs from; the others share the rest of the display.")
+            field("tile_main_side", "Main window", PreferenceKind::Choice(#[("left", "Left"), ("right", "Right"), ("top", "Top"), ("bottom", "Bottom"), ("center", "Center")]), s.tile_main_side, d.tile_main_side, "Where Tile Windows: Current Main puts the window it runs from; the others share the rest of the display.")
             field("tile_main_share", "Main window share", PreferenceKind::Integer(arrangements::SHARE_MIN, arrangements::SHARE_MAX), f"{s.tile_main_share}", f"{d.tile_main_share}", "In percent of the display, across from its side.")
-            field("tile_columns", "Grid columns", PreferenceKind::Choice(grid_columns()), f"{s.tile_columns}", f"{d.tile_columns}", "How Tile Windows lays windows out: rows of this many.")
+            field("tile_columns", "Grid columns", PreferenceKind::Choice(grid_columns()), f"{s.tile_columns}", f"{d.tile_columns}", "How Tile Windows: Grid lays windows out: rows of this many.")
             field("tile_gap", "Gap", PreferenceKind::Integer(0, TILE_GAP_MAX), f"{s.tile_gap}", f"{d.tile_gap}", "Space around and between tiled windows.")
             toggle("tile_keep", "Keep windows tiled", s.tile_keep, d.tile_keep, "Tiled windows make room for a new window and close up after one closes, until Stop Tiling.")
-            field("arrangements", "Saved arrangements", PreferenceKind::Text, s.arrangements, d.arrangements, "Name = layout entries separated by semicolons, such as Coding = main right 65; Review = grid 3. A layout is grid, grid 3, columns, rows, or main with left, right, top, bottom or center and a share. Each one becomes a command the Shortcuts page can give a key.")
+            field("arrangements", "Saved arrangements", PreferenceKind::Text, s.arrangements, d.arrangements, "Name = layout entries separated by semicolons, such as Coding = main right 65; Review = grid 3. A layout is grid (Grid columns decides), grid 0 (as even as the windows make), grid 3, columns, rows, or main with left, right, top, bottom or center and a share. Each one becomes a command the Shortcuts page can give a key.")
         ] }
         PreferencePage { key: "shortcuts", title: "Shortcuts", fields: shortcut_fields(registry, chosen) }
     ])
 }
 
-// The column counts Tile Windows offers.
+// The column counts Tile Windows: Grid offers.
 fn grid_columns() -> Vec<(String, String)> {
     let mut out = #[("0", "As even as the windows make")]
     for n in 1..arrangements::COLUMNS_MAX + 1 { out.push((f"{n}", if n == 1 { "1 (stacked)" } else { f"{n}" })) }

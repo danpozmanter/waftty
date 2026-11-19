@@ -21,6 +21,7 @@ pub const NEW_PRIVATE_TAB: String = "file.new-private-tab"
 pub const NEW_PRIVATE_WINDOW: String = "file.new-private-window"
 pub const CLOSE_TAB: String = "file.close-tab"
 pub const CLOSE_WINDOW: String = "file.close-window"
+pub const CLOSE_ALL_WINDOWS: String = "file.close-all-windows"
 pub const QUIT: String = "file.quit"
 pub const SAVE_SCROLLBACK: String = "file.save-scrollback"
 pub const SAVE_SELECTION: String = "file.save-selection"
@@ -259,6 +260,7 @@ pub fn registry(m: Model, key: String) -> Vec<Command> {
         Command::new(NEW_PRIVATE_WINDOW, "New Private Window").category("File")
         Command::new(CLOSE_TAB, "Close Tab").key(chord("Ctrl+Shift+W", "Cmd+W")).category("File").enabled(has_tab && !pinned)
         close_window
+        Command::new(CLOSE_ALL_WINDOWS, "Close All Windows").category("File")
         Command::new(QUIT, "Quit").key(chord("Ctrl+Shift+Q", "Cmd+Q")).category("File")
         Command::new(SAVE_SCROLLBACK, "Save Scrollback…").key(chord("Ctrl+Shift+S", "Cmd+Shift+S")).category("File").enabled(has_tab)
         Command::new(SAVE_SELECTION, "Save Selection…").category("File").enabled(has_tab)
@@ -405,7 +407,7 @@ pub fn menu_bar(m: Model, key: String) -> gui::Widget {
         Menu::new("&File", #[
             menus::item(NEW_TAB), menus::item(NEW_WINDOW), menus::item(NEW_PRIVATE_TAB), menus::item(NEW_PRIVATE_WINDOW), MenuItem::Separator
             menus::item(SAVE_SCROLLBACK), menus::item(SAVE_SELECTION), menus::item(EDIT_SCROLLBACK), MenuItem::Separator
-            menus::item(CLOSE_TAB), menus::item(CLOSE_WINDOW), MenuItem::Separator
+            menus::item(CLOSE_TAB), menus::item(CLOSE_WINDOW), menus::item(CLOSE_ALL_WINDOWS), MenuItem::Separator
             menus::item(QUIT)
         ])
         Menu::new("&Edit", #[

@@ -505,9 +505,9 @@ fn command(m: &mut Model, window: String, id: String) {
     }
     // The palette and Recent Directories close for any command they do not
     // open, the palette's own choice included.
-    if tiling::command(m, window, id) { return }
     let leaves = (m.windows[w].palette && id != commands::COMMAND_PALETTE) || (m.windows[w].recent && id != commands::RECENT_DIRS) || (m.windows[w].sessions && id != commands::RECENT_SESSIONS) || (m.windows[w].processes && id != commands::PROCESSES)
     if leaves { hide_overlays(m, w) }
+    if tiling::command(m, window, id) { return }
     let tab = m.windows[w].current()
     match id {
         commands::COMMAND_PALETTE => if m.windows[w].palette { close_overlays(m, w) } else { open_palette(m, w) }
@@ -546,6 +546,7 @@ fn command(m: &mut Model, window: String, id: String) {
             if let Some(t) = tab && !t.pinned { model::request_close_tab(m, t.key) }
         }
         commands::CLOSE_WINDOW => model::request_close_window(m, w)
+        commands::CLOSE_ALL_WINDOWS => model::request_close_all(m, "Closing every window")
         commands::QUIT => model::request_quit(m)
         commands::OPEN_LINK => {
             if let Some(t) = tab && !t.link.is_empty() { gui::perform(Effect::OpenUrl(t.link)) }
@@ -1020,6 +1021,7 @@ mod tests {
     use recent
     use sessions
     use settings::Settings
+    use tiling
 
     #[test]
     fn the_palette_toggles_on_its_command_and_closes_for_the_command_it_runs() {
@@ -1035,6 +1037,28 @@ mod tests {
         m = super::update(m, UiMsg::Command(commands::COMMAND_PALETTE))
         m = super::update(m, UiMsg::Command(commands::CLOSE_PALETTE))
         assert(!m.windows[0].palette)
+        m = super::update(m, UiMsg::Command(commands::COMMAND_PALETTE))
+        m = super::update(m, UiMsg::Command(tiling::GRID))
+        assert(!m.windows[0].palette, "a tiling command closes the palette")
+    }
+
+    #[test]
+    fn close_all_windows_closes_every_window() {
+        // Closing the last window saves the session, so it runs against a
+        // folder of the test's own, never the user's configuration.
+        let Ok(root) = fs::temp_dir("waftty-close-all-") else { panic("no temporary folder") }
+        services::set_config_root(root)
+        defer {
+            services::set_config_root("")
+            let _ = fs::remove_dir_all(root)
+        }
+        let mut m = model::new(Settings::default())
+        m.windows.push(model::window("window-1"))
+        m.windows.push(model::window("window-2"))
+        let _ = gui::app::effects::take()
+        m = super::update(m, UiMsg::Command(commands::CLOSE_ALL_WINDOWS))
+        assert(m.windows.is_empty())
+        assert(gui::app::effects::take().any(|e| e == gui::Effect::Quit), "the last window's closing ends waftty")
     }
 
     #[test]

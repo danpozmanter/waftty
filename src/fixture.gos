@@ -686,13 +686,13 @@ pub fn journey() -> Result<(), errors::Error> {
     s.run_command(0, tiling::ROWS)
     s.flush()?
     let row = s.window_size(0)
-    require(row == s.window_size(1) && row.width > column.width && row.height < column.height, f"Tile in Rows made the windows {row} and {s.window_size(1)}")?
+    require(row == s.window_size(1) && row.width > column.width && row.height < column.height, f"Tile Windows: Rows made the windows {row} and {s.window_size(1)}")?
     s.run_command(0, tiling::STOP)
     s.run_command(1, commands::CLOSE_WINDOW)
     s.flush()?
     require(s.window_count() == 1, f"Close Window left {s.window_count()} windows")?
     require(s.window_size(0) == row, f"closing a window after Stop Tiling made the other {s.window_size(0)}")?
-    println("windows: New Window's shortcut opened one, Next Arrangement's shortcut tiled the two side by side, Tile in Rows stacked them, Stop Tiling left them, Close Window closed one")
+    println("windows: New Window's shortcut opened one, Next Arrangement's shortcut tiled the two side by side, Tile Windows: Rows stacked them, Stop Tiling left them, Close Window closed one")
 
     s.emit(gui::UiMsg::CommandLine(config, #["--title", "forwarded", "-e", "/bin/sh", "-c", "echo forwarded-run; exec /bin/sh"]))
     s.flush()?

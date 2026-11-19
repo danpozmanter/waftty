@@ -199,6 +199,8 @@ keep their own history as they always do.
   A pane whose program exits closes the same way.
 - A split tab is one tab in the strip, named for its focused pane. Close Tab
   closes it with all its panes.
+- **File > Close All Windows** closes every window this waftty opened, which
+  ends it, asking first when a program still runs in one.
 
 ## Tiling Windows
 
@@ -206,17 +208,19 @@ keep their own history as they always do.
 desktop out side by side over the display the window you are in is on.
 Minimized windows, windows on other desktops and the quick terminal stay
 where they are; a maximized or fullscreen window gets its frame back first.
+The tiled windows come to the front, and the window you are in keeps the
+focus.
 
-- **Tile Windows** makes a grid: as many columns as rows, or one more, with
+- **Tile Windows: Grid** makes a grid: as many columns as rows, or one more, with
   a short last row shared among its windows. **Settings > Tiling > Grid
   columns** fixes the columns instead, for rows of 2 (2x2 with four windows)
   or 3.
-- **Tile with Main Window** gives the window you are in one side of the
+- **Tile Windows: Current Main** gives the window you are in one side of the
   display and splits the rest among the others. **Main window** on the
   Tiling page puts it on the left (the default), right, top or bottom, or in
   the center between two stacks, and **Main window share** sets how much of
   the display it takes.
-- **Tile in Columns** and **Tile in Rows** put the windows side by side or
+- **Tile Windows: Columns** and **Tile Windows: Rows** put the windows side by side or
   stacked.
 - **Next Arrangement** (++ctrl+shift+semicolon++, ++cmd+shift+semicolon++ on
   macOS) tiles the windows, and each further press moves to the next
@@ -500,7 +504,7 @@ are saved, so the defaults follow your desktop.
 - **Quick Terminal**: the shortcut that shows and hides the
   [quick terminal](#quick-terminal), the edge it hangs from, and its length
   and depth.
-- **Tiling**: where [Tile with Main Window](#tiling-windows) puts the
+- **Tiling**: where [Tile Windows: Current Main](#tiling-windows) puts the
   main window and its share, the grid's columns, the gap between tiled
   windows, whether they stay tiled as windows open and close, and the saved
   arrangements.

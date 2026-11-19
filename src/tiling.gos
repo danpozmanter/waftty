@@ -62,10 +62,10 @@ fn chord(others: String, mac: String) -> String {
 pub fn commands(m: Model) -> Vec<Command> {
     let tiled = !m.tiling.spec.is_empty()
     let mut out = #[
-        Command::new(GRID, "Tile Windows").category("Window").checked(m.tiling.spec == "grid")
-        Command::new(MAIN, "Tile with Main Window").category("Window").checked(m.tiling.spec == "main")
-        Command::new(COLUMNS, "Tile in Columns").category("Window").checked(m.tiling.spec == "columns")
-        Command::new(ROWS, "Tile in Rows").category("Window").checked(m.tiling.spec == "rows")
+        Command::new(GRID, "Tile Windows: Grid").category("Window").checked(m.tiling.spec == "grid")
+        Command::new(MAIN, "Tile Windows: Current Main").category("Window").checked(m.tiling.spec == "main")
+        Command::new(COLUMNS, "Tile Windows: Columns").category("Window").checked(m.tiling.spec == "columns")
+        Command::new(ROWS, "Tile Windows: Rows").category("Window").checked(m.tiling.spec == "rows")
         Command::new(NEXT, "Next Arrangement").key(chord("Ctrl+Shift+;", "Cmd+Shift+;")).category("Window")
         Command::new(STOP, "Stop Tiling").category("Window").enabled(tiled)
         Command::new(SAVE, "Save Arrangement…").category("Window").enabled(tiled)
