@@ -2,7 +2,7 @@
 
 ## 0.9.3 - Self-contained Linux AppImage
 
-- Bundle glibc in the Linux AppImage and build with Gossamer 0.84.2.
+- Bundle glibc in the Linux AppImage.
 
 ## 0.9.2 - Quick terminal sized from the start on macOS
 
