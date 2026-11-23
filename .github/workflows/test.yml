@@ -12,13 +12,13 @@ permissions:
 env:
   GOSSAMER_REPO: gossamer-lang/gossamer
   # The toolchain release waftty requires.
-  GOSSAMER_VERSION: v0.82.0
+  GOSSAMER_VERSION: v0.84.3
   # project.toml reaches the libraries at ../goose-libs/<name>. CI checks out
   # these releases; a waftty release changes them with its "Builds on" line,
   # and test.yml and release.yml name the same ones.
-  WINDOWING_REF: v0.4.1
-  ENGINE_REF: v0.6.1
-  GUI_REF: v0.5.0
+  WINDOWING_REF: v0.4.3
+  ENGINE_REF: v0.6.3
+  GUI_REF: v0.5.2
   RUSTUP_TOOLCHAIN: 1.95.0
   # The journey draws into SDL's offscreen driver; no display is needed.
   SDL_VIDEO_DRIVER: offscreen
@@ -73,10 +73,17 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build pkg-config llvm-18 \
+          sudo apt-get install -y cmake ninja-build pkg-config \
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
             libxss-dev libxfixes-dev libxtst-dev libxkbcommon-dev libwayland-dev \
             wayland-protocols libegl-dev libgl-dev libdecor-0-dev
+          # `llvm.sh` is the LLVM project's own apt repository installer; LLVM 22
+          # is the major rustc bundles and no Ubuntu archive carries it.
+          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 22
+          echo "GOS_LLVM_OPT=/usr/lib/llvm-22/bin/opt" >> "$GITHUB_ENV"
+          echo "GOS_LLC=/usr/lib/llvm-22/bin/llc" >> "$GITHUB_ENV"
           curl -fsSL "https://raw.githubusercontent.com/${GOSSAMER_REPO}/main/scripts/install.sh" | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Install the Gossamer toolchain, LLVM and Ninja (macOS)

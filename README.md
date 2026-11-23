@@ -29,7 +29,7 @@ Download a package from [Releases](https://github.com/danpozmanter/waftty/releas
 
 ## Build
 
-Needs Gossamer 0.82.0 or newer and Rust 1.95.0 through rustup.
+Needs Gossamer 0.84.3 or newer and Rust 1.95.0 through rustup.
 
 ```sh
 gos fetch

@@ -3,6 +3,8 @@
 ## 0.9.3 - Self-contained Linux AppImage
 
 - Bundle glibc in the Linux AppImage.
+- Builds on windowing-gos 0.4.3, gui-engine-gos 0.6.3, and gui-gos 0.5.2. Requires Gossamer 0.84.3.
+- Building from source on Linux takes LLVM 22 from apt.llvm.org; the installation guide shows the commands.
 
 ## 0.9.2 - Quick terminal sized from the start on macOS
 

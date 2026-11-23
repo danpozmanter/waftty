@@ -122,7 +122,7 @@ packages, make the folder yourself:
 
 ## Building from Source
 
-waftty needs [Gossamer](https://github.com/gossamer-lang/gossamer) 0.82.0 or
+waftty needs [Gossamer](https://github.com/gossamer-lang/gossamer) 0.84.3 or
 newer, Rust 1.95.0 through rustup (`rustup toolchain install 1.95.0`), and
 LLVM for native builds. The GUI libraries are expected beside the checkout at
 `../goose-libs`.
@@ -148,10 +148,12 @@ gos build --release        # a native binary in target/release
 ./install.sh --system      # Linux, FreeBSD: build and install to /usr/local
 ```
 
-On Linux, building SDL needs its usual development packages. On Ubuntu:
+On Linux, building SDL needs its usual development packages, and `gos build`
+wants LLVM 22 from [apt.llvm.org](https://apt.llvm.org). On Ubuntu:
 
 ```sh
-sudo apt-get install cmake ninja-build pkg-config llvm-18 \
+wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh && sudo bash /tmp/llvm.sh 22
+sudo apt-get install cmake ninja-build pkg-config \
   libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
   libxss-dev libxfixes-dev libxtst-dev libxkbcommon-dev libwayland-dev \
   wayland-protocols libegl-dev libgl-dev libdecor-0-dev
