@@ -211,17 +211,24 @@ EOF
 
 appimage() {
     local bundle="$1" dir="$stage/$exe.AppDir" file="$out/$exe-$version-$arch.AppImage"
-    need appimagetool
+    need appimage-deploy appimagetool
     mkdir -p "$dir/usr"
     cp -r "$bundle/bin" "$bundle/share" "$dir/usr/"
     cp "$bundle/share/applications/$app_id.desktop" "$dir/"
     cp "$icon" "$dir/$app_id.png"
     cp "$icon" "$dir/.DirIcon"
-    # The AppImage runtime's own variables would otherwise reach every shell
-    # waftty opens, and tell programs there that they run from this AppImage.
+    # Bundle glibc and its loader as well as the application dependencies.
+    # go-appimage also writes an AppRun, which we replace below so child shells
+    # do not inherit its broad environment overrides.
+    APPIMAGE_EXTRACT_AND_RUN=1 appimage-deploy -s deploy \
+        "$dir/usr/share/applications/$app_id.desktop" >&2
     cat > "$dir/AppRun" <<EOF
 #!/bin/sh
 here="\$(dirname "\$(readlink -f "\$0")")"
+loader="\$(find "\$here" -name 'ld-linux*.so.*' -print -quit)"
+if [ -n "\$loader" ]; then
+    exec env -u APPDIR -u APPIMAGE -u ARGV0 -u OWD "\$loader" --inhibit-cache "\$here/usr/bin/$exe" "\$@"
+fi
 exec env -u APPDIR -u APPIMAGE -u ARGV0 -u OWD "\$here/usr/bin/$exe" "\$@"
 EOF
     chmod 755 "$dir/AppRun"
