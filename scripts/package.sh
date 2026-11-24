@@ -211,7 +211,7 @@ EOF
 
 appimage() {
     local bundle="$1" dir="$stage/$exe.AppDir" file="$out/$exe-$version-$arch.AppImage"
-    need appimage-deploy appimagetool
+    need appimage-deploy appimagetool readelf
     mkdir -p "$dir/usr"
     cp -r "$bundle/bin" "$bundle/share" "$dir/usr/"
     cp "$bundle/share/applications/$app_id.desktop" "$dir/"
@@ -222,14 +222,19 @@ appimage() {
     # do not inherit its broad environment overrides.
     APPIMAGE_EXTRACT_AND_RUN=1 appimage-deploy -s deploy \
         "$dir/usr/share/applications/$app_id.desktop" >&2
+    # go-appimage deploys the loader at the binary's own interpreter path,
+    # patched to read nothing of the host's; any other ld-linux copy in the
+    # AppDir is a plain library and cannot run the program.
+    local interp
+    interp="$(readelf -l "$dir/usr/bin/$exe" | sed -n 's/.*program interpreter: \(.*\)]$/\1/p')"
+    if [ ! -x "$dir$interp" ]; then
+        echo "package: no executable loader at '$interp' in the AppDir" >&2
+        exit 1
+    fi
     cat > "$dir/AppRun" <<EOF
 #!/bin/sh
 here="\$(dirname "\$(readlink -f "\$0")")"
-loader="\$(find "\$here" -name 'ld-linux*.so.*' -print -quit)"
-if [ -n "\$loader" ]; then
-    exec env -u APPDIR -u APPIMAGE -u ARGV0 -u OWD "\$loader" --inhibit-cache "\$here/usr/bin/$exe" "\$@"
-fi
-exec env -u APPDIR -u APPIMAGE -u ARGV0 -u OWD "\$here/usr/bin/$exe" "\$@"
+exec env -u APPDIR -u APPIMAGE -u ARGV0 -u OWD "\$here$interp" --inhibit-cache "\$here/usr/bin/$exe" "\$@"
 EOF
     chmod 755 "$dir/AppRun"
     ARCH="$arch" APPIMAGE_EXTRACT_AND_RUN=1 appimagetool --no-appstream \
