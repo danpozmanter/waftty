@@ -16,7 +16,7 @@ env:
   # project.toml reaches the libraries at ../goose-libs/<name>. CI checks out
   # these releases; a waftty release changes them with its "Builds on" line,
   # and test.yml and release.yml name the same ones.
-  WINDOWING_REF: v0.4.4
+  WINDOWING_REF: v0.4.5
   ENGINE_REF: v0.6.3
   GUI_REF: v0.5.2
   RUSTUP_TOOLCHAIN: 1.95.0
@@ -40,8 +40,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # The Ubuntu the release builds on, so the package step's glibc
+          # floor check sees the binary the release ships.
           - name: Linux
-            os: ubuntu-24.04
+            os: ubuntu-22.04
           - name: macOS
             os: macos-15
           - name: Windows

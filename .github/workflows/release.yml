@@ -18,7 +18,7 @@ env:
   # project.toml reaches the libraries at ../goose-libs/<name>. CI checks out
   # these releases; a waftty release changes them with its "Builds on" line,
   # and test.yml and release.yml name the same ones.
-  WINDOWING_REF: v0.4.4
+  WINDOWING_REF: v0.4.5
   ENGINE_REF: v0.6.3
   GUI_REF: v0.5.2
   RUSTUP_TOOLCHAIN: 1.95.0
@@ -378,7 +378,8 @@ jobs:
           echo "http://127.0.0.1:8000/$(basename "$appimage")" > data/waftty
           status=0
           timeout --kill-after=30 900 bash -e code/worker.sh "$(readlink -f data/waftty)" > worker.log 2>&1 || status=$?
-          grep -vE '^\+' worker.log | tail -n 80
+          grep -E '^(ERROR|WARNING|NOTE|Screenshot|X-AppImage)|SUCCESS :-\)' worker.log | grep -v printf || true
+          grep -vE '^\+' worker.log | tail -n 40
           if [ "$status" -ne 0 ]; then
             echo "::error::the catalog test failed (worker.sh exited $status)"
             exit 1
@@ -387,6 +388,15 @@ jobs:
             echo "::error::waftty reported a problem under the catalog test"
             exit 1
           fi
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: appimage-catalog-test
+          path: |
+            catalog/worker.log
+            catalog/database/waftty/screenshot.png
+            catalog/failure-screens/
+          if-no-files-found: ignore
 
   release:
     name: Create Release
