@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.4 - The Linux AppImage opens its window
+
+- The Linux AppImage runs on the system's C library, glibc 2.35 (Ubuntu 22.04) or newer, and opens its window: the display, GPU and sound libraries it loads from the system need that same C library, which the 0.9.3 AppImage replaced with its own.
+- The .deb, .rpm and tarball run on glibc 2.35 or newer too: Ubuntu 22.04, Debian 12, Fedora 36 and later.
+- waftty started inside a sandbox, such as firejail, moves its tabs into a systemd scope of its own instead of reporting that it could not.
+- Builds on windowing-gos 0.4.4, gui-engine-gos 0.6.3, and gui-gos 0.5.2. Requires Gossamer 0.84.3.
+
 ## 0.9.3 - Self-contained Linux AppImage
 
 - Bundle glibc in the Linux AppImage.

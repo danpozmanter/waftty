@@ -12,10 +12,10 @@ Download the package for your platform from the
 
 | Platform | Package | Requirements |
 |---|---|---|
-| Debian, Ubuntu | `waftty_VERSION-1_amd64.deb` | Ubuntu 24.04, Debian 13 or newer |
-| Fedora, openSUSE, RHEL | `waftty-VERSION-1.x86_64.rpm` | glibc 2.39 or newer (Fedora 40 and later) |
-| Any Linux x86_64 | `waftty-VERSION-x86_64.AppImage` | glibc 2.39 or newer; nothing to install |
-| Any Linux x86_64 | `waftty-VERSION-linux-x86_64.tar.gz` | glibc 2.39 or newer (Ubuntu 24.04 and later) |
+| Debian, Ubuntu | `waftty_VERSION-1_amd64.deb` | Ubuntu 22.04, Debian 12 or newer |
+| Fedora, openSUSE, RHEL | `waftty-VERSION-1.x86_64.rpm` | glibc 2.35 or newer (Fedora 36 and later) |
+| Any Linux x86_64 | `waftty-VERSION-x86_64.AppImage` | glibc 2.35 or newer; nothing to install |
+| Any Linux x86_64 | `waftty-VERSION-linux-x86_64.tar.gz` | glibc 2.35 or newer (Ubuntu 22.04 and later) |
 | FreeBSD x86_64 | `waftty-VERSION-freebsd-x86_64.tar.gz` | FreeBSD 15 or newer |
 | macOS, Apple Silicon | `waftty-VERSION-macos-aarch64.zip` | macOS 12 or newer on an M-series Mac |
 | macOS, Intel | `waftty-VERSION-macos-x86_64.zip` | macOS 12 or newer on an Intel Mac |

@@ -20,7 +20,7 @@ A tabbed terminal emulator for Linux, macOS, Windows and FreeBSD, written in
 
 Download a package from [Releases](https://github.com/danpozmanter/waftty/releases):
 
-- Linux x86_64 (glibc 2.39+, as on Ubuntu 24.04): .deb, .rpm, AppImage or tarball.
+- Linux x86_64 (glibc 2.35+, as on Ubuntu 22.04): .deb, .rpm, AppImage or tarball.
 - macOS 12+: one zip for Intel and one for Apple Silicon. Unzip it and double-click `install.command`.
 - Windows x86_64: a setup program, or a zip (the `-portable.zip` keeps settings beside waftty).
 - FreeBSD 15+ x86_64: a tarball.

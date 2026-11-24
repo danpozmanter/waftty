@@ -7,7 +7,8 @@
 #            folder keeps the settings beside waftty.exe
 # With --installers it also builds the release's installers:
 #   Linux    waftty_VERSION-1_ARCH.deb, waftty-VERSION-1.ARCH.rpm and
-#            waftty-VERSION-ARCH.AppImage (dpkg-deb, rpmbuild, appimagetool)
+#            waftty-VERSION-ARCH.AppImage (dpkg-deb, rpmbuild, appimagetool);
+#            each needs glibc 2.35 or newer
 #   Windows  waftty-VERSION-ARCH-setup.exe (Inno Setup 6, ImageMagick)
 # Each gets a .sha256 beside it, and its path is printed.
 #
@@ -115,6 +116,16 @@ fi
 if { [ "$platform" = linux ] || [ "$platform" = freebsd ]; } && ldd "$binary" | grep -q "not found"; then
     die "unresolved native libraries: $(ldd "$binary" | grep "not found")"
 fi
+# The Linux packages run on glibc 2.35 (Ubuntu 22.04) and every newer one.
+glibc_floor=2.35
+if [ "$platform" = linux ]; then
+    need objdump
+    glibc_needed="$(objdump -T "$binary" | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' | sed 's/^GLIBC_//' | sort -Vu | tail -n 1)"
+    [ -n "$glibc_needed" ] || die "found no glibc symbol versions in $binary"
+    [ "$(printf '%s\n%s\n' "$glibc_needed" "$glibc_floor" | sort -V | tail -n 1)" = "$glibc_floor" ] ||
+        die "$exe needs glibc $glibc_needed, newer than the $glibc_floor floor; build on Ubuntu 22.04"
+    echo "glibc: $exe needs $glibc_needed, within the $glibc_floor floor" >&2
+fi
 
 # The licenses of what the binary carries: fonts, SDL, pulldown-cmark,
 # WezTerm's terminal core, harfrust's shaping and fontations' font reading,
@@ -211,30 +222,21 @@ EOF
 
 appimage() {
     local bundle="$1" dir="$stage/$exe.AppDir" file="$out/$exe-$version-$arch.AppImage"
-    need appimage-deploy appimagetool readelf
+    need appimagetool
     mkdir -p "$dir/usr"
     cp -r "$bundle/bin" "$bundle/share" "$dir/usr/"
     cp "$bundle/share/applications/$app_id.desktop" "$dir/"
     cp "$icon" "$dir/$app_id.png"
     cp "$icon" "$dir/.DirIcon"
-    # Bundle glibc and its loader as well as the application dependencies.
-    # go-appimage also writes an AppRun, which we replace below so child shells
-    # do not inherit its broad environment overrides.
-    APPIMAGE_EXTRACT_AND_RUN=1 appimage-deploy -s deploy \
-        "$dir/usr/share/applications/$app_id.desktop" >&2
-    # go-appimage deploys the loader at the binary's own interpreter path,
-    # patched to read nothing of the host's; any other ld-linux copy in the
-    # AppDir is a plain library and cannot run the program.
-    local interp
-    interp="$(readelf -l "$dir/usr/bin/$exe" | sed -n 's/.*program interpreter: \(.*\)]$/\1/p')"
-    if [ ! -x "$dir$interp" ]; then
-        echo "package: no executable loader at '$interp' in the AppDir" >&2
-        exit 1
-    fi
+    # The binary runs on the system's C library and loader: its display, GPU
+    # and sound libraries load from the system at run time and are built
+    # against that same C library. The glibc floor check keeps it running on
+    # every system from glibc $glibc_floor on. The AppRun drops the AppImage
+    # runtime's variables so the shells waftty starts do not inherit them.
     cat > "$dir/AppRun" <<EOF
 #!/bin/sh
 here="\$(dirname "\$(readlink -f "\$0")")"
-exec env -u APPDIR -u APPIMAGE -u ARGV0 -u OWD "\$here$interp" --inhibit-cache "\$here/usr/bin/$exe" "\$@"
+exec env -u APPDIR -u APPIMAGE -u ARGV0 -u OWD "\$here/usr/bin/$exe" "\$@"
 EOF
     chmod 755 "$dir/AppRun"
     ARCH="$arch" APPIMAGE_EXTRACT_AND_RUN=1 appimagetool --no-appstream \
