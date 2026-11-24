@@ -60,11 +60,11 @@ pub fn waftty(size: i64) -> gui::AppIcon {
                 .min(gust(px, py, 0.32, 0.56, 0.61, false))
             let white = coverage(frame.min(wind) - STROKE, size)
             let i = (y * size + x) * 4
-            let level = (white * 255.0 + 0.5) as u8
+            let level = (white * 255.0 + 0.5) as% u8
             rgba[i] = level
             rgba[i + 1] = level
             rgba[i + 2] = level
-            rgba[i + 3] = (tile * 255.0 + 0.5) as u8
+            rgba[i + 3] = (tile * 255.0 + 0.5) as% u8
         }
     }
     gui::AppIcon { rgba: rgba, width: size, height: size }

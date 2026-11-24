@@ -287,8 +287,8 @@ fn flag_of(v: String) -> Option<bool> {
 
 // The whole number `v` holds within `min..=max`.
 fn number_in(v: String, min: i64, max: i64) -> Option<i64> {
-    let n = v.to_f64()?.round() as i64
-    if n >= min && n <= max { Some(n) } else { None }
+    let x = v.to_f64()?.round()
+    if x >= min as f64 && x <= max as f64 { Some(x as% i64) } else { None }
 }
 
 /// `s` with the fields `values` names replaced, each one kept when its new
@@ -672,6 +672,15 @@ mod tests {
     fn a_scrollback_longer_than_the_engine_keeps_becomes_the_longest_it_does() {
         assert_eq(super::with_values(Settings::default(), { "scrollback": "1000000" }).scrollback, 100_000)
         assert_eq(super::with_values(Settings::default(), { "scrollback": "50000" }).scrollback, 50_000)
+    }
+
+    #[test]
+    fn a_number_no_whole_number_can_hold_keeps_the_setting() {
+        let d = Settings::default()
+        let s = super::with_values(d, { "scrollback": "1e30", "columns": "nan", "rows": "inf" })
+        assert_eq(s.scrollback, d.scrollback)
+        assert_eq(s.columns, d.columns)
+        assert_eq(s.rows, d.rows)
     }
 
     #[test]

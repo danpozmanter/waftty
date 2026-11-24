@@ -74,10 +74,8 @@ pub fn summon(m: &mut Model) {
 /// keep that size for next time.
 pub fn resized(m: &mut Model, length: f64, depth: f64) {
     let mut chosen = m.settings
-    chosen.drop_down_width = (length * 100.0).round() as i64
-    chosen.drop_down_height = (depth * 100.0).round() as i64
-    chosen.drop_down_width = chosen.drop_down_width.clamp(20, 100)
-    chosen.drop_down_height = chosen.drop_down_height.clamp(10, 100)
+    chosen.drop_down_width = ((length * 100.0).round() as% i64).clamp(20, 100)
+    chosen.drop_down_height = ((depth * 100.0).round() as% i64).clamp(10, 100)
     if chosen == m.settings { return }
     m.settings = chosen
     if let Err(why) = settings::save(chosen) { model::report(m.windows[0].key, "Couldn't save the quick terminal's size", why) }

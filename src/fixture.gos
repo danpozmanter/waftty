@@ -110,7 +110,7 @@ fn cell_point(s: gui::Session, row: i64, col: i64) -> Option<(i64, i64)> {
     if rows == 0 || cols == 0 { return None }
     let width = r.width as f64 / cols as f64
     let height = r.height as f64 / rows as f64
-    Some((r.x + ((col as f64 + 0.5) * width) as i64, r.y + ((row as f64 + 0.5) * height) as i64))
+    Some((r.x + ((col as f64 + 0.5) * width) as% i64, r.y + ((row as f64 + 0.5) * height) as% i64))
 }
 
 // The rows the main window's terminal shows, as text.

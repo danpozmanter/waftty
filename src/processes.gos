@@ -198,7 +198,7 @@ pub fn size_text(bytes: i64) -> String {
         value /= 1024.0
         unit += 1
     }
-    if unit == 0 { f"{bytes.max(0)} B" } else if value < 10.0 { f"{value:.1} {units[unit]}" } else { f"{value.round() as i64} {units[unit]}" }
+    if unit == 0 { f"{bytes.max(0)} B" } else if value < 10.0 { f"{value:.1} {units[unit]}" } else { f"{value.round() as% i64} {units[unit]}" }
 }
 
 /// A size, or a dash where it is unknown.
@@ -212,7 +212,7 @@ pub fn memory_text(bytes: Option<i64>) -> String {
 /// A rate in bytes per second, or a dash before there is one.
 pub fn rate_text(rate: Option<f64>) -> String {
     match rate {
-        Some(r) => f"{size_text(r.round() as i64)}/s"
+        Some(r) => f"{size_text(r.round() as% i64)}/s"
         None => "\u{2013}"
     }
 }

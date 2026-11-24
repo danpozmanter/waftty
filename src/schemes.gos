@@ -244,7 +244,7 @@ pub fn normalized(text: String) -> Option<String> {
 
 // The color red, green and blue fractions from 0 to 1 make.
 fn from_fractions(r: f64, g: f64, b: f64) -> String {
-    let byte = |f: f64| (f.clamp(0.0, 1.0) * 255.0).round() as i64
+    let byte = |f: f64| (f.clamp(0.0, 1.0) * 255.0).round() as% i64
     f"#{byte(r):02x}{byte(g):02x}{byte(b):02x}"
 }
 

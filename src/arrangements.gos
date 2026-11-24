@@ -71,7 +71,7 @@ pub fn parse(spec: String, d: Defaults) -> Option<Arrangement> {
 /// The spec that describes `a` whole, needing no defaults: "grid 0" for the
 /// most even grid, where "grid" takes the columns Settings sets.
 pub fn spec_of(a: Arrangement) -> String {
-    let percent = |fraction: f64| (fraction * 100.0).round() as i64
+    let percent = |fraction: f64| (fraction * 100.0).round() as% i64
     match a {
         Arrangement::Grid(columns) => f"grid {columns}"
         Arrangement::Columns => "columns"

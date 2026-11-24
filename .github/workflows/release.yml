@@ -14,7 +14,7 @@ env:
   # The toolchain release waftty builds with. Its runtime targets glibc 2.35
   # (Ubuntu 22.04), the floor of the Linux packages, and its macos12 archives
   # target macOS 12, the floor of the macOS packages.
-  GOSSAMER_VERSION: v0.84.3
+  GOSSAMER_VERSION: v0.84.4
   # project.toml reaches the libraries at ../goose-libs/<name>. CI checks out
   # these releases; a waftty release changes them with its "Builds on" line,
   # and test.yml and release.yml name the same ones.

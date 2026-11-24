@@ -438,8 +438,8 @@ pub fn program_name(program: String) -> String {
 /// characters at `points`, with the menu bar and padding around them.
 pub fn window_size(s: Settings, points: f64) -> (i64, i64) {
     let px = points * 96.0 / 72.0
-    let width = (s.columns as f64 * px * 0.6).ceil() as i64 + 2 * s.padding + if s.scrollbar == "always" { 10 } else { 0 }
-    let height = (s.rows as f64 * px * 1.25 * s.line_spacing).ceil() as i64 + 2 * s.padding + if s.menu_bar { 30 } else { 0 }
+    let width = (s.columns as f64 * px * 0.6).ceil() as% i64 + 2 * s.padding + if s.scrollbar == "always" { 10 } else { 0 }
+    let height = (s.rows as f64 * px * 1.25 * s.line_spacing).ceil() as% i64 + 2 * s.padding + if s.menu_bar { 30 } else { 0 }
     (width.max(360), height.max(220))
 }
 

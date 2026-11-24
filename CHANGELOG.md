@@ -3,6 +3,7 @@
 ## 0.9.3 - Self-contained Linux AppImage
 
 - Bundle glibc in the Linux AppImage.
+- A number entered in Settings that no whole number can hold, such as `1e30` or `nan`, leaves the setting unchanged instead of closing waftty.
 - Builds on windowing-gos 0.4.3, gui-engine-gos 0.6.3, and gui-gos 0.5.2. Requires Gossamer 0.84.3.
 - Building from source on Linux takes LLVM 22 from apt.llvm.org; the installation guide shows the commands.
 
