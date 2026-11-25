@@ -137,7 +137,7 @@ pub fn theme_effect(e: Entry) -> Effect {
 
 /// Where a scheme file named `name` goes, for the Settings help text.
 pub fn file_for(name: String) -> String {
-    path::join(services::config_dir(info::APP_ID), f"scheme-{name}.toml").expect("relative segment")
+    path::join(services::config_dir(info::APP_ID), f"scheme-{name}.toml")
 }
 
 /// The id a user scheme named `name` takes, from its file name: lowercase

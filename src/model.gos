@@ -952,7 +952,7 @@ pub struct Session {
 }
 
 fn session_file() -> String {
-    path::join(services::config_dir(info::APP_ID), "session.json").expect("relative segment")
+    path::join(services::config_dir(info::APP_ID), "session.json")
 }
 
 // Saves the windows of `m` and their tabs' folders when the settings
@@ -1038,14 +1038,14 @@ mod tests {
         services::set_config_root(root)
         defer services::set_config_root("")
         env::set_var("CLAUDE_CONFIG_DIR", root)
-        let dir = path::join(root, "work").expect("relative segment")
+        let dir = path::join(root, "work")
         let _ = fs::create_dir_all(dir)
-        let folder = path::join(path::join(root, "projects").expect("relative segment"), dir.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_string() } else { "-" }).collect::<Vec<String>>().join("")).expect("relative segment")
+        let folder = path::join(path::join(root, "projects"), dir.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_string() } else { "-" }).collect::<Vec<String>>().join(""))
         let _ = fs::create_dir_all(folder)
         // A Windows folder's backslashes need escaping in the record's JSON.
         let Ok(quoted) = json::encode(dir) else { panic("the folder did not encode") }
         let line = f"{{\"type\":\"user\",\"cwd\":{quoted},\"message\":{{\"content\":\"Tidy the logs\"}}}}\n"
-        let _ = fs::write(path::join(folder, "0f0e0d0c-0000-4000-8000-000000000001.jsonl").expect("relative segment"), line.bytes())
+        let _ = fs::write(path::join(folder, "0f0e0d0c-0000-4000-8000-000000000001.jsonl"), line.bytes())
         let mut m = super::new(Settings::default())
         super::finish_agent(&mut m, agent_tab("bash", "claude", dir, false))
         assert_eq(m.recent_sessions.map(|s| s.title), #["Tidy the logs"])

@@ -64,7 +64,7 @@ struct Saved {
 }
 
 fn file() -> String {
-    path::join(services::config_dir(info::APP_ID), "recent-sessions.json").expect("relative segment")
+    path::join(services::config_dir(info::APP_ID), "recent-sessions.json")
 }
 
 /// The list saved last, or none when there is none to read.
@@ -175,7 +175,7 @@ pub fn current(agent: String, dir: String, since: i64, known: Session, live: Opt
 /// running process, which it removes when it ends.
 pub fn live(agent: String) -> Vec<Live> {
     if agent != "claude" { return #[] }
-    let Ok(entries) = fs::read_dir(path::join(claude_root(), "sessions").expect("relative segment")) else { return #[] }
+    let Ok(entries) = fs::read_dir(path::join(claude_root(), "sessions")) else { return #[] }
     let mut out = #[]
     for e in entries {
         if !e.is_file || !e.name.ends_with(".json") { continue }
@@ -193,13 +193,13 @@ pub fn live(agent: String) -> Vec<Live> {
 /// Where Claude Code keeps the record of its running process `pid`, which
 /// says its state.
 pub fn live_file(pid: i64) -> String {
-    path::join(path::join(claude_root(), "sessions").expect("relative segment"), f"{pid}.json").expect("relative segment")
+    path::join(path::join(claude_root(), "sessions"), f"{pid}.json")
 }
 
 /// The folder to watch for running Claude Code processes' records: the one
 /// holding them, else the nearest folder above it that exists.
 pub fn records_folder() -> String {
-    let records = path::join(claude_root(), "sessions").expect("relative segment")
+    let records = path::join(claude_root(), "sessions")
     if fs::is_dir(records) { return records }
     if fs::is_dir(claude_root()) { return claude_root() }
     home()
@@ -233,19 +233,19 @@ fn home() -> String {
 }
 
 fn claude_root() -> String {
-    env::var("CLAUDE_CONFIG_DIR").unwrap_or(path::join(home(), ".claude").expect("relative segment"))
+    env::var("CLAUDE_CONFIG_DIR").unwrap_or(path::join(home(), ".claude"))
 }
 
 fn codex_root() -> String {
-    env::var("CODEX_HOME").unwrap_or(path::join(home(), ".codex").expect("relative segment"))
+    env::var("CODEX_HOME").unwrap_or(path::join(home(), ".codex"))
 }
 
 // The folder pi keeps folder `dir`'s sessions in: the one its environment
 // names for every session, else one per folder under its agent folder.
 fn pi_sessions(dir: String) -> String {
     if let Some(shared) = env::var("PI_CODING_AGENT_SESSION_DIR") { return shared }
-    let agent = env::var("PI_CODING_AGENT_DIR").unwrap_or(path::join(path::join(home(), ".pi").expect("relative segment"), "agent").expect("relative segment"))
-    path::join(path::join(agent, "sessions").expect("relative segment"), pi_folder(dir)).expect("relative segment")
+    let agent = env::var("PI_CODING_AGENT_DIR").unwrap_or(path::join(path::join(home(), ".pi"), "agent"))
+    path::join(path::join(agent, "sessions"), pi_folder(dir))
 }
 
 // pi names a folder's session folder by its path without the leading slash,
@@ -346,7 +346,7 @@ fn one_line(text: String, limit: i64) -> String {
 }
 
 fn claude_latest(root: String, dir: String, since: i64) -> Option<Session> {
-    let folder = path::join(path::join(root, "projects").expect("relative segment"), claude_folder(dir)).expect("relative segment")
+    let folder = path::join(path::join(root, "projects"), claude_folder(dir))
     chosen(written(folder, since, |_| true).filter_map(|f| claude_read(f, dir)), since)
 }
 
@@ -354,7 +354,7 @@ fn claude_latest(root: String, dir: String, since: i64) -> Option<Session> {
 // something.
 fn claude_by_id(root: String, dir: String, id: String) -> Option<Session> {
     let name = f"{id}.jsonl"
-    let file = path::join(path::join(path::join(root, "projects").expect("relative segment"), claude_folder(dir)).expect("relative segment"), name).expect("relative segment")
+    let file = path::join(path::join(path::join(root, "projects"), claude_folder(dir)), name)
     let Ok(meta) = fs::metadata(file) else { return None }
     claude_read((file, name, meta.modified_unix_ms), dir)
 }
@@ -418,7 +418,7 @@ fn codex_latest(root: String, dir: String, since: i64) -> Option<Session> {
 // per naming, the latest last.
 fn codex_titles(root: String) -> Map<String, String> {
     let mut titles = Map::new()
-    for line in tail_lines(path::join(root, "session_index.jsonl").expect("relative segment")) {
+    for line in tail_lines(path::join(root, "session_index.jsonl")) {
         let Ok(v) = json::parse(line) else { continue }
         let id = v.get("id").and_then(|i| i.as_str()).unwrap_or("")
         let name = v.get("thread_name").and_then(|n| n.as_str()).unwrap_or("")
@@ -431,14 +431,14 @@ fn codex_titles(root: String) -> Map<String, String> {
 // under.
 fn codex_day(root: String, instant: i64) -> String {
     let civil = clock::local(instant)
-    path::join(root, f"sessions/{civil.year:04}/{civil.month:02}/{civil.day:02}").expect("relative segment")
+    path::join(root, f"sessions/{civil.year:04}/{civil.month:02}/{civil.day:02}")
 }
 
 // The sessions Codex's prompt history records a prompt for at `since` or
 // later, as its own record keeps them.
 fn codex_prompted(root: String, since: i64) -> Vec<String> {
     let mut ids = #[]
-    for line in tail_lines(path::join(root, "history.jsonl").expect("relative segment")) {
+    for line in tail_lines(path::join(root, "history.jsonl")) {
         let Ok(v) = json::parse(line) else { continue }
         // The history keeps whole seconds.
         let at = v.get("ts").and_then(|t| t.as_i64()).unwrap_or(0) * 1000
@@ -569,7 +569,7 @@ mod tests {
     #[test]
     fn a_claude_session_reads_its_title_and_folder_from_its_record() {
         let Ok(root) = fs::temp_dir("waftty-claude-") else { panic("no temporary folder") }
-        let folder = path::join(path::join(root, "projects").expect("relative segment"), "-work-site").expect("relative segment")
+        let folder = path::join(path::join(root, "projects"), "-work-site")
         let _ = fs::create_dir_all(folder)
         let id = "35892bcb-7adb-4d89-8ef3-9a49a87ef33e"
         let lines = #[
@@ -579,7 +579,7 @@ mod tests {
             "{\"type\":\"user\",\"cwd\":\"/work/site\",\"message\":{\"content\":\"Fix   the\\nlogin page\"}}"
             "{\"type\":\"ai-title\",\"aiTitle\":\"Login page fix\"}"
         ]
-        let _ = fs::write(path::join(folder, f"{id}.jsonl").expect("relative segment"), (lines.join("\n") + "\n").bytes())
+        let _ = fs::write(path::join(folder, f"{id}.jsonl"), (lines.join("\n") + "\n").bytes())
         let Some(found) = claude_latest(root, "/work/site", 0) else { panic("no session found") }
         assert_eq(found.id, id)
         assert_eq(found.title, "Login page fix")
@@ -594,9 +594,9 @@ mod tests {
     fn agents_sharing_a_folder_each_find_the_session_they_began() {
         let Ok(root) = fs::temp_dir("waftty-claude-") else { panic("no temporary folder") }
         let record = |folder: String, id: String, began: String, prompt: String| {
-            let _ = fs::create_dir_all(path::join(path::join(root, "projects").expect("relative segment"), folder).expect("relative segment"))
+            let _ = fs::create_dir_all(path::join(path::join(root, "projects"), folder))
             let line = f"{{\"type\":\"user\",\"timestamp\":\"{began}\",\"cwd\":\"/{folder.substring(1, folder.byte_len())}\",\"message\":{{\"content\":\"{prompt}\"}}}}\n"
-            let _ = fs::write(path::join(path::join(path::join(root, "projects").expect("relative segment"), folder).expect("relative segment"), f"{id}.jsonl").expect("relative segment"), line.bytes())
+            let _ = fs::write(path::join(path::join(path::join(root, "projects"), folder), f"{id}.jsonl"), line.bytes())
         }
         // Two sessions begun a minute apart in one folder, both still writing.
         record("-w", "0f0e0d0c-0000-4000-8000-00000000000a", "2026-11-12T18:00:00Z", "First tab")
@@ -615,9 +615,9 @@ mod tests {
     #[test]
     fn a_long_claude_session_shows_its_latest_title_and_a_given_one_first() {
         let Ok(root) = fs::temp_dir("waftty-claude-") else { panic("no temporary folder") }
-        let folder = path::join(path::join(root, "projects").expect("relative segment"), "-w").expect("relative segment")
+        let folder = path::join(path::join(root, "projects"), "-w")
         let _ = fs::create_dir_all(folder)
-        let file = path::join(folder, "0f0e0d0c-0000-4000-8000-000000000002.jsonl").expect("relative segment")
+        let file = path::join(folder, "0f0e0d0c-0000-4000-8000-000000000002.jsonl")
         let mut text = "{\"type\":\"user\",\"cwd\":\"/w\",\"message\":{\"content\":\"First prompt\"}}\n"
         // Past what is read from the start, as a long session's titles are.
         let filler = "{\"type\":\"assistant\",\"message\":{\"content\":\"" + "x".repeat(1000) + "\"}}\n"
@@ -637,10 +637,10 @@ mod tests {
     #[test]
     fn a_claude_session_without_a_title_shows_its_first_prompt() {
         let Ok(root) = fs::temp_dir("waftty-claude-") else { panic("no temporary folder") }
-        let folder = path::join(path::join(root, "projects").expect("relative segment"), "-w").expect("relative segment")
+        let folder = path::join(path::join(root, "projects"), "-w")
         let _ = fs::create_dir_all(folder)
         let line = "{\"type\":\"user\",\"cwd\":\"/w\",\"message\":{\"content\":\"Fix   the\\nlogin page\"}}\n"
-        let _ = fs::write(path::join(folder, "0f0e0d0c-0000-4000-8000-000000000001.jsonl").expect("relative segment"), line.bytes())
+        let _ = fs::write(path::join(folder, "0f0e0d0c-0000-4000-8000-000000000001.jsonl"), line.bytes())
         let Some(found) = claude_latest(root, "/w", 0) else { panic("no session found") }
         assert_eq(found.title, "Fix the login page")
         let _ = fs::remove_dir_all(root)
@@ -650,7 +650,7 @@ mod tests {
     fn a_codex_session_reads_its_folder_and_first_prompt_from_todays_record() {
         let Ok(root) = fs::temp_dir("waftty-codex-") else { panic("no temporary folder") }
         let civil = clock::local(time::unix_ms())
-        let folder = path::join(root, f"sessions/{civil.year:04}/{civil.month:02}/{civil.day:02}").expect("relative segment")
+        let folder = path::join(root, f"sessions/{civil.year:04}/{civil.month:02}/{civil.day:02}")
         let _ = fs::create_dir_all(folder)
         let id = "019db719-72ac-7671-b651-d0678ea38966"
         let lines = #[
@@ -658,7 +658,7 @@ mod tests {
             "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\"}}"
             "{\"type\":\"event_msg\",\"payload\":{\"type\":\"user_message\",\"message\":\"What does this repo do?\"}}"
         ]
-        let _ = fs::write(path::join(folder, f"rollout-2026-11-12T21-52-50-{id}.jsonl").expect("relative segment"), (lines.join("\n") + "\n").bytes())
+        let _ = fs::write(path::join(folder, f"rollout-2026-11-12T21-52-50-{id}.jsonl"), (lines.join("\n") + "\n").bytes())
         let Some(found) = codex_latest(root, "/work/api", 0) else { panic("no session found") }
         assert_eq(found.id, id)
         assert_eq(found.title, "What does this repo do?")
@@ -679,14 +679,14 @@ mod tests {
             "{\"type\":\"event_msg\",\"payload\":{\"type\":\"item_completed\",\"item\":{\"type\":\"AgentMessage\",\"content\":[{\"type\":\"text\",\"text\":\"Not this\"}]}}}"
             "{\"type\":\"event_msg\",\"payload\":{\"type\":\"item_completed\",\"item\":{\"type\":\"UserMessage\",\"content\":[{\"type\":\"text\",\"text\":\"Assess the CPU use\"}]}}}"
         ]
-        let _ = fs::write(path::join(folder, f"rollout-2026-11-03T21-52-50-{id}.jsonl").expect("relative segment"), (lines.join("\n") + "\n").bytes())
+        let _ = fs::write(path::join(folder, f"rollout-2026-11-03T21-52-50-{id}.jsonl"), (lines.join("\n") + "\n").bytes())
         assert_eq(codex_latest(root, "/work/api", 0).map(|s| s.title), Some("Assess the CPU use"))
         let index = #[
             f"{{\"id\":\"{id}\",\"thread_name\":\"First name\"}}"
             "{\"id\":\"01a1a441-8738-7501-98bd-079b64a13b45\",\"thread_name\":\"Another thread\"}"
             f"{{\"id\":\"{id}\",\"thread_name\":\"Assess CPU reduction\"}}"
         ]
-        let _ = fs::write(path::join(root, "session_index.jsonl").expect("relative segment"), (index.join("\n") + "\n").bytes())
+        let _ = fs::write(path::join(root, "session_index.jsonl"), (index.join("\n") + "\n").bytes())
         assert_eq(codex_latest(root, "/work/api", 0).map(|s| s.title), Some("Assess CPU reduction"))
         let _ = fs::remove_dir_all(root)
     }
@@ -702,9 +702,9 @@ mod tests {
         let folder = codex_day(root, began)
         let _ = fs::create_dir_all(folder)
         let meta = f"{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"cwd\":\"/work/api\"}}}}\n"
-        let _ = fs::write(path::join(folder, f"rollout-2026-11-08T10-00-00-{id}.jsonl").expect("relative segment"), meta.bytes())
+        let _ = fs::write(path::join(folder, f"rollout-2026-11-08T10-00-00-{id}.jsonl"), meta.bytes())
         let prompt = f"{{\"session_id\":\"{id}\",\"ts\":{now / 1000},\"text\":\"Carry on\"}}\n"
-        let _ = fs::write(path::join(root, "history.jsonl").expect("relative segment"), prompt.bytes())
+        let _ = fs::write(path::join(root, "history.jsonl"), prompt.bytes())
         let Some(found) = codex_latest(root, "/work/api", now - 60_000) else { panic("no session found") }
         assert_eq(found.id, id)
         assert(codex_latest(root, "/work/api", now + 60_000).is_none())
@@ -748,7 +748,7 @@ mod tests {
             "{\"type\":\"session\",\"version\":3,\"id\":\"019a7f2e-1b4c-7d5e-9f60-a1b2c3d4e5f6\",\"timestamp\":\"2026-11-13T18:20:11.548Z\",\"cwd\":\"/work/tool\"}"
             "{\"type\":\"message\",\"id\":\"a1\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Add a --dry-run flag\"}]}}"
         ]
-        let file = path::join(folder, f"2026-11-13T18-20-11-548Z_{id}.jsonl").expect("relative segment")
+        let file = path::join(folder, f"2026-11-13T18-20-11-548Z_{id}.jsonl")
         let _ = fs::write(file, (lines.join("\n") + "\n").bytes())
         let Some(found) = pi_latest(folder, "/work/tool", 0) else { panic("no session found") }
         assert_eq(found.id, id)
@@ -811,11 +811,11 @@ mod tests {
     #[test]
     fn running_claude_sessions_come_from_its_registry() {
         let Ok(root) = fs::temp_dir("waftty-claude-") else { panic("no temporary folder") }
-        let folder = path::join(root, "sessions").expect("relative segment")
+        let folder = path::join(root, "sessions")
         let _ = fs::create_dir_all(folder)
         let entry = "{\"pid\":4242,\"sessionId\":\"2a542c80-9539-4702-810a-22e650b3e7a2\",\"cwd\":\"/w\",\"startedAt\":1794622159426,\"kind\":\"interactive\"}"
-        let _ = fs::write(path::join(folder, "4242.json").expect("relative segment"), entry.bytes())
-        let _ = fs::write(path::join(folder, "4242.0123abcd.key").expect("relative segment"), "secret".bytes())
+        let _ = fs::write(path::join(folder, "4242.json"), entry.bytes())
+        let _ = fs::write(path::join(folder, "4242.0123abcd.key"), "secret".bytes())
         env::set_var("CLAUDE_CONFIG_DIR", root)
         let running = live("claude")
         assert_eq(running, #[Live { pid: 4242, id: "2a542c80-9539-4702-810a-22e650b3e7a2", dir: "/w", started: 1_794_622_159_426 }])
@@ -829,10 +829,10 @@ mod tests {
         let Ok(root) = fs::temp_dir("waftty-claude-") else { panic("no temporary folder") }
         env::set_var("CLAUDE_CONFIG_DIR", root)
         assert_eq(super::records_folder(), root)
-        let _ = fs::create_dir_all(path::join(root, "sessions").expect("relative segment"))
-        assert_eq(super::records_folder(), path::join(root, "sessions").expect("relative segment"))
+        let _ = fs::create_dir_all(path::join(root, "sessions"))
+        assert_eq(super::records_folder(), path::join(root, "sessions"))
         let file = super::live_file(4242)
-        assert_eq(file, path::join(path::join(root, "sessions").expect("relative segment"), "4242.json").expect("relative segment"))
+        assert_eq(file, path::join(path::join(root, "sessions"), "4242.json"))
         assert(super::live_state(file).is_none())
         let _ = fs::write(file, "{\"pid\":4242,\"status\":\"waiting\",\"waitingFor\":\"permission prompt\"}".bytes())
         assert_eq(super::live_state(file), Some(("waiting", "permission prompt")))
@@ -855,10 +855,10 @@ mod tests {
         assert_eq(untimed.started, 1_794_622_158_000 + super::START_SLACK_MS)
         assert_eq(untimed.used, untimed.started)
         // Once the agent ends, the id the tab kept still finds its record.
-        let folder = path::join(path::join(root, "projects").expect("relative segment"), "-w").expect("relative segment")
+        let folder = path::join(path::join(root, "projects"), "-w")
         let _ = fs::create_dir_all(folder)
         let line = "{\"type\":\"user\",\"cwd\":\"/w\",\"message\":{\"content\":\"Tidy the logs\"}}\n"
-        let _ = fs::write(path::join(folder, f"{id}.jsonl").expect("relative segment"), line.bytes())
+        let _ = fs::write(path::join(folder, f"{id}.jsonl"), line.bytes())
         let ended = current("claude", "/w", 1_794_622_158_000, fresh, None)
         assert_eq(ended.id, id)
         assert_eq(ended.title, "Tidy the logs")

@@ -31,8 +31,8 @@ pub fn layouts_only(modifiers: String) -> bool {
         return engines_are_layouts(engines, locale())
     }
     if modifiers.contains("@im=fcitx") {
-        let config = env::var("XDG_CONFIG_HOME").unwrap_or(path::join(env::home_dir().unwrap_or(""), ".config").expect("relative segment"))
-        let Ok(profile) = fs::read_to_string(path::join(config, "fcitx5/profile").expect("relative segment")) else { return false }
+        let config = env::var("XDG_CONFIG_HOME").unwrap_or(path::join(env::home_dir().unwrap_or(""), ".config"))
+        let Ok(profile) = fs::read_to_string(path::join(config, "fcitx5/profile")) else { return false }
         let items = fcitx_items(profile)
         return !items.is_empty() && items.all(|item| item.starts_with("keyboard-"))
     }

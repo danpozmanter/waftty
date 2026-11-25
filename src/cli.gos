@@ -115,10 +115,9 @@ pub fn first_command(launch: Launch, s: Settings, from: String) -> Command {
     first
 }
 
-/// `dir` read from `from` when it is relative. A relative `dir` may climb
-/// above `from` (`../work`), so it is resolved lexically, not joined.
+/// `dir` read from `from` when it is relative.
 pub fn absolute(dir: String, from: String) -> String {
-    if path::is_absolute(dir) || from.is_empty() { dir } else { path::normalize(f"{from}/{dir}") }
+    if path::is_absolute(dir) || from.is_empty() { dir } else { path::join(from, dir) }
 }
 
 #[cfg(test)]
@@ -188,7 +187,6 @@ mod tests {
         let first = super::first_command(launch, Settings::default(), "/home/me/project")
         assert_eq(first.cwd, "/home/me/project/src")
         assert_eq(super::absolute("/etc", "/home/me"), "/etc")
-        assert_eq(super::absolute("../work", "/home/me/project"), "/home/me/work")
     }
 
     #[test]

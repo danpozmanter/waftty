@@ -635,7 +635,7 @@ fn command(m: &mut Model, window: String, id: String) {
         commands::EDIT_SCROLLBACK => {
             if let Some(t) = tab {
                 let saved = fs::temp_dir("waftty-").and_then(|dir| {
-                    let file = path::join(dir, f"{model::file_name(t.label())}.txt").expect("relative segment")
+                    let file = path::join(dir, f"{model::file_name(t.label())}.txt")
                     t.terminal.save_text(file, false).map(|_| file)
                 })
                 match saved {
