@@ -18,7 +18,7 @@ struct Saved {
 }
 
 fn file() -> String {
-    path::join(services::config_dir(info::APP_ID), "recent-directories.json")
+    path::join(services::config_dir(info::APP_ID), "recent-directories.json").expect("relative segment")
 }
 
 /// The list saved last, or none when there is none to read.

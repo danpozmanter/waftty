@@ -14,7 +14,7 @@ use info
 
 /// Where the shortcuts are read from.
 pub fn file() -> String {
-    path::join(services::config_dir(info::APP_ID), "shortcuts.toml")
+    path::join(services::config_dir(info::APP_ID), "shortcuts.toml").expect("relative segment")
 }
 
 /// The chords `text` (a `shortcuts.toml`) sets, by command id.

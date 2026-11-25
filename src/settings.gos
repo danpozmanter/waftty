@@ -608,7 +608,7 @@ fn on_path(names: [String]) -> Option<String> {
     let dirs = env::var("PATH").unwrap_or("").split(";")
     for name in names {
         for dir in dirs {
-            let candidate = path::join(dir, name)
+            let candidate = path::join(dir, name).expect("relative segment")
             if !dir.is_empty() && fs::exists(candidate) { return Some(candidate) }
         }
     }

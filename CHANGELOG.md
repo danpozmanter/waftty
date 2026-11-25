@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.5 - Gossamer 0.85.0
+
+- Builds on windowing-gos 0.4.5, gui-engine-gos 0.6.3, and gui-gos 0.5.3. Requires Gossamer 0.85.0.
+
 ## 0.9.4 - The Linux AppImage opens its window
 
 - The Linux AppImage runs on the system's C library, glibc 2.35 (Ubuntu 22.04) or newer, and opens its window: the display, GPU and sound libraries it loads from the system need that same C library, which the 0.9.3 AppImage replaced with its own.

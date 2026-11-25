@@ -12,13 +12,13 @@ permissions:
 env:
   GOSSAMER_REPO: gossamer-lang/gossamer
   # The toolchain release waftty requires.
-  GOSSAMER_VERSION: v0.84.4
+  GOSSAMER_VERSION: v0.85.0
   # project.toml reaches the libraries at ../goose-libs/<name>. CI checks out
   # these releases; a waftty release changes them with its "Builds on" line,
   # and test.yml and release.yml name the same ones.
   WINDOWING_REF: v0.4.5
   ENGINE_REF: v0.6.3
-  GUI_REF: v0.5.2
+  GUI_REF: v0.5.3
   RUSTUP_TOOLCHAIN: 1.95.0
   # The journey draws into SDL's offscreen driver; no display is needed.
   SDL_VIDEO_DRIVER: offscreen

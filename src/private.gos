@@ -52,10 +52,10 @@ pub const SHELLS: String = "bash, zsh, fish, nushell, xonsh, PowerShell, sh and 
 // Writes `text` to file `name` in the folder private shells start from,
 // answering its path.
 fn startup_file(folder: String, name: String, text: String) -> Result<String, errors::Error> {
-    let dir = path::join(services::cache_dir(info::APP_ID), folder)
+    let dir = path::join(services::cache_dir(info::APP_ID), folder)?
     // Replaced whole, so a shell starting in another waftty process never
     // reads it half written.
-    services::write_atomic(path::join(dir, name), text.bytes())?
+    services::write_atomic(path::join(dir, name)?, text.bytes())?
     Ok(dir)
 }
 
@@ -68,7 +68,7 @@ pub fn launch(command: Command, name: String) -> Result<Command, errors::Error> 
         "bash" => {
             let login = command.args.any(|a| a == "-l" || a == "--login")
             let dir = startup_file("private-bash", if login { "login.bashrc" } else { "bashrc" }, if login { BASH_LOGIN_RC } else { BASH_RC })?
-            let mut args = #["--rcfile", path::join(dir, if login { "login.bashrc" } else { "bashrc" }), "-i"]
+            let mut args = #["--rcfile", path::join(dir, if login { "login.bashrc" } else { "bashrc" })?, "-i"]
             for a in command.args { if a != "-l" && a != "--login" { args.push(a) } }
             out.args = args
         }
@@ -91,7 +91,7 @@ pub fn launch(command: Command, name: String) -> Result<Command, errors::Error> 
             let defaults = if windows { "C:\\ProgramData\\xonsh\\xonshrc;~/.config/xonsh/rc.xsh;~/.xonshrc" } else { "/etc/xonsh/xonshrc:~/.config/xonsh/rc.xsh:~/.xonshrc" }
             let declared = command.env.iter().find(|kv| kv.0 == "XONSHRC").map(|kv| kv.1)
             let theirs = declared.or(env::var("XONSHRC")).unwrap_or(defaults)
-            out.env.push(("XONSHRC", f"{path::join(dir, "private.xsh")}{separator}{theirs}"))
+            out.env.push(("XONSHRC", f"{path::join(dir, "private.xsh")?}{separator}{theirs}"))
         }
         // dash and ash keep no history file; bash running as sh honours an
         // empty HISTFILE.
